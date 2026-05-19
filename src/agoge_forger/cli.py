@@ -74,8 +74,10 @@ def smoke_eval(adapter_path: str = typer.Option(..., help="Path to PEFT adapter"
     try:
         with open(os.path.join(adapter_path, "adapter_config.json")) as f:
             base_model = json.load(f).get("base_model_name_or_path")
-    except Exception:
-        logger.error("Could not find adapter_config.json to infer base model.")
+        if not base_model:
+            raise ValueError("base_model_name_or_path not found in adapter_config.json")
+    except Exception as e:
+        logger.error(f"Could not infer base model: {e}")
         raise typer.Exit(code=1)
         
     run_smoke_eval(base_model, adapter_path)
