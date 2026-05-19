@@ -95,4 +95,4 @@ def run_training(config):
         "artifact_index": index_path
     }
     
-    write_run_manifest(os.path.join("runs", config.run_name), config.dict(), metrics, model, tokenizer, dataset)
+    write_run_manifest(os.path.join("runs", config.run_name), config.model_dump(), metrics, model, tokenizer, dataset)
