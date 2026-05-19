@@ -7,11 +7,16 @@ from ..datasets import load_jsonl_dataset
 from ..models.load import load_base_model
 from ..manifests import write_run_manifest
 from ..logging import logger
+from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
+from .preflight import check_cuda_available, get_gpu_report, estimate_training_risk, validate_lora_targets_exist
 
 def run_training(config):
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required for training in agoge-forger.")
-        
+    check_cuda_available(required=True)
+    gpu_report = get_gpu_report()
+    logger.info(f"GPU Report: {gpu_report}")
+    
+    estimate_training_risk(config, gpu_report)
+    
     logger.info(f"Loading {config.model_id} for run {config.run_name}")
     model, tokenizer = load_base_model(
         config.model_id, 
@@ -20,16 +25,21 @@ def run_training(config):
         config.training.bf16
     )
     
+    if config.training.gradient_checkpointing:
+        model.config.use_cache = False
+    
     if config.quantization.load_in_4bit:
         model = prepare_model_for_kbit_training(
             model, use_gradient_checkpointing=config.training.gradient_checkpointing
         )
     
+    target_modules = validate_lora_targets_exist(model, config.lora)
+    
     peft_config = LoraConfig(
         r=config.lora.lora_r,
         lora_alpha=config.lora.lora_alpha,
         lora_dropout=config.lora.lora_dropout,
-        target_modules=config.lora.target_modules,
+        target_modules=target_modules,
         task_type="CAUSAL_LM"
     )
     
@@ -67,10 +77,22 @@ def run_training(config):
     trainer.train()
     
     logger.info(f"Saving adapter to {out_dir}")
-    trainer.model.save_pretrained(out_dir)
+    trainer.model.save_pretrained(out_dir, safe_serialization=config.runtime.save_safetensors)
     tokenizer.save_pretrained(out_dir)
+    
+    if not config.runtime.allow_unsafe_serialization:
+        assert_no_unsafe_weight_bins(out_dir)
+        
+    index_path = write_artifact_index(out_dir)
+    logger.info(f"Artifact index written to {index_path}")
     
     vram_used = torch.cuda.max_memory_allocated() / 1e9
     logger.info(f"Max VRAM used: {vram_used:.2f} GB")
     
-    write_run_manifest(os.path.join("runs", config.run_name), config.dict(), {"max_vram_gb": vram_used})
+    metrics = {
+        "max_vram_gb": vram_used,
+        "gpu_report": gpu_report,
+        "artifact_index": index_path
+    }
+    
+    write_run_manifest(os.path.join("runs", config.run_name), config.dict(), metrics, model, tokenizer, dataset)

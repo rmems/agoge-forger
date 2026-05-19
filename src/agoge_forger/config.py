@@ -1,5 +1,5 @@
 import yaml
-from typing import List, Optional
+from typing import List
 from pydantic import BaseModel, Field
 
 class TrainingConfig(BaseModel):
@@ -23,6 +23,12 @@ class LoraConfigModel(BaseModel):
     lora_alpha: int = 32
     lora_dropout: float = 0.05
     target_modules: List[str] = ["q_proj", "v_proj"]
+    target_modules_mode: str = "auto_common"
+
+class RuntimeConfig(BaseModel):
+    save_safetensors: bool = True
+    allow_unsafe_serialization: bool = False
+    max_shard_size: str = "4GB"
 
 class ExperimentConfig(BaseModel):
     model_id: str
@@ -35,6 +41,7 @@ class ExperimentConfig(BaseModel):
     quantization: QuantizationConfig = Field(default_factory=QuantizationConfig)
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     lora: LoraConfigModel = Field(default_factory=LoraConfigModel)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
 def load_config(yaml_path: str) -> ExperimentConfig:
     with open(yaml_path, 'r') as f:
@@ -68,6 +75,12 @@ def load_config(yaml_path: str) -> ExperimentConfig:
             lora_r=data.get('lora_r', 16),
             lora_alpha=data.get('lora_alpha', 32),
             lora_dropout=data.get('lora_dropout', 0.05),
-            target_modules=data.get('target_modules', ["q_proj", "v_proj"])
+            target_modules=data.get('target_modules', ["q_proj", "v_proj"]),
+            target_modules_mode=data.get('target_modules_mode', 'auto_common')
+        ),
+        runtime=RuntimeConfig(
+            save_safetensors=data.get('save_safetensors', True),
+            allow_unsafe_serialization=data.get('allow_unsafe_serialization', False),
+            max_shard_size=data.get('max_shard_size', "4GB")
         )
     )

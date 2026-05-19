@@ -11,3 +11,5 @@ def test_write_manifest(tmp_path):
         data = json.load(f)
         assert data["config"]["a"] == 1
         assert data["metrics"]["vram"] == 10
+        assert "git" in data
+        assert "environment" in data

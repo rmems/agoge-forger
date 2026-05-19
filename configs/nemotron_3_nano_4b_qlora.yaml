@@ -22,8 +22,6 @@ seed: 42
 lora_r: 16
 lora_alpha: 32
 lora_dropout: 0.05
-target_modules:
-  - "query_key_value"
-  - "dense"
-  - "dense_h_to_4h"
-  - "dense_4h_to_h"
+# Nemotron target modules must be discovered from model inspection before training.
+target_modules: []
+target_modules_mode: "discover_required"

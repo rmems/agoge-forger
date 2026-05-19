@@ -1,4 +1,3 @@
-import pytest
 from agoge_forger.datasets import normalize_row
 
 def test_normalize_text():
