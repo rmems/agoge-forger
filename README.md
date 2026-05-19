@@ -1,34 +1,50 @@
-# agoge-forger ⚔️
+# Agoge Forger
 
-**A local-first model-training forge for modern Hugging Face models, adapter fine-tuning, quantization experiments, CUDA kernels, and optional Rust/JAX/cloud backends.**
+"Agoge" refers to the ancient Spartan training system. This repo is a modern model-training forge: local-first, GPU-aware, cloud-capable, and designed for fine-tuning, adapter training, quantization experiments, CUDA kernel experimentation, and optional Rust/JAX backends.
 
-`agoge-forger` is named after the **agoge**, the ancient Spartan training system.  
-This repo is a training camp for models: disciplined, reproducible, GPU-aware, and designed to harden experimental fine-tuning workflows into reusable infrastructure.
+## Philosophy
 
-The first target is practical:
+- **PyTorch Primary**: PyTorch is the main training engine. It has the ecosystem, the tools (PEFT, TRL, BitsAndBytes), and the community.
+- **JAX Optional**: Included as a stubbed backend for future algorithmic research and specialized workloads.
+- **Rust Optional**: Experimental tooling, CLI enhancements, and future framework integrations.
+- **RTX 5080 16GB Focus**: Local defaults are tuned to fit within 16GB of VRAM using QLoRA (NF4, double quant) and sequence lengths of 2048.
+- **Full Fine-Tuning**: Possible, but not the local default. QLoRA/LoRA are preferred.
 
-> Fine-tune modern Hugging Face models locally with QLoRA/LoRA, save adapters, evaluate runs, and keep the path open for CUDA, Rust, JAX, and cloud-scale training.
+## Quickstart (Smoke Test)
 
----
+### 1. Check Environment
+```bash
+make setup
+agoge check-torch
+```
 
-## Mission
+### 2. Inspect an Architecture (e.g. GKA-HQwen3)
+Before training custom architectures, inspect their structure to find LoRA targets:
+```bash
+agoge inspect-model --model-id amazon/GKA-primed-HQwen3-8B-Reasoner
+agoge inspect-lora-targets --model-id amazon/GKA-primed-HQwen3-8B-Reasoner
+```
 
-`agoge-forger` is not a chatbot app and not a one-off notebook repo.
+### 3. Run QLoRA Smoke Test
+Runs a tiny JSONL dataset against a base model to verify PEFT saving and memory:
+```bash
+make train-smoke
+# Or manually: agoge train-qlora --config configs/smoke_test.yaml
+```
 
-It is a reusable forge for:
+### 4. Evaluate Adapter
+```bash
+make eval-smoke
+# Or manually: agoge smoke-eval --adapter-path adapters/<run_name>
+```
 
-- local QLoRA / LoRA fine-tuning
-- adapter training and merging
-- Hugging Face dataset preparation
-- model inspection and LoRA target discovery
-- RTX 5080 16 GB VRAM experiments
-- CUDA kernel experimentation
-- optional JAX backend research
-- optional Rust training/tooling integrations
-- optional HCL/Terraform cloud deployment
-- future Limen-Neural library integrations
+### 5. Merge Adapter
+```bash
+agoge merge-adapter --base-model <base_model> --adapter-path adapters/<run_name> --out-dir merged/<run_name>
+```
 
-Primary training path:
+## Cloud Infrastructure
+The `infra/` folder contains Terraform scaffolds for AWS, Azure, DigitalOcean, and IBM Cloud. They are stubs for future cloud-scale training using HCL.
 
-```text
-PyTorch → Transformers → PEFT → TRL → bitsandbytes
+## GGUF Notes
+GGUF conversion is *not* automatic, especially for custom architectures like GKA or SSMs. Llama.cpp must explicitly support the architecture before GGUF export will work. See `src/agoge_forger/export/gguf_notes.py`.

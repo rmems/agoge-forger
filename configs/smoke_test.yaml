@@ -1,0 +1,28 @@
+# Minimal config for fast smoke testing
+model_id: "HuggingFaceM4/tiny-random-LlamaForCausalLM"
+trust_remote_code: true
+dataset_path: "datasets/samples/tiny_sft.jsonl"
+dataset_text_field: "text"
+output_dir: "adapters"
+run_name: "smoke_test_run"
+
+load_in_4bit: false # False for tiny random model as it might crash bitsandbytes
+bnb_4bit_quant_type: "nf4"
+bnb_4bit_compute_dtype: "bfloat16"
+bnb_4bit_use_double_quant: true
+
+max_seq_length: 128
+batch_size: 1
+gradient_accumulation_steps: 1
+gradient_checkpointing: false
+learning_rate: 0.001
+num_train_epochs: 1
+bf16: false
+seed: 42
+
+lora_r: 8
+lora_alpha: 16
+lora_dropout: 0.0
+target_modules:
+  - "q_proj"
+  - "v_proj"

@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv/
+env/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Rust
+target/
+Cargo.lock
+
+# Outputs
+adapters/*/
+runs/*/
+merged/*/
+gguf/*/
+!adapters/.gitkeep
+!runs/.gitkeep
+!merged/.gitkeep
+!gguf/.gitkeep
+
+# Infra
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Datasets
+datasets/samples/*.jsonl
+!datasets/samples/tiny_sft.jsonl
+
+# Models
+*.safetensors
+*.bin
+*.pt
+*.gguf
