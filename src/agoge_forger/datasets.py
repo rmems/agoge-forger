@@ -34,20 +34,20 @@ def normalize_row(row, tokenizer=None, index=0):
         raise ValueError(f"Line {index}: Unknown format. Must contain 'text', 'messages', or 'instruction'.")
 
 def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
-    data = []
-    with open(path, 'r') as f:
-        for i, line in enumerate(f, 1):
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Line {i}: Invalid JSON - {e}")
-            
-            normalized = normalize_row(row, tokenizer, index=i)
-            data.append(normalized)
+def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
+    def gen():
+        with open(path, 'r') as f:
+            for i, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Line {i}: Invalid JSON - {e}")
+                
+                yield normalize_row(row, tokenizer, index=i)
     
-    return Dataset.from_list(data)
+    return Dataset.from_generator(gen)
 
 def dataset_stats(path: str, model_id: str):
     from .models.load import load_base_model
