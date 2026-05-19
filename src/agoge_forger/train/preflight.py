@@ -56,7 +56,9 @@ def validate_lora_targets_exist(model, lora_config):
     
     if mode == "auto_common":
         common = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-        valid_targets = [t for t in common if t in model_modules]
+        candidates = requested_targets if requested_targets else common
+        common_set = set(common)
+        valid_targets = [t for t in candidates if t in common_set and t in model_modules]
         if not valid_targets:
             logger.warning("No common projection targets found. Proceeding with caution.")
     else:
