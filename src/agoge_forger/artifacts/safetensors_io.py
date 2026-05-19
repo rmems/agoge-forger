@@ -55,8 +55,9 @@ def sha256_file(path: str) -> str:
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
-    except Exception:
-        return "unknown"
+    except Exception as e:
+        logger.error(f"Failed to compute hash for {path}: {e}")
+        raise
 
 def write_artifact_index(output_dir: str) -> str:
     index_path = os.path.join(output_dir, "artifact_index.json")
