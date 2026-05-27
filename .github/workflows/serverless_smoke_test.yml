@@ -1,0 +1,107 @@
+name: Serverless Inference Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Hugging Face model ID"
+        required: true
+        default: "HuggingFaceM4/tiny-random-LlamaForCausalLM"
+        type: string
+      workload:
+        description: "Workload type (inference, eval, inspect)"
+        required: false
+        default: "inference"
+        type: choice
+        options:
+          - inference
+          - eval
+          - inspect
+      max_requests:
+        description: "Max inference requests"
+        required: false
+        default: "5"
+        type: string
+      concurrency:
+        description: "Request concurrency"
+        required: false
+        default: "1"
+        type: string
+      stream:
+        description: "Enable streaming"
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: "Dry-run mode (no real inference)"
+        required: false
+        default: false
+        type: boolean
+      upload_artifacts:
+        description: "Upload run artifacts"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install httpx
+
+      - name: Config check
+        if: ${{ !inputs.dry_run }}
+        run: |
+          python -c "
+          from agoge_forger.config import load_config
+          cfg = load_config('configs/smoke_test.yaml')
+          print(f'Config OK: model_id={cfg.model_id}')
+          "
+
+      - name: Run serverless smoke test
+        run: |
+          python scripts/serverless_smoke_test.py \
+            --model "${{ inputs.model }}" \
+            --workload "${{ inputs.workload }}" \
+            --max-requests ${{ inputs.max_requests }} \
+            --concurrency ${{ inputs.concurrency }} \
+            ${{ inputs.stream && '--stream' || '--no-stream' }} \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            --output-dir "${{ github.workspace }}/smoke_output"
+
+      - name: Upload artifacts
+        if: ${{ inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-artifacts
+          path: |
+            smoke_output/manifest.json
+            smoke_output/provider.json
+            smoke_output/usage_before.json
+            smoke_output/usage_after.json
+            smoke_output/usage_delta.json
+            smoke_output/results.jsonl
+            smoke_output/summary.md
+          retention-days: 14
+          if-no-files-found: warn
