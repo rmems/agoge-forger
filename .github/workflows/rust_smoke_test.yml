@@ -137,7 +137,7 @@ jobs:
             EXTRA="-p $PKG"
           fi
 
-          case "$CMD" in
+          set -o pipefail; case "$CMD" in
             check)  cargo check $EXTRA 2>&1 | tee ../rust_output/build.log ;;
             test)   cargo test $EXTRA 2>&1 | tee ../rust_output/build.log ;;
             clippy) cargo clippy $EXTRA -- -D warnings 2>&1 | tee ../rust_output/build.log ;;

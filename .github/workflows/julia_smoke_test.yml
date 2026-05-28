@@ -57,7 +57,7 @@ jobs:
         run: |
           mkdir -p julia_output
           python3 -c "
-          import json, subprocess, sys, os
+          import json, os, subprocess, sys, os
           from datetime import timezone, datetime
           m = {
             'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -67,7 +67,7 @@ jobs:
               'command': '${{ inputs.command }}',
               'project_dir': '${{ inputs.project_dir }}',
               'julia_version': '${{ inputs.julia_version }}',
-              'dry_run': ${{ inputs.dry_run }}
+              'dry_run': ${{ toJSON(inputs.dry_run) }}
             }
           }
           json.dump(m, open('julia_output/manifest.json','w'), indent=2)
@@ -76,7 +76,7 @@ jobs:
       - name: Record provider info
         run: |
           python3 -c "
-          import json, sys, os
+          import json, os, sys, os
           from datetime import datetime, timezone
           p = {
             'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -93,7 +93,7 @@ jobs:
       - name: Record usage before
         run: |
           python3 -c "
-          import json
+          import json, os
           from datetime import datetime, timezone
           json.dump({
             'label': 'before',
@@ -145,7 +145,7 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import json
+          import json, os
           from datetime import datetime, timezone
           json.dump({
             'label': 'after',
@@ -161,10 +161,11 @@ jobs:
         if: always()
         run: |
           python3 -c "
-          import json
+          import json, os
           from datetime import datetime, timezone
           results = []
-          if True:
+          results = []
+          if os.path.exists('julia_output/results.jsonl'):
               with open('julia_output/results.jsonl') as f:
                   for line in f:
                       line = line.strip()

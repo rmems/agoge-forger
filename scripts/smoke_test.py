@@ -12,6 +12,8 @@ Produces the following artifacts in --output-dir:
 """
 
 import argparse
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import subprocess
@@ -211,17 +213,22 @@ def main() -> None:
     usage_before = _usage_snapshot("before", model)
     _write_json(out / "usage_before.json", usage_before)
 
-    results: list[dict[str, Any]] = []
-    for i in range(1, max_req + 1):
+    def _dispatch(i: int) -> dict[str, Any]:
         if workload == "inference":
-            result = _run_inference_request(i, model, stream, dry_run)
+            r = _run_inference_request(i, model, stream, dry_run)
         elif workload == "eval":
-            result = _dry_run_request(i, model, stream)
-            result["workload"] = "eval"
+            r = _run_inference_request(i, model, stream, dry_run) if not dry_run else _dry_run_request(i, model, stream)
+            r["workload"] = "eval"
         else:
-            result = _dry_run_request(i, model, stream)
-            result["workload"] = "inspect"
-        results.append(result)
+            r = _run_inference_request(i, model, stream, dry_run) if not dry_run else _dry_run_request(i, model, stream)
+            r["workload"] = "inspect"
+        return r
+
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+        futures = [executor.submit(_dispatch, i) for i in range(1, max_req + 1)]
+        for f in futures:
+            results.append(f.result())
 
     with open(out / "results.jsonl", "w") as f:
         for r in results:
