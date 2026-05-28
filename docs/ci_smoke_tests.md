@@ -1,4 +1,4 @@
-# Serverless Smoke Test Workflows
+# Python, Rust, and Julia Smoke Test Workflows
 
 This project includes three manual GitHub Actions workflows for smoke testing across Python, Rust, and Julia toolchains.
 
@@ -6,7 +6,7 @@ This project includes three manual GitHub Actions workflows for smoke testing ac
 
 | Workflow | File | Language |
 |----------|------|----------|
-| Python Smoke Test | `.github/workflows/serverless_smoke_test.yml` | Python |
+| Python Smoke Test | `.github/workflows/python_smoke_test.yml` | Python |
 | Rust Smoke Test | `.github/workflows/rust_smoke_test.yml` | Rust |
 | Julia Smoke Test | `.github/workflows/julia_smoke_test.yml` | Julia |
 
@@ -84,7 +84,7 @@ When `dry_run` is `true`, the workflow only verifies that the requested Julia ve
 Run the Python smoke test locally:
 
 ```bash
-python scripts/serverless_smoke_test.py \
+python scripts/smoke_test.py \
   --model HuggingFaceM4/tiny-random-LlamaForCausalLM \
   --workload inference \
   --max-requests 3 \

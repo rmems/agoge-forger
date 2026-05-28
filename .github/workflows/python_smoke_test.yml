@@ -79,7 +79,7 @@ jobs:
           print(f'Config OK: model_id={cfg.model_id}')
           "
 
-      - name: Run serverless smoke test
+      - name: Run Python smoke test
         run: |
           python scripts/smoke_test.py \
             --model "${{ inputs.model }}" \
