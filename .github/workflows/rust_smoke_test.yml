@@ -141,7 +141,7 @@ jobs:
             check)  cargo check $EXTRA 2>&1 | tee ../rust_output/build.log ;;
             test)   cargo test $EXTRA 2>&1 | tee ../rust_output/build.log ;;
             clippy) cargo clippy $EXTRA -- -D warnings 2>&1 | tee ../rust_output/build.log ;;
-            fmt)    cargo fmt --check 2>&1 | tee ../rust_output/build.log ;;
+            fmt)    cargo fmt --check $EXTRA 2>&1 | tee ../rust_output/build.log ;;
             build)  cargo build $EXTRA 2>&1 | tee ../rust_output/build.log ;;
           esac
 

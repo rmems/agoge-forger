@@ -84,14 +84,14 @@ jobs:
           python scripts/smoke_test.py \
             --model "${{ inputs.model }}" \
             --workload "${{ inputs.workload }}" \
-            --max-requests ${{ inputs.max_requests }} \
-            --concurrency ${{ inputs.concurrency }} \
+            --max-requests "${{ inputs.max_requests }}" \
+            --concurrency "${{ inputs.concurrency }}" \
             ${{ inputs.stream && '--stream' || '--no-stream' }} \
             ${{ inputs.dry_run && '--dry-run' || '' }} \
             --output-dir "${{ github.workspace }}/smoke_output"
 
       - name: Upload artifacts
-        if: ${{ inputs.upload_artifacts }}
+        if: ${{ always() && inputs.upload_artifacts }}
         uses: actions/upload-artifact@v4
         with:
           name: smoke-test-artifacts
