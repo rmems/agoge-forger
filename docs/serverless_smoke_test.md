@@ -6,7 +6,7 @@ This project includes three manual GitHub Actions workflows for smoke testing ac
 
 | Workflow | File | Language |
 |----------|------|----------|
-| Serverless Inference Smoke Test | `.github/workflows/serverless_smoke_test.yml` | Python |
+| Python Smoke Test | `.github/workflows/serverless_smoke_test.yml` | Python |
 | Rust Smoke Test | `.github/workflows/rust_smoke_test.yml` | Rust |
 | Julia Smoke Test | `.github/workflows/julia_smoke_test.yml` | Julia |
 
@@ -20,7 +20,7 @@ This project includes three manual GitHub Actions workflows for smoke testing ac
 
 All three workflows are **manual-only** (`workflow_dispatch`). They will never trigger automatically on push or PR events.
 
-## Python: Serverless Inference Smoke Test
+## Python: Python Smoke Test
 
 ### Inputs
 
