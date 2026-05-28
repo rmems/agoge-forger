@@ -1,0 +1,202 @@
+name: Rust Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Cargo command to run"
+        required: false
+        default: "check"
+        type: choice
+        options:
+          - check
+          - test
+          - clippy
+          - fmt
+          - build
+      package:
+        description: "Specific crate (leave empty for workspace)"
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Dry-run mode (validate only, no compilation)"
+        required: false
+        default: false
+        type: boolean
+      upload_artifacts:
+        description: "Upload run artifacts"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  rust-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            rust-tools/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-tools/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Record before snapshot
+        run: |
+          mkdir -p rust_output
+          cat > rust_output/manifest.json << 'MANIFEST'
+          {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "git_commit": "$(git rev-parse HEAD)",
+            "git_branch": "$(git rev-parse --abbrev-ref HEAD)",
+            "config": {
+              "command": "${{ inputs.command }}",
+              "package": "${{ inputs.package }}",
+              "dry_run": ${{ toJSON(inputs.dry_run) }}
+            }
+          }
+          MANIFEST
+          python3 -c "
+          import json, subprocess, os
+          from datetime import datetime, timezone
+          m = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'git_commit': subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),
+            'git_branch': subprocess.check_output(['git','rev-parse','--abbrev-ref','HEAD']).decode().strip(),
+            'config': {
+              'command': '${{ inputs.command }}',
+              'package': '${{ inputs.package }}',
+              'dry_run': ${{ toJSON(inputs.dry_run) }}
+            }
+          }
+          json.dump(m, open('rust_output/manifest.json','w'), indent=2)
+          "
+
+      - name: Record provider info
+        run: |
+          python3 -c "
+          import json, sys, os
+          from datetime import datetime, timezone
+          p = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'python_version': sys.version,
+            'platform': sys.platform,
+            'ci': os.getenv('CI','false') == 'true',
+            'github_actions': os.getenv('GITHUB_ACTIONS','false') == 'true',
+            'runner_os': os.getenv('RUNNER_OS','local'),
+            'runner_arch': os.getenv('RUNNER_ARCH','unknown'),
+          }
+          json.dump(p, open('rust_output/provider.json','w'), indent=2)
+          "
+
+      - name: Dry-run validation
+        if: ${{ inputs.dry_run }}
+        run: |
+          cd rust-tools
+          echo "=== Dry-run: validating Cargo.toml ==="
+          cargo locate-project
+          echo "=== Workspace members ==="
+          cargo metadata --no-deps --format-version 1 | python3 -c "
+          import json, sys
+          meta = json.load(sys.stdin)
+          for pkg in meta.get('workspace_members', []):
+              print(f'  - {pkg}')
+          print(f'Workspace root: {meta.get(\"workspace_root\", \"unknown\")}')
+          "
+          echo "Dry-run validation complete."
+          echo '{"status": "dry_run", "command": "validate"}' > rust_output/results.jsonl
+
+      - name: Run Cargo command
+        if: ${{ !inputs.dry_run }}
+        run: |
+          cd rust-tools
+          CMD="${{ inputs.command }}"
+          PKG="${{ inputs.package }}"
+          EXTRA=""
+
+          if [ -n "$PKG" ]; then
+            EXTRA="-p $PKG"
+          fi
+
+          set -o pipefail; case "$CMD" in
+            check)  cargo check $EXTRA 2>&1 | tee ../rust_output/build.log ;;
+            test)   cargo test $EXTRA 2>&1 | tee ../rust_output/build.log ;;
+            clippy) cargo clippy $EXTRA -- -D warnings 2>&1 | tee ../rust_output/build.log ;;
+            fmt)    cargo fmt --check $EXTRA 2>&1 | tee ../rust_output/build.log ;;
+            build)  cargo build $EXTRA 2>&1 | tee ../rust_output/build.log ;;
+          esac
+
+          echo "{\"status\": \"ok\", \"command\": \"$CMD\"}" >> ../rust_output/results.jsonl
+
+      - name: Generate summary
+        if: always()
+        run: |
+          STATUS="ok"
+          if [ -f rust_output/build.log ]; then
+            if grep -q "error" rust_output/build.log 2>/dev/null; then
+              STATUS="error"
+            fi
+          fi
+          python3 -c "
+          import json
+          from datetime import datetime, timezone
+          after = {
+            'label': 'after',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'status': '$STATUS',
+            'command': '${{ inputs.command }}',
+          }
+          json.dump(after, open('rust_output/usage_after.json','w'), indent=2)
+
+          before = json.load(open('rust_output/manifest.json'))
+          delta = {
+            'label': 'delta',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'status': '$STATUS',
+          }
+          json.dump(delta, open('rust_output/usage_delta.json','w'), indent=2)
+
+          summary = [
+            '# Rust Smoke Test Summary',
+            '',
+            '- **Command**: \`${{ inputs.command }}\`',
+            '- **Package**: \`${{ inputs.package }}\`' if '${{ inputs.package }}' else '- **Package**: workspace',
+            '- **Mode**: ${{
+              inputs.dry_run && 'dry-run' || 'live'
+            }}',
+            '- **Status**: $STATUS',
+            '',
+            'Generated by Rust smoke test workflow  ',
+            'Agent: Kilo agent Vultr/MiniMax-M2.7',
+          ]
+          with open('rust_output/summary.md', 'w') as f:
+            f.write('\n'.join(summary) + '\n')
+          "
+
+      - name: Upload artifacts
+        if: ${{ inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-smoke-test-artifacts
+          path: rust_output/
+          retention-days: 14
+          if-no-files-found: warn

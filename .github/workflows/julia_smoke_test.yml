@@ -1,0 +1,201 @@
+name: Julia Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Julia command to run"
+        required: false
+        default: "check"
+        type: choice
+        options:
+          - check
+          - test
+          - build
+      project_dir:
+        description: "Julia project directory (default: repo root)"
+        required: false
+        default: "."
+        type: string
+      julia_version:
+        description: "Julia version"
+        required: false
+        default: "1.10"
+        type: string
+      dry_run:
+        description: "Dry-run mode (validate environment only)"
+        required: false
+        default: false
+        type: boolean
+      upload_artifacts:
+        description: "Upload run artifacts"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  julia-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ inputs.julia_version }}
+
+      - name: Cache Julia artifacts
+        uses: julia-actions/cache@v2
+
+      - name: Record before snapshot
+        run: |
+          mkdir -p julia_output
+          python3 -c "
+          import json, os, subprocess, sys, os
+          from datetime import timezone, datetime
+          m = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'git_commit': subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),
+            'git_branch': subprocess.check_output(['git','rev-parse','--abbrev-ref','HEAD']).decode().strip(),
+            'config': {
+              'command': '${{ inputs.command }}',
+              'project_dir': '${{ inputs.project_dir }}',
+              'julia_version': '${{ inputs.julia_version }}',
+              'dry_run': ${{ toJSON(inputs.dry_run) }}
+            }
+          }
+          json.dump(m, open('julia_output/manifest.json','w'), indent=2)
+          "
+
+      - name: Record provider info
+        run: |
+          python3 -c "
+          import json, os, sys, os
+          from datetime import datetime, timezone
+          p = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'python_version': sys.version,
+            'platform': sys.platform,
+            'ci': os.getenv('CI','false') == 'true',
+            'github_actions': os.getenv('GITHUB_ACTIONS','false') == 'true',
+            'runner_os': os.getenv('RUNNER_OS','local'),
+            'runner_arch': os.getenv('RUNNER_ARCH','unknown'),
+          }
+          json.dump(p, open('julia_output/provider.json','w'), indent=2)
+          "
+
+      - name: Record usage before
+        run: |
+          python3 -c "
+          import json, os
+          from datetime import datetime, timezone
+          json.dump({
+            'label': 'before',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+          }, open('julia_output/usage_before.json','w'), indent=2)
+          "
+
+      - name: Dry-run validation
+        if: ${{ inputs.dry_run }}
+        run: |
+          julia --version
+          echo "=== Dry-run: validating Julia environment ==="
+          julia -e 'println("Julia OK: ", VERSION)'
+          echo '{"status": "dry_run", "command": "check"}' > julia_output/results.jsonl
+
+      - name: Run Julia check
+        if: ${{ inputs.command == 'check' && !inputs.dry_run }}
+        run: |
+          julia --project=${{ inputs.project_dir }} -e '
+          using Pkg
+          Pkg.instantiate()
+          Pkg.precompile()
+          println("Julia environment check passed.")
+          '
+          echo '{"status": "ok", "command": "check"}' > julia_output/results.jsonl
+
+      - name: Run Julia test
+        if: ${{ inputs.command == 'test' && !inputs.dry_run }}
+        run: |
+          julia --project=${{ inputs.project_dir }} -e '
+          using Pkg
+          Pkg.instantiate()
+          Pkg.test()
+          '
+          echo '{"status": "ok", "command": "test"}' > julia_output/results.jsonl
+
+      - name: Run Julia build
+        if: ${{ inputs.command == 'build' && !inputs.dry_run }}
+        run: |
+          julia --project=${{ inputs.project_dir }} -e '
+          using Pkg
+          Pkg.instantiate()
+          Pkg.precompile()
+          println("Build complete.")
+          '
+          echo '{"status": "ok", "command": "build"}' > julia_output/results.jsonl
+
+      - name: Record usage after
+        if: always()
+        run: |
+          python3 -c "
+          import json, os
+          from datetime import datetime, timezone
+          json.dump({
+            'label': 'after',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+          }, open('julia_output/usage_after.json','w'), indent=2)
+          json.dump({
+            'label': 'delta',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+          }, open('julia_output/usage_delta.json','w'), indent=2)
+          "
+
+      - name: Generate summary
+        if: always()
+        run: |
+          python3 -c "
+          import json, os
+          from datetime import datetime, timezone
+          results = []
+          results = []
+          if os.path.exists('julia_output/results.jsonl'):
+              with open('julia_output/results.jsonl') as f:
+                  for line in f:
+                      line = line.strip()
+                      if line:
+                          results.append(json.loads(line))
+
+          status = 'ok' if results and all(r.get('status') in ('ok','dry_run') for r in results) else 'error'
+          summary = [
+            '# Julia Smoke Test Summary',
+            '',
+            '- **Command**: \`${{ inputs.command }}\`',
+            '- **Julia version**: \`${{ inputs.julia_version }}\`',
+            '- **Project dir**: \`${{ inputs.project_dir }}\`',
+            '- **Mode**: ${{
+              inputs.dry_run && 'dry-run' || 'live'
+            }}',
+            '- **Status**: ' + status,
+            '',
+            'Generated by Julia smoke test workflow  ',
+            'Agent: Kilo agent Vultr/MiniMax-M2.7',
+          ]
+          with open('julia_output/summary.md', 'w') as f:
+            f.write('\n'.join(summary) + '\n')
+          "
+
+      - name: Upload artifacts
+        if: ${{ always() && inputs.upload_artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: julia-smoke-test-artifacts
+          path: julia_output/
+          retention-days: 14
+          if-no-files-found: warn
