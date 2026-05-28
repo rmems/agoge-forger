@@ -81,7 +81,7 @@ jobs:
 
       - name: Run serverless smoke test
         run: |
-          python scripts/serverless_smoke_test.py \
+          python scripts/smoke_test.py \
             --model "${{ inputs.model }}" \
             --workload "${{ inputs.workload }}" \
             --max-requests ${{ inputs.max_requests }} \
