@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agoge-forger"
+version = "0.1.0"
+description = "A local-first, GPU-aware forge for modern LLM fine-tuning."
+authors = [{name = "Agoge"}]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.40.0",
+    "accelerate>=0.30.0",
+    "peft>=0.10.0",
+    "trl>=0.8.0",
+    "datasets>=2.19.0",
+    "bitsandbytes>=0.43.0",
+    "safetensors>=0.4.0",
+    "pyyaml",
+    "rich",
+    "typer>=0.9.0",
+    "pydantic>=2.0.0",
+    "python-dotenv"
+]
+
+[project.optional-dependencies]
+jax = ["jax[cuda13]", "flax", "optax", "orbax-checkpoint"]
+dev = ["pytest", "ruff", "mypy", "pre-commit"]
+infra = []
+cuda = []
+
+[project.scripts]
+agoge = "agoge_forger.cli:app"
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+ignore_missing_imports = true

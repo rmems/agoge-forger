@@ -1,0 +1,13 @@
+torch>=2.0.0
+transformers>=4.40.0
+accelerate>=0.30.0
+peft>=0.10.0
+trl>=0.8.0
+datasets>=2.19.0
+bitsandbytes>=0.43.0
+safetensors>=0.4.0
+pyyaml
+rich
+typer>=0.9.0
+pydantic>=2.0.0
+python-dotenv

@@ -65,6 +65,10 @@ htmlcov/
 .tox/
 .nox/
 
+# Linting / Type checking
+.ruff_cache/
+.mypy_cache/
+
 # Logs
 *.log
 
@@ -80,3 +84,18 @@ runs/
 smoke_output/
 rust_output/
 julia_output/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Datasets
+datasets/samples/*.jsonl
+!datasets/samples/tiny_sft.jsonl
+
+# Models
+*.safetensors
+*.bin
+*.pt
+*.gguf

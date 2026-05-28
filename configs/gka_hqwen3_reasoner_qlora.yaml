@@ -1,0 +1,36 @@
+# QLoRA config for amazon/GKA-primed-HQwen3-8B-Reasoner
+model_id: "amazon/GKA-primed-HQwen3-8B-Reasoner"
+trust_remote_code: true
+dataset_path: "datasets/samples/tiny_sft.jsonl"
+dataset_text_field: "text"
+output_dir: "adapters"
+run_name: "gka_hqwen3_qlora"
+
+load_in_4bit: true
+bnb_4bit_quant_type: "nf4"
+bnb_4bit_compute_dtype: "bfloat16"
+bnb_4bit_use_double_quant: true
+
+max_seq_length: 2048
+batch_size: 1
+gradient_accumulation_steps: 8
+gradient_checkpointing: true
+learning_rate: 0.0001
+num_train_epochs: 1
+bf16: true
+seed: 42
+
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+
+# NOTE: Targeting only normal Qwen-style projection modules first.
+# Custom GKA/Kalman/SSM modules should be inspected before adding to target_modules.
+target_modules:
+  - "q_proj"
+  - "k_proj"
+  - "v_proj"
+  - "o_proj"
+  - "gate_proj"
+  - "up_proj"
+  - "down_proj"

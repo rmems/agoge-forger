@@ -1,0 +1,36 @@
+# Conservative defaults for an RTX 5080 16GB
+model_id: "Qwen/Qwen2.5-1.5B-Instruct" # Change this as needed
+trust_remote_code: true
+dataset_path: "datasets/samples/tiny_sft.jsonl"
+dataset_text_field: "text"
+output_dir: "adapters"
+run_name: "rtx5080_qlora_run"
+
+# QLoRA specifics
+load_in_4bit: true
+bnb_4bit_quant_type: "nf4"
+bnb_4bit_compute_dtype: "bfloat16"
+bnb_4bit_use_double_quant: true
+
+# Training
+max_seq_length: 2048
+batch_size: 1
+gradient_accumulation_steps: 8
+gradient_checkpointing: true
+learning_rate: 0.0002
+num_train_epochs: 1
+bf16: true
+seed: 42
+
+# LoRA
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+target_modules:
+  - "q_proj"
+  - "k_proj"
+  - "v_proj"
+  - "o_proj"
+  - "gate_proj"
+  - "up_proj"
+  - "down_proj"
