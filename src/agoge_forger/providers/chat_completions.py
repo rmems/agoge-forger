@@ -79,13 +79,17 @@ class ChatCompletionsClient:
         messages: List[Dict[str, str]],
         stream: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        return {
+        is_streaming = stream if stream is not None else self.config.stream
+        payload = {
             "model": self.config.model,
             "messages": messages,
             "max_tokens": self.config.max_tokens,
             "temperature": self.config.temperature,
-            "stream": stream if stream is not None else self.config.stream,
+            "stream": is_streaming,
         }
+        if is_streaming:
+            payload["stream_options"] = {"include_usage": True}
+        return payload
 
     def _save_raw(self, request_id: str, data: Any) -> str:
         path = os.path.join(self._raw_dir, f"{request_id}.json")
@@ -94,19 +98,19 @@ class ChatCompletionsClient:
         return path
 
     def _parse_usage(self, usage: Optional[Dict[str, Any]]) -> Dict[str, int]:
-        if not usage:
+        if not usage or not isinstance(usage, dict):
             return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         return {
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-            "total_tokens": usage.get("total_tokens", 0),
+            "input_tokens": usage.get("prompt_tokens") or 0,
+            "output_tokens": usage.get("completion_tokens") or 0,
+            "total_tokens": usage.get("total_tokens") or 0,
         }
 
     def _parse_choice(self, choice: Dict[str, Any]) -> Dict[str, str]:
-        message = choice.get("message", {})
-        content = message.get("content", "")
-        reasoning = message.get("reasoning_content", "") or message.get("reasoning", "")
-        finish = choice.get("finish_reason", "")
+        message = choice.get("message") or {}
+        content = message.get("content") or ""
+        reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
+        finish = choice.get("finish_reason") or ""
         return {"response_text": content, "reasoning_text": reasoning, "finish_reason": finish}
 
     def chat(
@@ -133,7 +137,7 @@ class ChatCompletionsClient:
         t_start = time.monotonic()
         try:
             if use_stream:
-                self._chat_streaming(payload, result)
+                self._chat_streaming(payload, result, t_start)
             else:
                 self._chat_non_streaming(payload, result)
         except httpx.HTTPStatusError as exc:
@@ -178,7 +182,7 @@ class ChatCompletionsClient:
             result.finish_reason = parsed["finish_reason"]
 
     def _chat_streaming(
-        self, payload: Dict[str, Any], result: InferenceResult
+        self, payload: Dict[str, Any], result: InferenceResult, t_start: float
     ) -> None:
         collected_content: List[str] = []
         collected_reasoning: List[str] = []
@@ -207,7 +211,7 @@ class ChatCompletionsClient:
                 raw_chunks.append(chunk)
 
                 if first_token:
-                    result.time_to_first_token_ms = (time.monotonic() - result.latency_ms / 1000 if result.latency_ms else time.monotonic()) * 1000
+                    result.time_to_first_token_ms = (time.monotonic() - t_start) * 1000
                     first_token = False
 
                 choices = chunk.get("choices", [])
