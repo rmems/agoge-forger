@@ -199,9 +199,9 @@ class ChatCompletionsClient:
         ) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines():
-                if not line or not line.startswith("data: "):
+                if not line or not line.startswith("data:"):
                     continue
-                data_str = line[len("data: "):]
+                data_str = line[len("data:"):].lstrip()
                 if data_str.strip() == "[DONE]":
                     break
                 try:
