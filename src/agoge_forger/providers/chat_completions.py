@@ -210,16 +210,15 @@ class ChatCompletionsClient:
                     continue
                 raw_chunks.append(chunk)
 
-                if first_token:
-                    result.time_to_first_token_ms = (time.monotonic() - t_start) * 1000
-                    first_token = False
-
                 choices = chunk.get("choices", [])
                 if not choices:
                     continue
                 delta = choices[0].get("delta", {})
                 content = delta.get("content", "")
                 reasoning = delta.get("reasoning_content", "") or delta.get("reasoning", "")
+                if first_token and (content or reasoning):
+                    result.time_to_first_token_ms = (time.monotonic() - t_start) * 1000
+                    first_token = False
                 if content:
                     collected_content.append(content)
                 if reasoning:
