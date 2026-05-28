@@ -1,3 +1,38 @@
+Metadata-Version: 2.4
+Name: agoge-forger
+Version: 0.1.0
+Summary: A local-first, GPU-aware forge for modern LLM fine-tuning.
+Author: Agoge
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: torch>=2.0.0
+Requires-Dist: transformers>=4.40.0
+Requires-Dist: accelerate>=0.30.0
+Requires-Dist: peft>=0.10.0
+Requires-Dist: trl>=0.8.0
+Requires-Dist: datasets>=2.19.0
+Requires-Dist: bitsandbytes>=0.43.0
+Requires-Dist: safetensors>=0.4.0
+Requires-Dist: pyyaml
+Requires-Dist: rich
+Requires-Dist: typer>=0.9.0
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: python-dotenv
+Provides-Extra: jax
+Requires-Dist: jax[cuda13]; extra == "jax"
+Requires-Dist: flax; extra == "jax"
+Requires-Dist: optax; extra == "jax"
+Requires-Dist: orbax-checkpoint; extra == "jax"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: pre-commit; extra == "dev"
+Provides-Extra: infra
+Provides-Extra: cuda
+Dynamic: license-file
+
 # Agoge Forger
 
 "Agoge" refers to the ancient Spartan training system. This repo is a modern model-training forge: local-first, GPU-aware, cloud-capable, and designed for fine-tuning, adapter training, quantization experiments, CUDA kernel experimentation, and optional Rust/JAX backends.

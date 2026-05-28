@@ -1,0 +1,12 @@
+[package]
+name = "agoge-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+agoge-jsonl = { path = "../agoge-jsonl" }
+agoge-gguf = { path = "../agoge-gguf" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

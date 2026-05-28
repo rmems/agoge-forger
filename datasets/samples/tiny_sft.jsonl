@@ -1,0 +1,10 @@
+{"text": "User: What is Agoge?\nAssistant: Agoge was the rigorous education and training program mandated for all male Spartan citizens."}
+{"text": "User: How many VRAM does the RTX 5080 have?\nAssistant: The RTX 5080 has 16GB of VRAM."}
+{"text": "User: Explain QLoRA.\nAssistant: QLoRA is an efficient finetuning approach that reduces memory usage by backpropagating gradients through a frozen, 4-bit quantized pretrained language model into Low Rank Adapters (LoRA)."}
+{"messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there! How can I assist you in the forge?"}]}
+{"instruction": "Define JAX.", "input": "", "output": "JAX is an autograd and XLA compiler framework."}
+{"text": "User: Is Rust required here?\nAssistant: No, Rust is optional tooling and experimental framework support."}
+{"text": "User: Who makes the Nemotron series?\nAssistant: NVIDIA developed the Nemotron series."}
+{"text": "User: What is TRL?\nAssistant: TRL (Transformer Reinforcement Learning) is a library for RLHF, PPO, and SFT."}
+{"text": "User: What does GGUF stand for?\nAssistant: GGUF stands for GPT-Generated Unified Format."}
+{"instruction": "List the target modules for Qwen.", "input": "", "output": "q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj"}
