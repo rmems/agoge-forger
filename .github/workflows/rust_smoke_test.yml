@@ -71,7 +71,7 @@ jobs:
             "config": {
               "command": "${{ inputs.command }}",
               "package": "${{ inputs.package }}",
-              "dry_run": ${{ inputs.dry_run }}
+              "dry_run": ${{ toJSON(inputs.dry_run) }}
             }
           }
           MANIFEST
@@ -81,11 +81,11 @@ jobs:
           m = {
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'git_commit': subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),
-            'git_branch': subprocess.check_output(['git','rev-parse','abbrev-ref','HEAD']).decode().strip(),
+            'git_branch': subprocess.check_output(['git','rev-parse','--abbrev-ref','HEAD']).decode().strip(),
             'config': {
               'command': '${{ inputs.command }}',
               'package': '${{ inputs.package }}',
-              'dry_run': ${{ inputs.dry_run }}
+              'dry_run': ${{ toJSON(inputs.dry_run) }}
             }
           }
           json.dump(m, open('rust_output/manifest.json','w'), indent=2)

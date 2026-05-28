@@ -62,7 +62,7 @@ jobs:
           m = {
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'git_commit': subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),
-            'git_branch': subprocess.check_output(['git','rev-parse','abbrev-ref','HEAD']).decode().strip(),
+            'git_branch': subprocess.check_output(['git','rev-parse','--abbrev-ref','HEAD']).decode().strip(),
             'config': {
               'command': '${{ inputs.command }}',
               'project_dir': '${{ inputs.project_dir }}',
