@@ -98,7 +98,7 @@ Every request returns an `InferenceResult` dataclass:
 
 All raw responses are written to `runs/<run_name>/raw/<request_id>.json`.
 
-For streaming requests, the file contains an array of SSE chunks.
+For streaming requests, the file contains a JSON object with a `"chunks"` key holding the array of SSE chunks.
 
 ## Targeting Local vLLM
 
