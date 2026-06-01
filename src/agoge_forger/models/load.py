@@ -61,4 +61,19 @@ def load_base_model(model_id: str, trust_remote_code: bool, quant_config=None, b
 
     logger.info(f"Loading model {model_id}")
     model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
+
+    # Keep the embedding table aligned with the tokenizer so newly-added special
+    # tokens cannot trip a later CUDA index assert during training.
+    embedding_layer = model.get_input_embeddings()
+    embedding_size = getattr(embedding_layer, "num_embeddings", None)
+    tokenizer_size = len(tokenizer)
+    if embedding_size is not None and tokenizer_size > embedding_size:
+        logger.warning(
+            f"Resizing token embeddings from {embedding_size} to {tokenizer_size} to match tokenizer vocab."
+        )
+        model.resize_token_embeddings(tokenizer_size)
+
+    if hasattr(model, "config"):
+        model.config.vocab_size = len(tokenizer)
+
     return model, tokenizer

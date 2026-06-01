@@ -81,3 +81,35 @@ def validate_lora_targets_exist(model, lora_config):
         
     logger.info(f"Validated target modules: {valid_targets}")
     return valid_targets
+
+def validate_tokenizer_dataset_compatibility(model, tokenizer, dataset, max_samples: int = 32):
+    embedding_layer = model.get_input_embeddings()
+    embedding_size = getattr(embedding_layer, "num_embeddings", None)
+    if embedding_size is None:
+        logger.warning("Could not determine embedding size; skipping tokenizer compatibility check.")
+        return
+
+    tokenizer_size = len(tokenizer)
+    if tokenizer_size > embedding_size:
+        raise ValueError(
+            f"Tokenizer size ({tokenizer_size}) exceeds model embedding size ({embedding_size}). "
+            "Resize the model embeddings before training."
+        )
+
+    sample_count = min(len(dataset), max_samples)
+    for index in range(sample_count):
+        text = dataset[index].get("text", "")
+        tokens = tokenizer(text, add_special_tokens=True, truncation=False)["input_ids"]
+        if not tokens:
+            raise ValueError(f"Dataset row {index} tokenized to an empty sequence.")
+        token_max = max(tokens)
+        if token_max >= embedding_size:
+            raise ValueError(
+                f"Dataset row {index} contains token id {token_max}, which exceeds model embedding size "
+                f"{embedding_size}. Check the tokenizer and special-token handling."
+            )
+
+    logger.info(
+        f"Validated tokenizer/dataset compatibility against {sample_count} sample rows "
+        f"with embedding size {embedding_size}."
+    )

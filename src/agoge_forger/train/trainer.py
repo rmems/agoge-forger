@@ -8,7 +8,13 @@ from ..models.load import load_base_model
 from ..manifests import write_run_manifest
 from ..logging import logger
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
-from .preflight import check_cuda_available, get_gpu_report, estimate_training_risk, validate_lora_targets_exist
+from .preflight import (
+    check_cuda_available,
+    get_gpu_report,
+    estimate_training_risk,
+    validate_lora_targets_exist,
+    validate_tokenizer_dataset_compatibility,
+)
 
 def run_training(config):
     check_cuda_available(required=True)
@@ -48,6 +54,8 @@ def run_training(config):
     
     dataset = load_jsonl_dataset(config.dataset_path, tokenizer)
     logger.info(f"Dataset size: {len(dataset)}")
+
+    validate_tokenizer_dataset_compatibility(model, tokenizer, dataset)
     
     out_dir = os.path.join(config.output_dir, config.run_name)
     
@@ -57,6 +65,13 @@ def run_training(config):
         gradient_accumulation_steps=config.training.gradient_accumulation_steps,
         learning_rate=config.training.learning_rate,
         num_train_epochs=config.training.num_train_epochs,
+        warmup_steps=config.training.warmup_steps,
+        max_steps=config.training.max_steps,
+        save_steps=config.training.save_steps,
+        eval_steps=config.training.eval_steps,
+        weight_decay=config.training.weight_decay,
+        optim=config.training.optim,
+        lr_scheduler_type=config.training.lr_scheduler_type,
         bf16=config.training.bf16,
         logging_steps=1,
         save_strategy="no",
@@ -71,6 +86,7 @@ def run_training(config):
         max_seq_length=config.training.max_seq_length,
         tokenizer=tokenizer,
         args=training_args,
+        packing=config.training.packing,
     )
     
     logger.info("Starting training...")
