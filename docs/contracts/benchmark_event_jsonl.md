@@ -4,9 +4,12 @@ Benchmark and smoke-test results are logged as newline-delimited JSON (JSONL) wh
 
 ## File Location
 
-```
-runs/<run_name>/results.jsonl
-```
+Benchmark results are written to different locations depending on the runner type:
+
+- **Full training benchmark runs:** `runs/<run_name>/results.jsonl`
+- **CI smoke tests:** `smoke_output/results.jsonl` (configurable via `--output-dir` flag, default `smoke_output/`)
+
+Artifact collectors should check both paths, or prefer `smoke_output/` when running in CI environments.
 
 ## Schema
 

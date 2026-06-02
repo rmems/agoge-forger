@@ -75,13 +75,19 @@ This document clarifies which parts of `agoge-forger` are owned by Python, Rust,
 
 ## Julia Output Conventions
 
-Julia smoke scripts write to `runs/<run_name>/julia/`:
+The Julia smoke-test workflow (`.github/workflows/julia_smoke_test.yml`) writes to `julia_output/`:
 
-| File                      | Format | Description                       |
-|---------------------------|--------|-----------------------------------|
-| `metrics.json`            | JSON   | Training/evaluation metrics       |
-| `predictions.csv`         | CSV    | Model predictions                 |
-| `report.md`              | Markdown | Human-readable experiment report |
+| File                  | Format     | Description                              |
+|-----------------------|------------|------------------------------------------|
+| `manifest.json`       | JSON       | Timestamp, git info, config             |
+| `provider.json`       | JSON       | Python version, platform, CI context     |
+| `usage_before.json`   | JSON       | Pre-run token/request snapshot          |
+| `usage_after.json`    | JSON       | Post-run token/request snapshot         |
+| `usage_delta.json`    | JSON       | Delta (tokens, requests consumed)        |
+| `results.jsonl`       | JSONL      | Per-check status line (`{"status": "ok"}`) |
+| `summary.md`          | Markdown   | Human-readable smoke test summary        |
+
+> **Note:** `metrics.json`, `predictions.csv`, and `report.md` are planned outputs for future Julia ML integration scripts, not produced by the current smoke-test workflow.
 
 ## Rust Output Conventions
 
@@ -103,7 +109,7 @@ dev = ["pytest", "ruff", "mypy", "pre-commit"]
 
 Rust and Julia are not declared as Python dependencies. They are standalone toolchains invoked via their respective runtimes:
 
-- **Rust:** `cd rust-tools && cargo run --package agoge-jsonl -- <args>` (or `cargo run -p agoge-jsonl --manifest-path rust-tools/Cargo.toml -- <args>` from repo root)
+- **Rust:** `cd rust-tools && cargo run --package agoge-cli -- validate <file>` (or `cargo run -p agoge-cli --manifest-path rust-tools/Cargo.toml -- validate <file>` from repo root)
 - **Julia:** `julia --project=julia julia/scripts/<script>.jl`
 
 ## Compatibility Guarantees
