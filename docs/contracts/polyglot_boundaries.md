@@ -47,11 +47,11 @@ This document clarifies which parts of `agoge-forger` are owned by Python, Rust,
 │       ▼                              ▼                  │
 │  datasets/*.jsonl ──► Training ──► adapters/<run>/      │
 │       │                              │                  │
-│       │                              ├─ manifest.json   │
-│       │                              ├─ artifact_index  │
-│       │                              └─ adapter weights │
+│       │                              ├─ adapter weights│
+│       │                              └─ artifact_index │
 │       │                                                 │
 │       └──► Inference ──► runs/<run>/                    │
+│                                ├─ manifest.json         │
 │                                ├─ raw/*.json            │
 │                                ├─ smoke_eval.json       │
 │                                └─ results.jsonl         │
@@ -61,9 +61,9 @@ This document clarifies which parts of `agoge-forger` are owned by Python, Rust,
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
 │ Rust tools   │    │ Rust tools   │    │ Julia ML     │
 │              │    │              │    │              │
-│ agoge-jsonl  │    │ agoge-      │    │ Flux/Lux/    │
-│ validates    │    │ benchgen    │    │ SciML/MLJ    │
-│ JSONL rows   │    │ generates   │    │ reads        │
+│ agoge-jsonl  │    │ (future)    │    │ Flux/Lux/    │
+│ validates    │    │ benchgen     │    │ SciML/MLJ    │
+│ JSONL rows   │    │ generates    │    │ reads        │
 │              │    │ workloads   │    │ results,     │
 │ reads        │    │ reads       │    │ manifest     │
 │ datasets     │    │ manifest,   │    │              │
@@ -87,10 +87,11 @@ Julia smoke scripts write to `runs/<run_name>/julia/`:
 
 Rust tools write to `runs/<run_name>/`:
 
-| File                | Format | Tool          | Description                        |
-|---------------------|--------|---------------|------------------------------------|
-| `workload.jsonl`    | JSONL  | agoge-benchgen | Generated workload entries        |
-| Validation reports  | stdout | agoge-jsonl   | JSONL validation results           |
+| File               | Format | Tool         | Description                    |
+|--------------------|--------|--------------|--------------------------------|
+| Validation reports | stdout | agoge-jsonl  | JSONL validation results      |
+
+> **Note:** `workload.jsonl` is a planned output for a future `agoge-benchgen` tool. The Rust workspace currently only contains `agoge-cli`, `agoge-jsonl`, and `agoge-gguf`.
 
 ## Optional Dependency Groups
 
@@ -102,7 +103,7 @@ dev = ["pytest", "ruff", "mypy", "pre-commit"]
 
 Rust and Julia are not declared as Python dependencies. They are standalone toolchains invoked via their respective runtimes:
 
-- **Rust:** `cargo run --package agoge-jsonl -- <args>`
+- **Rust:** `cd rust-tools && cargo run --package agoge-jsonl -- <args>` (or `cargo run -p agoge-jsonl --manifest-path rust-tools/Cargo.toml -- <args>` from repo root)
 - **Julia:** `julia --project=julia julia/scripts/<script>.jl`
 
 ## Compatibility Guarantees

@@ -33,7 +33,7 @@ adapters/<run_name>/artifact_index.json   # training output
 
 | Field               | Type   | Required | Description                                    |
 |---------------------|--------|----------|------------------------------------------------|
-| `output_dir`        | str    | Yes      | Absolute path to the output directory          |
+| `output_dir`        | str    | Yes      | Path to the output directory (as written by producer — may be relative or absolute) |
 | `artifacts`         | list   | Yes      | Array of artifact objects                      |
 | `artifacts[].file`  | str    | Yes      | Relative path from `output_dir`                |
 | `artifacts[].size_bytes` | int | Yes    | File size in bytes                             |
