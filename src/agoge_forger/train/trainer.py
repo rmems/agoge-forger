@@ -8,7 +8,14 @@ from ..models.load import load_base_model
 from ..manifests import write_run_manifest
 from ..logging import logger
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
-from .preflight import check_cuda_available, get_gpu_report, estimate_training_risk, validate_lora_targets_exist
+from .checkpoints import resolve_resume_checkpoint
+from .preflight import (
+    check_cuda_available,
+    estimate_training_risk,
+    get_gpu_report,
+    validate_lora_targets_exist,
+    warn_on_disk_pressure,
+)
 
 def run_training(config):
     check_cuda_available(required=True)
@@ -16,6 +23,7 @@ def run_training(config):
     logger.info(f"GPU Report: {gpu_report}")
     
     estimate_training_risk(config, gpu_report)
+    warn_on_disk_pressure(config)
     
     logger.info(f"Loading {config.model_id} for run {config.run_name}")
     model, tokenizer = load_base_model(
@@ -50,6 +58,8 @@ def run_training(config):
     logger.info(f"Dataset size: {len(dataset)}")
     
     out_dir = os.path.join(config.output_dir, config.run_name)
+    os.makedirs(out_dir, exist_ok=True)
+    resume_checkpoint = resolve_resume_checkpoint(out_dir, config)
     
     training_args = TrainingArguments(
         output_dir=out_dir,
@@ -59,7 +69,10 @@ def run_training(config):
         num_train_epochs=config.training.num_train_epochs,
         bf16=config.training.bf16,
         logging_steps=1,
-        save_strategy="no",
+        save_strategy="steps",
+        save_steps=config.training.save_steps,
+        save_total_limit=config.training.save_total_limit,
+        save_safetensors=config.runtime.save_safetensors,
         seed=config.training.seed,
         gradient_checkpointing=config.training.gradient_checkpointing
     )
@@ -74,7 +87,7 @@ def run_training(config):
     )
     
     logger.info("Starting training...")
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
     
     logger.info(f"Saving adapter to {out_dir}")
     trainer.model.save_pretrained(out_dir, safe_serialization=config.runtime.save_safetensors)

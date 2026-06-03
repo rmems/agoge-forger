@@ -1,6 +1,10 @@
+import os
+import shutil
 import torch
 import re
 from ..logging import logger
+
+BYTES_PER_GB = 1024 ** 3
 
 def check_cuda_available(required=True):
     if not torch.cuda.is_available():
@@ -39,6 +43,67 @@ def estimate_training_risk(config, gpu_report):
             
         if config.training.max_seq_length > 2048:
             logger.warning("RISK: max_seq_length > 2048 on 16GB VRAM may cause OOM.")
+
+
+def _directory_size_bytes(path: str) -> int:
+    total = 0
+    for root, _, files in os.walk(path):
+        for filename in files:
+            file_path = os.path.join(root, filename)
+            try:
+                total += os.path.getsize(file_path)
+            except OSError:
+                logger.warning(f"Could not read file size for {file_path}")
+    return total
+
+
+def collect_disk_pressure_report(config, monitored_paths=None):
+    monitored = monitored_paths or [
+        os.path.expanduser("~/.unsloth/studio/outputs"),
+        os.path.expanduser("~/.cache/huggingface"),
+    ]
+    output_root = os.path.abspath(config.output_dir)
+    disk = shutil.disk_usage(output_root)
+    report = {
+        "output_dir": output_root,
+        "free_gb": disk.free / BYTES_PER_GB,
+        "warning_threshold_gb": config.runtime.disk_free_warning_gb,
+        "checkpoint_buffer_gb": config.runtime.checkpoint_disk_buffer_gb,
+        "paths": [],
+    }
+
+    for path in monitored:
+        entry = {"path": path, "exists": os.path.exists(path), "size_gb": 0.0}
+        if entry["exists"]:
+            entry["size_gb"] = _directory_size_bytes(path) / BYTES_PER_GB
+        report["paths"].append(entry)
+
+    return report
+
+
+def warn_on_disk_pressure(config, monitored_paths=None):
+    report = collect_disk_pressure_report(config, monitored_paths=monitored_paths)
+    free_gb = report["free_gb"]
+
+    for entry in report["paths"]:
+        if entry["exists"]:
+            logger.info(f"Disk preflight: {entry['path']} currently uses {entry['size_gb']:.2f} GB")
+        else:
+            logger.info(f"Disk preflight: {entry['path']} does not exist yet")
+
+    if free_gb < report["warning_threshold_gb"]:
+        logger.warning(
+            f"Disk preflight: only {free_gb:.2f} GB free under {report['output_dir']}; "
+            f"configured warning threshold is {report['warning_threshold_gb']:.2f} GB."
+        )
+
+    if free_gb < report["checkpoint_buffer_gb"]:
+        logger.warning(
+            f"Disk preflight: free space {free_gb:.2f} GB is below the checkpoint buffer "
+            f"of {report['checkpoint_buffer_gb']:.2f} GB. Checkpoint saves may fail."
+        )
+
+    return report
 
 def validate_lora_targets_exist(model, lora_config):
     mode = getattr(lora_config, "target_modules_mode", "auto_common")

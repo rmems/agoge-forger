@@ -1,5 +1,5 @@
 import yaml
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 class TrainingConfig(BaseModel):
@@ -11,6 +11,10 @@ class TrainingConfig(BaseModel):
     num_train_epochs: int = 1
     bf16: bool = True
     seed: int = 42
+    save_steps: int = 50
+    save_total_limit: Optional[int] = 2
+    resume_from_latest_checkpoint: bool = False
+    resume_checkpoint_path: Optional[str] = None
 
 class QuantizationConfig(BaseModel):
     load_in_4bit: bool = True
@@ -29,6 +33,8 @@ class RuntimeConfig(BaseModel):
     save_safetensors: bool = True
     allow_unsafe_serialization: bool = False
     max_shard_size: str = "4GB"
+    disk_free_warning_gb: float = 20.0
+    checkpoint_disk_buffer_gb: float = 8.0
 
 class ExperimentConfig(BaseModel):
     model_id: str
@@ -69,7 +75,11 @@ def load_config(yaml_path: str) -> ExperimentConfig:
             learning_rate=data.get('learning_rate', 0.0002),
             num_train_epochs=data.get('num_train_epochs', 1),
             bf16=data.get('bf16', True),
-            seed=data.get('seed', 42)
+            seed=data.get('seed', 42),
+            save_steps=data.get('save_steps', 50),
+            save_total_limit=data.get('save_total_limit', 2),
+            resume_from_latest_checkpoint=data.get('resume_from_latest_checkpoint', False),
+            resume_checkpoint_path=data.get('resume_checkpoint_path')
         ),
         lora=LoraConfigModel(
             lora_r=data.get('lora_r', 16),
@@ -81,6 +91,8 @@ def load_config(yaml_path: str) -> ExperimentConfig:
         runtime=RuntimeConfig(
             save_safetensors=data.get('save_safetensors', True),
             allow_unsafe_serialization=data.get('allow_unsafe_serialization', False),
-            max_shard_size=data.get('max_shard_size', "4GB")
+            max_shard_size=data.get('max_shard_size', "4GB"),
+            disk_free_warning_gb=data.get('disk_free_warning_gb', 20.0),
+            checkpoint_disk_buffer_gb=data.get('checkpoint_disk_buffer_gb', 8.0)
         )
     )
