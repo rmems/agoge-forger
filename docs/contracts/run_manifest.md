@@ -54,19 +54,19 @@ runs/<run_name>/manifest.json
 | Field             | Type   | Required | Description                                        |
 |-------------------|--------|----------|----------------------------------------------------|
 | `timestamp`       | str    | Yes      | ISO 8601 UTC datetime of run start                 |
-| `git`             | object | Yes      | Git state at run time                              |
-| `git.commit`      | str    | Yes      | Full or short commit SHA                           |
-| `git.branch`      | str    | Yes      | Branch name                                        |
-| `git.dirty`       | bool   | Yes      | Whether uncommitted changes were present           |
-| `config`          | object | Yes      | Full `ExperimentConfig` (see config schema)        |
-| `metrics`         | object | Yes      | Runtime metrics                                    |
-| `metrics.max_vram_gb` | float | Yes  | Peak VRAM usage in GB                              |
-| `metrics.gpu_report`  | object | Yes  | GPU hardware report (see below)                |
-| `metrics.artifact_index` | str | Yes | Path to `artifact_index.json`                  |
-| `environment`     | object | Yes      | Software environment                               |
-| `environment.python_version` | str | Yes | Python version string                      |
-| `environment.torch_version` | str | Yes | PyTorch version string                     |
-| `environment.cuda_version` | str | Yes | CUDA version or `"None"`                   |
+| `git`             | object | Yes      | Git state at run time (may be `{}` if git is unavailable) |
+| `git.commit`      | str    | No       | Full or short commit SHA (when git info is available)     |
+| `git.branch`      | str    | No       | Branch name (when git info is available)                  |
+| `git.dirty`       | bool   | No       | Whether uncommitted changes were present                  |
+| `config`          | object | Yes      | Full `ExperimentConfig` or smoke-test config snapshot     |
+| `metrics`         | object | No       | Present for training runs; omitted for inference smoke tests |
+| `metrics.max_vram_gb` | float | No   | Peak VRAM usage in GB (training only)                     |
+| `metrics.gpu_report`  | object | No   | GPU hardware report (training only)                     |
+| `metrics.artifact_index` | str | No | Path to `artifact_index.json` (training only)           |
+| `environment`     | object | No       | Present for training manifests; omitted for inference smoke tests |
+| `environment.python_version` | str | No | Python version string (training manifests)         |
+| `environment.torch_version` | str | No | PyTorch version string (training manifests)       |
+| `environment.cuda_version` | str | No | CUDA version or `"None"` (training manifests)      |
 | `model_metadata`  | object | No       | Present if model is loaded                         |
 | `model_metadata.dtype` | str | No      | Model dtype (e.g. `"torch.bfloat16"`)            |
 | `model_metadata.parameters` | int | No   | Total parameter count                              |
@@ -96,6 +96,7 @@ runs/<run_name>/manifest.json
 
 ## Notes
 
-- `config` contains the full `ExperimentConfig.model_dump()` output
+- `config` contains the full `ExperimentConfig.model_dump()` output for training runs, or the smoke-test config snapshot for inference runs
+- Inference smoke manifests (`smoke_output/manifest.json`) include only `timestamp`, `git`, and `config`
 - All JSON output uses `indent=2` formatting
 - `cuda_version` is `"None"` (string) when CUDA is unavailable

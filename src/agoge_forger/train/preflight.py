@@ -63,7 +63,11 @@ def collect_disk_pressure_report(config, monitored_paths=None):
         os.path.expanduser("~/.cache/huggingface"),
     ]
     output_root = os.path.abspath(config.output_dir)
-    disk = shutil.disk_usage(output_root)
+    disk_path = output_root
+    if not os.path.exists(disk_path):
+        parent = os.path.dirname(disk_path) or "."
+        disk_path = parent if os.path.exists(parent) else "."
+    disk = shutil.disk_usage(disk_path)
     report = {
         "output_dir": output_root,
         "free_gb": disk.free / BYTES_PER_GB,

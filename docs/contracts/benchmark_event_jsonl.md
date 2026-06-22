@@ -1,6 +1,9 @@
 # Benchmark Event JSONL Schema
 
-Benchmark and smoke-test results are logged as newline-delimited JSON (JSONL) where each line represents a single benchmark event (one inference request).
+Benchmark and smoke-test results are logged as newline-delimited JSON (JSONL). The schema depends on the producer:
+
+- **Python inference smoke test** (`scripts/smoke_test.py`): one object per inference request with token and latency fields (documented below).
+- **Rust and Julia smoke workflows**: status-only lines such as `{"status": "ok", "command": "check"}` — not interchangeable with the Python inference schema.
 
 ## File Location
 
@@ -109,30 +112,6 @@ The benchmark runner also produces:
 ### `summary.md`
 
 Human-readable markdown summary of the benchmark run.
-
-## InferenceResult (Provider-Level)
-
-The `ChatCompletionsClient` returns an `InferenceResult` dataclass per request:
-
-| Field                    | Type  | Description                               |
-|--------------------------|-------|-------------------------------------------|
-| `provider`               | str   | Provider name                             |
-| `base_url`               | str   | Endpoint URL                              |
-| `model`                  | str   | Model used                                |
-| `request_id`             | str   | Unique request identifier (hex)           |
-| `prompt_hash`            | str   | SHA-256 of prompt (first 16 chars)        |
-| `response_text`          | str   | Generated text                            |
-| `reasoning_text`         | str   | Chain-of-thought (if available)           |
-| `finish_reason`          | str   | Stop reason (`stop`, `length`, etc.)      |
-| `input_tokens`           | int   | Prompt token count                        |
-| `output_tokens`          | int   | Completion token count                    |
-| `total_tokens`           | int   | Total token count                         |
-| `latency_ms`             | float | End-to-end request latency                |
-| `time_to_first_token_ms` | float | Time to first content token (streaming)   |
-| `raw_response_path`      | str   | Path to saved raw response JSON           |
-| `error`                  | str   | Error message (empty on success)          |
-
-Raw responses are written to `runs/<run_name>/raw/<request_id>.json`.
 
 ## Owner
 

@@ -43,3 +43,17 @@ def test_collect_disk_pressure_report_uses_monitored_paths(tmp_path):
     assert report["paths"][0]["path"] == str(hot_path)
     assert report["paths"][0]["exists"] is True
     assert report["paths"][0]["size_gb"] > 0
+
+
+def test_collect_disk_pressure_report_handles_fresh_output_dir(tmp_path):
+    fresh_output = tmp_path / "new-run" / "adapter"
+    config = ExperimentConfig(
+        model_id="test-model",
+        dataset_path="dataset.jsonl",
+        output_dir=str(fresh_output),
+    )
+
+    report = collect_disk_pressure_report(config, monitored_paths=[])
+
+    assert report["output_dir"] == str(fresh_output)
+    assert report["free_gb"] > 0

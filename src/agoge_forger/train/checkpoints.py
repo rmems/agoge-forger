@@ -40,7 +40,9 @@ def list_valid_checkpoints(run_dir: str) -> list[str]:
     if not root.exists():
         return []
 
-    checkpoints = [path for path in root.iterdir() if is_valid_checkpoint(str(path))]
+    checkpoints = [
+        path for path in root.iterdir() if path.is_dir() and is_valid_checkpoint(str(path))
+    ]
     checkpoints.sort(key=_checkpoint_step)
     return [str(path) for path in checkpoints]
 
@@ -91,11 +93,11 @@ def resolve_export_source(run_dir: Optional[str] = None, adapter_path: Optional[
     if not run_dir:
         raise ValueError("Either run_dir or adapter_path must be provided.")
 
+    if is_adapter_artifact(run_dir):
+        return run_dir
+
     checkpoint_path = find_latest_valid_checkpoint(run_dir)
     if checkpoint_path:
         return checkpoint_path
-
-    if is_adapter_artifact(run_dir):
-        return run_dir
 
     raise ValueError(f"No exportable adapter artifact found under {run_dir}")

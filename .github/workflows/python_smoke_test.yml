@@ -80,15 +80,30 @@ jobs:
           "
 
       - name: Run Python smoke test
+        env:
+          INPUT_MODEL: ${{ inputs.model }}
+          INPUT_WORKLOAD: ${{ inputs.workload }}
+          INPUT_MAX_REQUESTS: ${{ inputs.max_requests }}
+          INPUT_CONCURRENCY: ${{ inputs.concurrency }}
+          INPUT_STREAM: ${{ inputs.stream }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          python scripts/smoke_test.py \
-            --model "${{ inputs.model }}" \
-            --workload "${{ inputs.workload }}" \
-            --max-requests "${{ inputs.max_requests }}" \
-            --concurrency "${{ inputs.concurrency }}" \
-            ${{ inputs.stream && '--stream' || '--no-stream' }} \
-            ${{ inputs.dry_run && '--dry-run' || '' }} \
-            --output-dir "${{ github.workspace }}/smoke_output"
+          args=(
+            --model "$INPUT_MODEL"
+            --workload "$INPUT_WORKLOAD"
+            --max-requests "$INPUT_MAX_REQUESTS"
+            --concurrency "$INPUT_CONCURRENCY"
+          )
+          if [ "$INPUT_STREAM" = "true" ]; then
+            args+=(--stream)
+          else
+            args+=(--no-stream)
+          fi
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          args+=(--output-dir "$GITHUB_WORKSPACE/smoke_output")
+          python scripts/smoke_test.py "${args[@]}"
 
       - name: Upload artifacts
         if: ${{ always() && inputs.upload_artifacts }}

@@ -36,13 +36,14 @@ def find_safetensors_files(path: str) -> List[str]:
         return glob.glob(os.path.join(path, "**", "*.safetensors"), recursive=True)
     return []
 
-def assert_no_unsafe_weight_bins(path: str) -> None:
+def assert_no_unsafe_weight_bins(path: str, *, recursive: bool = True) -> None:
     unsafe_patterns = ["pytorch_model.bin", "adapter_model.bin", "*.pt", "*.pth", "*.ckpt"]
     found_unsafe = []
     
     if os.path.isdir(path):
         for pattern in unsafe_patterns:
-            matches = glob.glob(os.path.join(path, "**", pattern), recursive=True)
+            search_root = os.path.join(path, "**", pattern) if recursive else os.path.join(path, pattern)
+            matches = glob.glob(search_root, recursive=recursive)
             found_unsafe.extend(matches)
             
     if found_unsafe:

@@ -18,6 +18,13 @@ def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B"):
     return checkpoint_dir
 
 
+def _write_final_adapter(root, base_model="Qwen/Qwen3.5-0.5B"):
+    (root / "adapter_model.safetensors").write_text("final-weights")
+    (root / "adapter_config.json").write_text(
+        '{"base_model_name_or_path": "%s"}' % base_model
+    )
+
+
 def test_find_latest_valid_checkpoint_skips_incomplete_entries(tmp_path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -68,6 +75,16 @@ def test_export_final_model_uses_latest_valid_checkpoint(monkeypatch, tmp_path):
     assert recorded["adapter_path"] == str(latest)
     assert recorded["out_dir"] == str(out_dir)
     assert recorded["kwargs"]["save_safetensors"] is True
+
+
+def test_resolve_export_source_prefers_final_adapter_over_checkpoints(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _write_checkpoint(run_dir, 50)
+    _write_checkpoint(run_dir, 100)
+    _write_final_adapter(run_dir)
+
+    assert resolve_export_source(run_dir=str(run_dir)) == str(run_dir)
 
 
 def test_export_helpers_support_final_adapter_directory(tmp_path):

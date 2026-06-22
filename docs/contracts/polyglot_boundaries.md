@@ -50,11 +50,13 @@ This document clarifies which parts of `agoge-forger` are owned by Python, Rust,
 │       │                              ├─ adapter weights│
 │       │                              └─ artifact_index │
 │       │                                                 │
-│       └──► Inference ──► runs/<run>/                    │
+│       └──► Inference ──► smoke_output/ (default)        │
 │                                ├─ manifest.json         │
-│                                ├─ raw/*.json            │
-│                                ├─ smoke_eval.json       │
-│                                └─ results.jsonl         │
+│                                ├─ provider.json         │
+│                                ├─ usage_*.json          │
+│                                ├─ results.jsonl         │
+│                                └─ summary.md            │
+│       └──► Eval ──► runs/<run>/smoke_eval.json          │
 └─────────────────────────────────────────────────────────┘
          │                    │                  │
          ▼                    ▼                  ▼
@@ -91,11 +93,19 @@ The Julia smoke-test workflow (`.github/workflows/julia_smoke_test.yml`) writes 
 
 ## Rust Output Conventions
 
-Rust tools write to `runs/<run_name>/`:
+The Rust smoke-test workflow (`.github/workflows/rust_smoke_test.yml`) writes to `rust_output/`:
 
-| File               | Format | Tool         | Description                    |
-|--------------------|--------|--------------|--------------------------------|
-| Validation reports | stdout | agoge-jsonl  | JSONL validation results      |
+| File                  | Format     | Description                              |
+|-----------------------|------------|------------------------------------------|
+| `manifest.json`       | JSON       | Timestamp, git info, config             |
+| `provider.json`       | JSON       | Rust toolchain and CI context            |
+| `usage_before.json`   | JSON       | Pre-run snapshot                         |
+| `usage_after.json`    | JSON       | Post-run snapshot                        |
+| `usage_delta.json`    | JSON       | Delta summary                            |
+| `results.jsonl`       | JSONL      | Per-command status lines                 |
+| `summary.md`          | Markdown   | Human-readable smoke test summary        |
+
+The `agoge-cli validate` command prints JSONL validation reports to **stdout** (not to `runs/`).
 
 > **Note:** `workload.jsonl` is a planned output for a future `agoge-benchgen` tool. The Rust workspace currently only contains `agoge-cli`, `agoge-jsonl`, and `agoge-gguf`.
 
@@ -103,14 +113,14 @@ Rust tools write to `runs/<run_name>/`:
 
 ```toml
 [project.optional-dependencies]
-jax = ["jax[cuda13]", "flax", "optix", "orbax-checkpoint"]
+jax = ["jax[cuda13]", "flax", "optax", "orbax-checkpoint"]
 dev = ["pytest", "ruff", "mypy", "pre-commit"]
 ```
 
 Rust and Julia are not declared as Python dependencies. They are standalone toolchains invoked via their respective runtimes:
 
-- **Rust:** `cd rust-tools && cargo run --package agoge-cli -- validate <file>` (or `cargo run -p agoge-cli --manifest-path rust-tools/Cargo.toml -- validate <file>` from repo root)
-- **Julia:** `julia --project=julia julia/scripts/<script>.jl`
+- **Rust:** `cd rust-tools && cargo run -p agoge-cli -- validate <file.jsonl>`
+- **Julia:** `julia --project=<project_dir> -e '...'` (see `.github/workflows/julia_smoke_test.yml`; no `julia/scripts` tree in this repo yet)
 
 ## Compatibility Guarantees
 
