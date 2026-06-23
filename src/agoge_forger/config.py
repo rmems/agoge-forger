@@ -56,6 +56,14 @@ def load_config(yaml_path: str) -> ExperimentConfig:
     with config_path.open("r") as f:
         data = yaml.safe_load(f)
 
+    # Validate loaded YAML structure
+    if data is None or not isinstance(data, dict):
+        raise ValueError(f"Invalid config file '{yaml_path}': expected a YAML mapping, got {type(data).__name__}")
+    if "dataset_path" not in data:
+        raise ValueError(f"Invalid config file '{yaml_path}': missing required key 'dataset_path'")
+    if "model_id" not in data:
+        raise ValueError(f"Invalid config file '{yaml_path}': missing required key 'model_id'")
+
     # Resolve relative `dataset_path` entries against the directory of
     # the config file itself, not the current working directory, so
     # configs are portable and reproducible across environments.

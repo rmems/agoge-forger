@@ -9,6 +9,18 @@ def merge_adapter(base_model_id: str, adapter_path: str, out_dir: str,
                   save_safetensors: bool = True, allow_unsafe: bool = False, max_shard_size: str = "4GB",
                   trust_remote_code: bool = False):
     logger.info(f"Merging {adapter_path} into {base_model_id}")
+
+    # Validate adapter uses safetensors format
+    from pathlib import Path
+    adapter_dir = Path(adapter_path)
+    safetensors_file = adapter_dir / "adapter_model.safetensors"
+    bin_file = adapter_dir / "adapter_model.bin"
+
+    if not safetensors_file.exists() and bin_file.exists():
+        raise ValueError(f"Adapter at '{adapter_path}' uses unsafe .bin format. Only safetensors format is allowed.")
+    if not safetensors_file.exists():
+        raise ValueError(f"Adapter at '{adapter_path}' missing adapter_model.safetensors file.")
+
     model, tokenizer = load_base_model(
         base_model_id, trust_remote_code=trust_remote_code, quant_config=None, bf16=True
     )
