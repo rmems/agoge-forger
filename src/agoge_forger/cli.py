@@ -94,7 +94,7 @@ def merge_adapter(
 @app.command()
 def export_final_model(
     out_dir: str = typer.Option(..., help="Output directory for the merged model"),
-    run_dir: str = typer.Option(None, help="Run directory containing checkpoints or a final adapter"),
+    run_dir: str | None = typer.Option(None, help="Run directory containing checkpoints or a final adapter"),
     adapter_path: str | None = typer.Option(None, help="Specific adapter or checkpoint directory to export"),
     base_model: str = typer.Option(None, help="Base model ID override"),
     save_safetensors: bool = typer.Option(True, help="Save using safetensors"),
