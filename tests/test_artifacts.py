@@ -30,3 +30,19 @@ def test_no_bin_outputs_when_safe_serialization_required(tmp_path):
     
     with pytest.raises(RuntimeError, match="Unsafe weight binaries found"):
         assert_no_unsafe_weight_bins(str(out_dir))
+
+
+def test_assert_no_unsafe_weight_bins_ignores_trainer_state_pt(tmp_path):
+    checkpoint = tmp_path / "checkpoint-100"
+    checkpoint.mkdir()
+    (checkpoint / "optimizer.pt").write_bytes(b"trainer-state")
+    (checkpoint / "rng_state.pth").write_bytes(b"rng")
+    assert_no_unsafe_weight_bins(str(tmp_path))
+
+
+def test_assert_no_unsafe_weight_bins_detects_bin_in_checkpoint_subdir(tmp_path):
+    checkpoint = tmp_path / "checkpoint-100"
+    checkpoint.mkdir()
+    (checkpoint / "adapter_model.bin").write_bytes(b"unsafe")
+    with pytest.raises(RuntimeError, match="Unsafe weight binaries found"):
+        assert_no_unsafe_weight_bins(str(tmp_path))

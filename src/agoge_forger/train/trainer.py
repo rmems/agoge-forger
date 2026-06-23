@@ -94,7 +94,7 @@ def run_training(config):
     tokenizer.save_pretrained(out_dir)
     
     if not config.runtime.allow_unsafe_serialization:
-        assert_no_unsafe_weight_bins(out_dir, recursive=False)
+        assert_no_unsafe_weight_bins(out_dir)
         
     index_path = write_artifact_index(out_dir)
     logger.info(f"Artifact index written to {index_path}")

@@ -58,6 +58,7 @@ def _directory_size_bytes(path: str) -> int:
 
 
 def collect_disk_pressure_report(config, monitored_paths=None):
+    """Report disk usage; override ``monitored_paths`` to replace default Unsloth/HF cache roots."""
     monitored = monitored_paths or [
         os.path.expanduser("~/.unsloth/studio/outputs"),
         os.path.expanduser("~/.cache/huggingface"),
