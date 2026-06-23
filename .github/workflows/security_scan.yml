@@ -30,20 +30,24 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          # Reduce token exposure during PR execution; we don't push
-          # from CI and don't need the auto-generated GITHUB_TOKEN
-          # persisted in the local git config.
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
         with:
           enable-cache: true
 
-      - name: Install locked dependencies
-        run: uv sync --dev
+      - name: Install dev dependencies
+        # `uv pip install -e .[dev]` (vs `uv sync --dev`) installs the
+        # project in editable mode into a venv at `.venv`, and puts
+        # pytest on PATH. This matches what `pytest tests/` needs
+        # directly and avoids the "Failed to spawn: pytest" error
+        # we hit when relying on `uv run` + `uv sync` together.
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
 
       - name: Run pytest
-        run: uv run pytest tests/
+        run: .venv/bin/pytest tests/
 
       # Snyk SCA against the locked/installed environment (compliance PR #21).
       # Uses the official snyk/actions/setup step to install the real Snyk
@@ -68,7 +72,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1 (stable)
+      # v1 of dtolnay/rust-toolchain requires an explicit `toolchain`
+      # input even for the implicit "stable" channel. The earlier
+      # invocation with no `with:` block failed with
+      # "'toolchain' is a required input".
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
 
       - name: Cargo check and clippy
         working-directory: rust-tools

@@ -69,8 +69,15 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install locked dependencies
-        run: uv sync --dev
+      - name: Install dev dependencies
+        # Use `uv pip install -e .[dev]` rather than `uv sync --dev`
+        # so the project is installed in editable mode and the test
+        # scripts (which `from agoge_forger.X import Y`) can import
+        # the package directly. `uv sync --dev` only installs the
+        # dependencies, not the project itself.
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
 
       - name: Config check
         if: ${{ !inputs.dry_run }}
