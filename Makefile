@@ -12,7 +12,7 @@ check-jax:
 	agoge check-jax
 
 inspect-gka:
-	agoge inspect-model --model-id amazon/GKA-primed-HQwen3-8B-Reasoner
+	agoge inspect-model --model-id amazon/GKA-primed-HQwen3-8B-Reasoner --trust-remote-code
 
 train-smoke:
 	agoge train-qlora --config configs/smoke_test.yaml

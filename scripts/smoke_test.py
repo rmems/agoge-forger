@@ -228,10 +228,10 @@ def main() -> None:
         if workload == "inference":
             r = _run_inference_request(i, model, stream, dry_run, args.trust_remote_code)
         elif workload == "eval":
-            r = _run_inference_request(i, model, stream, dry_run, args.trust_remote_code) if not dry_run else _dry_run_request(i, model, stream)
+            r = _run_inference_request(i, model, stream, dry_run, args.trust_remote_code)
             r["workload"] = "eval"
         else:
-            r = _run_inference_request(i, model, stream, dry_run, args.trust_remote_code) if not dry_run else _dry_run_request(i, model, stream)
+            r = _run_inference_request(i, model, stream, dry_run, args.trust_remote_code)
             r["workload"] = "inspect"
         return r
 

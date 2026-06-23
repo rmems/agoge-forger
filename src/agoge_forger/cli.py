@@ -2,7 +2,7 @@ import json
 
 import typer
 
-from .artifacts.safetensors_io import inspect_safetensors_file
+from .artifacts.safetensors_io import assert_no_unsafe_weight_bins, inspect_safetensors_file
 from .backends.jax_backend import check_jax_env
 from .backends.torch_backend import check_torch_env
 from .config import load_config
@@ -79,9 +79,19 @@ def train_lora(config: str = typer.Option(..., help="Path to YAML config")):
 def smoke_eval(
     adapter_path: str = typer.Option(..., help="Path to PEFT adapter"),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    allow_unsafe_serialization: bool = typer.Option(False, help="Allow .bin weight files in the adapter"),
 ):
     """Run a smoke evaluation on an adapter."""
     safe_adapter_path = resolve_existing_path(adapter_path, must_be_dir=True)
+    # Enforce the safetensors-only policy on the adapter path the same
+    # way resume/export do, so PeftModel.from_pretrained cannot be
+    # tricked into deserializing a pickle-based adapter_model.bin.
+    if not allow_unsafe_serialization:
+        try:
+            assert_no_unsafe_weight_bins(str(safe_adapter_path), recursive=True)
+        except RuntimeError as e:
+            logger.error(str(e))
+            raise typer.Exit(code=1)
     try:
         base_model = infer_base_model_from_adapter(str(safe_adapter_path))
     except Exception as e:

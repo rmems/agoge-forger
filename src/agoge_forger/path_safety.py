@@ -1,17 +1,25 @@
 from pathlib import Path
 
 
-def _reject_parent_traversal(path: Path) -> None:
-    if ".." in path.parts:
-        raise ValueError(f"Path must not contain '..': {path}")
+def _check_no_parent_traversal(candidate: Path) -> None:
+    """Reject a candidate path that explicitly traverses '..' segments.
+
+    Checking the *pre-resolution* path catches the common traversal
+    patterns (`../etc/passwd`, `safe/../../escape`) before they reach
+    the filesystem. We deliberately check the candidate instead of the
+    resolved path because Python's `Path.resolve()` consumes '..'
+    segments, so a post-resolve check would not see them.
+    """
+    if ".." in candidate.parts:
+        raise ValueError(f"Path must not contain '..': {candidate}")
 
 
 def resolve_existing_path(path: str, *, must_be_file: bool = False, must_be_dir: bool = False) -> Path:
-    if not path or not str(path).strip():
+    if not path or not path.strip():
         raise ValueError("Path must not be empty")
 
     candidate = Path(path).expanduser()
-    _reject_parent_traversal(candidate)
+    _check_no_parent_traversal(candidate)
     resolved = candidate.resolve()
 
     if not resolved.exists():
@@ -24,11 +32,11 @@ def resolve_existing_path(path: str, *, must_be_file: bool = False, must_be_dir:
 
 
 def resolve_output_directory(path: str) -> Path:
-    if not path or not str(path).strip():
+    if not path or not path.strip():
         raise ValueError("Output directory must not be empty")
 
     candidate = Path(path).expanduser()
-    _reject_parent_traversal(candidate)
+    _check_no_parent_traversal(candidate)
     resolved = candidate.resolve()
     resolved.mkdir(parents=True, exist_ok=True)
     return resolved

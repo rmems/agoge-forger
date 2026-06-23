@@ -56,7 +56,14 @@ def load_config(yaml_path: str) -> ExperimentConfig:
     with config_path.open("r") as f:
         data = yaml.safe_load(f)
 
-    dataset_path = str(resolve_existing_path(data["dataset_path"], must_be_file=True))
+    # Resolve relative `dataset_path` entries against the directory of
+    # the config file itself, not the current working directory, so
+    # configs are portable and reproducible across environments.
+    from pathlib import Path
+    raw_dataset_path = Path(str(data["dataset_path"])).expanduser()
+    if not raw_dataset_path.is_absolute():
+        raw_dataset_path = (config_path.parent / raw_dataset_path).resolve()
+    dataset_path = str(resolve_existing_path(str(raw_dataset_path), must_be_file=True))
 
     # Flattened parsing to match yaml structure
     return ExperimentConfig(

@@ -1,7 +1,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..logging import logger
@@ -9,6 +9,8 @@ from ..path_safety import resolve_existing_path
 
 CHECKPOINT_RE = re.compile(r"^checkpoint-(\d+)$")
 ADAPTER_WEIGHT_FILES = ("adapter_model.safetensors",)
+
+PathLike = Union[str, Path]
 
 
 def _checkpoint_step(path: Path) -> int:
@@ -18,41 +20,67 @@ def _checkpoint_step(path: Path) -> int:
     return int(match.group(1))
 
 
-def is_adapter_artifact(path: str) -> bool:
-    adapter_dir = resolve_existing_path(path, must_be_dir=True)
-    return (adapter_dir / "adapter_config.json").exists() and any(
-        (adapter_dir / weight_file).exists() for weight_file in ADAPTER_WEIGHT_FILES
-    )
+def _has_unsafe_weight_bins(adapter_dir: Path) -> bool:
+    """Return True if the adapter directory contains any unsafe weight files."""
+    try:
+        assert_no_unsafe_weight_bins(str(adapter_dir), recursive=True)
+        return False
+    except RuntimeError:
+        return True
 
 
-def is_valid_checkpoint(path: str) -> bool:
-    checkpoint_dir = resolve_existing_path(path, must_be_dir=True)
+def is_adapter_artifact(path: PathLike) -> bool:
+    """A directory is a valid adapter artifact iff it has the required config,
+    at least one safetensors weight file, and NO pickle-based `.bin`/`.ckpt`
+    weight files (the safetensors-only policy is enforced even when both
+    formats are present).
+    """
+    adapter_dir = Path(path)
+    if not adapter_dir.is_dir():
+        return False
+    if not (adapter_dir / "adapter_config.json").is_file():
+        return False
+    if not any((adapter_dir / weight_file).is_file() for weight_file in ADAPTER_WEIGHT_FILES):
+        return False
+    if _has_unsafe_weight_bins(adapter_dir):
+        return False
+    return True
+
+
+def is_valid_checkpoint(path: PathLike) -> bool:
+    """A checkpoint is valid iff it is a `checkpoint-N` directory with the
+    required trainer state, AND it is a valid (safetensors-only) adapter
+    artifact. Unsafe-bin filtering happens here so callers selecting
+    among checkpoints never have to re-validate.
+    """
+    checkpoint_dir = Path(path)
+    if not checkpoint_dir.is_dir():
+        return False
     if _checkpoint_step(checkpoint_dir) < 0:
         return False
-    if not (checkpoint_dir / "trainer_state.json").exists():
+    if not (checkpoint_dir / "trainer_state.json").is_file():
         return False
-    return is_adapter_artifact(str(checkpoint_dir))
+    return is_adapter_artifact(checkpoint_dir)
 
 
-def list_valid_checkpoints(run_dir: str) -> list[str]:
-    root = resolve_existing_path(run_dir, must_be_dir=True)
-
-    checkpoints = [
-        path for path in root.iterdir() if path.is_dir() and is_valid_checkpoint(str(path))
-    ]
+def list_valid_checkpoints(run_dir: PathLike) -> list[Path]:
+    root = Path(run_dir)
+    if not root.is_dir():
+        return []
+    checkpoints = [path for path in root.iterdir() if is_valid_checkpoint(path)]
     checkpoints.sort(key=_checkpoint_step)
-    return [str(path) for path in checkpoints]
+    return checkpoints
 
 
-def find_latest_valid_checkpoint(run_dir: str) -> Optional[str]:
+def find_latest_valid_checkpoint(run_dir: PathLike) -> Optional[Path]:
     checkpoints = list_valid_checkpoints(run_dir)
     if not checkpoints:
         return None
     return checkpoints[-1]
 
 
-def infer_base_model_from_adapter(adapter_path: str) -> str:
-    adapter_dir = resolve_existing_path(adapter_path, must_be_dir=True)
+def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
+    adapter_dir = Path(adapter_path)
     config_path = adapter_dir / "adapter_config.json"
     with config_path.open() as handle:
         adapter_config = json.load(handle)
@@ -70,20 +98,21 @@ def resolve_resume_checkpoint(run_dir: str, config) -> Optional[str]:
         )
         if not is_valid_checkpoint(checkpoint_path):
             raise ValueError(f"Configured resume checkpoint is not valid: {checkpoint_path}")
-        assert_no_unsafe_weight_bins(checkpoint_path)
+        # is_valid_checkpoint already enforces safetensors-only.
         logger.info(f"Resuming from explicit checkpoint {checkpoint_path}")
         return checkpoint_path
 
     if not config.training.resume_from_latest_checkpoint:
         return None
 
+    # find_latest_valid_checkpoint only returns safetensors-clean
+    # checkpoints, so no further unsafe-bin scan is needed.
     checkpoint_path = find_latest_valid_checkpoint(run_dir)
     if checkpoint_path:
-        assert_no_unsafe_weight_bins(checkpoint_path)
         logger.info(f"Resuming from latest valid checkpoint {checkpoint_path}")
     else:
         logger.info(f"No valid checkpoints found under {run_dir}; starting a fresh run.")
-    return checkpoint_path
+    return str(checkpoint_path) if checkpoint_path else None
 
 
 def resolve_export_source(run_dir: Optional[str] = None, adapter_path: Optional[str] = None) -> str:
@@ -91,7 +120,7 @@ def resolve_export_source(run_dir: Optional[str] = None, adapter_path: Optional[
         safe_adapter_path = str(resolve_existing_path(adapter_path, must_be_dir=True))
         if not is_adapter_artifact(safe_adapter_path):
             raise ValueError(f"Adapter path is not a valid adapter artifact: {safe_adapter_path}")
-        assert_no_unsafe_weight_bins(safe_adapter_path)
+        # is_adapter_artifact already enforces safetensors-only.
         return safe_adapter_path
 
     if not run_dir:
@@ -99,12 +128,10 @@ def resolve_export_source(run_dir: Optional[str] = None, adapter_path: Optional[
 
     safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True))
     if is_adapter_artifact(safe_run_dir):
-        assert_no_unsafe_weight_bins(safe_run_dir)
         return safe_run_dir
 
     checkpoint_path = find_latest_valid_checkpoint(safe_run_dir)
     if checkpoint_path:
-        assert_no_unsafe_weight_bins(checkpoint_path)
-        return checkpoint_path
+        return str(checkpoint_path)
 
     raise ValueError(f"No exportable adapter artifact found under {safe_run_dir}")
