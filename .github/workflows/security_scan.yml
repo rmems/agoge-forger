@@ -1,0 +1,45 @@
+name: Security Scan
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "uv.lock"
+      - "rust-tools/**"
+      - "infra/**"
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --dev
+
+      - name: Run pytest
+        run: uv run pytest tests/
+
+  rust-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo check and clippy
+        working-directory: rust-tools
+        run: |
+          cargo check
+          cargo clippy -- -D warnings

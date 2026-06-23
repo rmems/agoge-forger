@@ -62,18 +62,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install httpx
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --dev
 
       - name: Config check
         if: ${{ !inputs.dry_run }}
         run: |
-          python -c "
+          uv run python -c "
           from agoge_forger.config import load_config
           cfg = load_config('configs/smoke_test.yaml')
           print(f'Config OK: model_id={cfg.model_id}')
@@ -102,8 +102,7 @@ jobs:
           if [ "$INPUT_DRY_RUN" = "true" ]; then
             args+=(--dry-run)
           fi
-          args+=(--output-dir "$GITHUB_WORKSPACE/smoke_output")
-          python scripts/smoke_test.py "${args[@]}"
+          uv run python scripts/smoke_test.py "${args[@]}"
 
       - name: Upload artifacts
         if: ${{ always() && inputs.upload_artifacts }}

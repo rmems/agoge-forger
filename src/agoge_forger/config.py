@@ -2,6 +2,8 @@ import yaml
 from typing import Optional
 from pydantic import BaseModel, Field
 
+from .path_safety import resolve_existing_path
+
 class TrainingConfig(BaseModel):
     max_seq_length: int = 2048
     batch_size: int = 1
@@ -38,7 +40,7 @@ class RuntimeConfig(BaseModel):
 
 class ExperimentConfig(BaseModel):
     model_id: str
-    trust_remote_code: bool = True
+    trust_remote_code: bool = False
     dataset_path: str
     dataset_text_field: str = "text"
     output_dir: str = "adapters"
@@ -50,14 +52,17 @@ class ExperimentConfig(BaseModel):
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
 def load_config(yaml_path: str) -> ExperimentConfig:
-    with open(yaml_path, 'r') as f:
+    config_path = resolve_existing_path(yaml_path, must_be_file=True)
+    with config_path.open("r") as f:
         data = yaml.safe_load(f)
-        
+
+    dataset_path = str(resolve_existing_path(data["dataset_path"], must_be_file=True))
+
     # Flattened parsing to match yaml structure
     return ExperimentConfig(
         model_id=data['model_id'],
-        trust_remote_code=data.get('trust_remote_code', True),
-        dataset_path=data['dataset_path'],
+        trust_remote_code=data.get('trust_remote_code', False),
+        dataset_path=dataset_path,
         dataset_text_field=data.get('dataset_text_field', 'text'),
         output_dir=data.get('output_dir', 'adapters'),
         run_name=data.get('run_name', 'run'),

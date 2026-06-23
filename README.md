@@ -78,9 +78,18 @@ GGUF conversion is *not* automatic, especially for custom architectures like GKA
 ## Second-pass safety guarantees
 
 This forge is designed to protect your environment and artifacts:
+- **Remote code opt-in**: `trust_remote_code` defaults to `false`. Set `trust_remote_code: true` in YAML or pass `--trust-remote-code` only for model repos you explicitly trust.
 - **No Hallucinated Configs**: Model configurations cannot hardcode unknown LoRA targets. `target_modules` must be validated against the inspected model graph before training.
 - **Safetensors Default**: Safetensors is the default and required save format. The forge will fail if `.bin` files are generated, preventing execution vulnerabilities.
+- **Path validation**: Config, dataset, adapter, checkpoint, and output paths reject `..` traversal before use.
 - **Artifact Indexing**: All output directories generate an `artifact_index.json` containing the sizes and SHA256 hashes of the adapters/shards.
 - **Reproducible Manifests**: Every training run generates a comprehensive `manifest.json` including Git state, environment versions, tokenizer metadata, and exact GPU telemetry.
 - **Safe Metadata Inspection**: Model architecture metadata can be inspected entirely without downloading large weights using `agoge model-metadata`.
 - **Checkpoint Hygiene**: Training saves checkpoints on a fixed step interval, caps retained checkpoint trees, warns when local disk headroom is thin, and can resume from the latest valid checkpoint automatically.
+
+## Security scanning
+
+- **Dependabot** watches Python, GitHub Actions, and Rust dependencies (`.github/dependabot.yml`).
+- **CI security workflow** runs pytest and Rust checks on pull requests (`.github/workflows/security_scan.yml`).
+- **Aikido MCP**: Enable the IDE issue feed at [Aikido MCP permissions](https://app.us.aikido.dev/settings/integrations/ide/mcp/permissions), then use `/aikido:setup` in Cursor for local SAST and secret scans.
+- **Snyk**: Run `snyk code test` and `snyk test` locally after `uv sync --dev` for SAST and dependency scanning.

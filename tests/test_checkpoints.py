@@ -2,6 +2,7 @@ from agoge_forger.export.merge_adapter import export_final_model
 from agoge_forger.train.checkpoints import (
     find_latest_valid_checkpoint,
     infer_base_model_from_adapter,
+    is_adapter_artifact,
     resolve_export_source,
     resolve_resume_checkpoint,
 )
@@ -35,7 +36,7 @@ def test_find_latest_valid_checkpoint_skips_incomplete_entries(tmp_path):
 
     latest = find_latest_valid_checkpoint(str(run_dir))
 
-    assert latest == str(run_dir / "checkpoint-100")
+    assert latest == str((run_dir / "checkpoint-100").resolve())
 
 
 def test_resolve_resume_checkpoint_falls_back_when_no_checkpoints(tmp_path):
@@ -72,8 +73,8 @@ def test_export_final_model_uses_latest_valid_checkpoint(monkeypatch, tmp_path):
     export_final_model(run_dir=str(run_dir), out_dir=str(out_dir))
 
     assert recorded["base_model_id"] == "Qwen/Qwen3.5-0.5B"
-    assert recorded["adapter_path"] == str(latest)
-    assert recorded["out_dir"] == str(out_dir)
+    assert recorded["adapter_path"] == str(latest.resolve())
+    assert recorded["out_dir"] == str(out_dir.resolve())
     assert recorded["kwargs"]["save_safetensors"] is True
 
 
@@ -84,7 +85,16 @@ def test_resolve_export_source_prefers_final_adapter_over_checkpoints(tmp_path):
     _write_checkpoint(run_dir, 100)
     _write_final_adapter(run_dir)
 
-    assert resolve_export_source(run_dir=str(run_dir)) == str(run_dir)
+    assert resolve_export_source(run_dir=str(run_dir)) == str(run_dir.resolve())
+
+
+def test_adapter_artifact_rejects_bin_weights(tmp_path):
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    (adapter_dir / "adapter_config.json").write_text('{"base_model_name_or_path": "test-model"}')
+    (adapter_dir / "adapter_model.bin").write_text("unsafe")
+
+    assert is_adapter_artifact(str(adapter_dir)) is False
 
 
 def test_export_helpers_support_final_adapter_directory(tmp_path):
@@ -95,5 +105,6 @@ def test_export_helpers_support_final_adapter_directory(tmp_path):
         '{"base_model_name_or_path": "Qwen/Qwen3.5-0.5B"}'
     )
 
-    assert resolve_export_source(run_dir=str(adapter_dir)) == str(adapter_dir)
+    resolved = resolve_export_source(run_dir=str(adapter_dir))
+    assert resolved == str(adapter_dir.resolve())
     assert infer_base_model_from_adapter(str(adapter_dir)) == "Qwen/Qwen3.5-0.5B"

@@ -32,7 +32,10 @@ ENV/
 env/
 .env
 
-# IDE
+# IDE / local agent tooling
+.kilo/*
+!.kilo/plans/
+!.kilo/plans/**
 .idea/
 .vscode/
 *.swp
