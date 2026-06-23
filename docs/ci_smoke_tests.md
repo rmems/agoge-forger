@@ -109,4 +109,4 @@ julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
 ---
 
-*Agent: Kilo agent Vultr/MiniMax-M2.7*
+*Agent: Kilo agent OpenCode Go/MiniMax-M3*
