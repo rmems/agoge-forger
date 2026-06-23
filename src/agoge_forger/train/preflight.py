@@ -63,10 +63,11 @@ def _directory_size_bytes(path: str) -> int:
 
 def collect_disk_pressure_report(config, monitored_paths=None):
     """Report disk usage; override ``monitored_paths`` to replace default Unsloth/HF cache roots."""
-    monitored = monitored_paths or [
-        os.path.expanduser("~/.unsloth/studio/outputs"),
-        os.path.expanduser("~/.cache/huggingface"),
-    ]
+    if monitored_paths is None:
+        monitored_paths = [
+            os.path.expanduser("~/.unsloth/studio/outputs"),
+            os.path.expanduser("~/.cache/huggingface"),
+        ]
     output_root = os.path.abspath(config.output_dir)
     disk_path = output_root
     if not os.path.exists(disk_path):
@@ -81,7 +82,7 @@ def collect_disk_pressure_report(config, monitored_paths=None):
         "paths": [],
     }
 
-    for path in monitored:
+    for path in monitored_paths:
         entry = {"path": path, "exists": os.path.exists(path), "size_gb": 0.0}
         if entry["exists"]:
             entry["size_gb"] = _directory_size_bytes(path) / BYTES_PER_GB

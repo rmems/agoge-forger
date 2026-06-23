@@ -17,7 +17,7 @@ This document clarifies which parts of `agoge-forger` are owned by Python, Rust,
 | Training (PyTorch, TRL, PEFT)   | **Own**| Read   | —      |
 | Inference provider client        | **Own**| Read   | —      |
 | Experiment config (YAML/Pydantic)| **Own**| Read   | Read   |
-| Dataset JSONL validation         | Write  | **Own**| —      |
+| Dataset JSONL validation         | **Own**| Read   | —      |
 | Run manifest                     | **Own**| Read   | Read   |
 | Artifact index                   | **Own**| Read   | Read   |
 | Benchmark results (JSONL)        | **Own**| Read   | Read   |
@@ -38,7 +38,7 @@ This document clarifies which parts of `agoge-forger` are owned by Python, Rust,
 
 ## Data Flow
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │ Python (agoge-forger)                                   │
 │                                                         │
@@ -64,8 +64,8 @@ This document clarifies which parts of `agoge-forger` are owned by Python, Rust,
 │ Rust tools   │    │ Rust tools   │    │ Julia ML     │
 │              │    │              │    │              │
 │ agoge-jsonl  │    │ (future)    │    │ Flux/Lux/    │
-│ validates    │    │ benchgen     │    │ SciML/MLJ    │
-│ JSONL rows   │    │ generates    │    │ reads        │
+│ parses JSONL │    │ benchgen     │    │ SciML/MLJ    │
+│ syntax only  │    │ generates    │    │ reads        │
 │              │    │ workloads   │    │ results,     │
 │ reads        │    │ reads       │    │ manifest     │
 │ datasets     │    │ manifest,   │    │              │
