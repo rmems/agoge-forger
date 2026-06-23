@@ -10,6 +10,9 @@ on:
       - "requirements.txt"
       - "uv.lock"
       - "rust-tools/**"
+      - "julia/**"
+      - "Project.toml"
+      - "Manifest.toml"
       - "infra/**"
 
 permissions:
