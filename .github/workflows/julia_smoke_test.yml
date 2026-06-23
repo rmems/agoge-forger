@@ -33,7 +33,9 @@ on:
         default: true
         type: boolean
   # Also run on PR changes to julia/ so the gate is exercised, not
-  # only via manual dispatch.
+  # only via manual dispatch. The PR trigger runs the `pr-smoke` job,
+  # which only verifies that Julia can install on the runner; the
+  # full smoke flow is still available via manual dispatch.
   pull_request:
     paths:
       - "julia/**"
@@ -45,7 +47,56 @@ permissions:
   contents: read
 
 jobs:
+  # Minimal CI gate for PRs: just verify Julia can install and report
+  # the version. No inputs are available on pull_request triggers,
+  # so this is decoupled from the dispatch-driven full smoke flow.
+  pr-smoke:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3.1.0
+        with:
+          version: "1.10"
+
+      - name: Cache Julia artifacts
+        uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3.1.0
+
+      - name: Report Julia version
+        run: |
+          mkdir -p julia_output
+          julia --version | tee julia_output/manifest.json
+          python3 -c "
+          import json, os, sys
+          from datetime import datetime, timezone
+          m = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'julia_version': open('julia_output/manifest.json').read().strip(),
+            'event': 'pull_request',
+          }
+          json.dump(m, open('julia_output/manifest.json','w'), indent=2)
+          "
+          rm -f julia_output/manifest.json.bak
+
+      - name: Upload artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: julia-pr-smoke-artifacts
+          path: julia_output/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # Full smoke test (manual dispatch only): runs the full artifact
+  # generation flow with all input-driven steps.
   julia-smoke-test:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -56,7 +107,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Julia
-        uses: julia-actions/setup-julia@780022b48dfc0c2c6b94cfee6a9284850107d037 # v2.3.0
+        uses: julia-actions/setup-julia@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3.1.0
         with:
           version: ${{ inputs.julia_version }}
 
