@@ -44,11 +44,13 @@ agoge merge-adapter --base-model <base_model> --adapter-path adapters/<run_name>
 ```
 
 ### 6. Resume From The Latest Valid Checkpoint
+
 ```bash
 agoge train-qlora --config configs/my_run.yaml
 ```
 
 Set these config fields to keep checkpoint growth under control and resume automatically:
+
 ```yaml
 save_steps: 50
 save_total_limit: 2
@@ -56,7 +58,9 @@ resume_from_latest_checkpoint: true
 ```
 
 ### 7. Export One Final Model Artifact
+
 Use this when a run has multiple `checkpoint-*` snapshots and you want one merged deliverable:
+
 ```bash
 agoge export-final-model --run-dir adapters/<run_name> --out-dir merged/<run_name>
 ```

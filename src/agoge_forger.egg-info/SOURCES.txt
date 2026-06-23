@@ -31,13 +31,16 @@ src/agoge_forger/models/load.py
 src/agoge_forger/models/lora_targets.py
 src/agoge_forger/models/metadata.py
 src/agoge_forger/train/__init__.py
+src/agoge_forger/train/checkpoints.py
 src/agoge_forger/train/lora.py
 src/agoge_forger/train/preflight.py
 src/agoge_forger/train/qlora.py
 src/agoge_forger/train/trainer.py
 tests/test_artifacts.py
+tests/test_checkpoints.py
 tests/test_config.py
 tests/test_dataset_validation.py
 tests/test_datasets_strict.py
+tests/test_docs_workflow.py
 tests/test_manifest.py
 tests/test_preflight.py

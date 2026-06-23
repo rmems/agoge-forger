@@ -1,7 +1,9 @@
 import json
 import os
+import sys
 import subprocess
 from datetime import datetime, timezone
+from typing import Any, Optional
 import torch
 
 def get_git_info():
@@ -13,7 +15,7 @@ def get_git_info():
     except Exception:
         return {}
 
-def write_run_manifest(run_dir: str, config_dict: dict, metrics: dict = None, model=None, tokenizer=None, dataset=None):
+def write_run_manifest(run_dir: str, config_dict: dict, metrics: Optional[dict[Any, Any]] = None, model=None, tokenizer=None, dataset=None):
     os.makedirs(run_dir, exist_ok=True)
     
     manifest = {
@@ -22,7 +24,7 @@ def write_run_manifest(run_dir: str, config_dict: dict, metrics: dict = None, mo
         "config": config_dict,
         "metrics": metrics or {},
         "environment": {
-            "python_version": os.sys.version,
+            "python_version": sys.version,
             "torch_version": torch.__version__,
             "cuda_version": torch.version.cuda if torch.cuda.is_available() else "None",
         }

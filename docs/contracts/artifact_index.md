@@ -79,6 +79,6 @@ The `manifest.json` `metrics.artifact_index` field contains the path to the arti
 ## Notes
 
 - `sha256` is computed on the raw file bytes before any encoding
-- `file` paths use forward slashes regardless of OS
+- `file` paths use the platform's native path separator (backslashes on Windows, forward slashes on Unix)
 - The index file itself is not listed in the `artifacts` array
 - All JSON output uses `indent=2` formatting

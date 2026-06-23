@@ -4,7 +4,7 @@ Every training or inference run produces a `manifest.json` that captures the ful
 
 ## File Location
 
-```
+```text
 runs/<run_name>/manifest.json
 ```
 

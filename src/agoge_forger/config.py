@@ -1,5 +1,5 @@
 import yaml
-from typing import List, Optional
+from typing import Optional
 from pydantic import BaseModel, Field
 
 class TrainingConfig(BaseModel):
@@ -26,7 +26,7 @@ class LoraConfigModel(BaseModel):
     lora_r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.05
-    target_modules: List[str] = ["q_proj", "v_proj"]
+    target_modules: list[str] = ["q_proj", "v_proj"]
     target_modules_mode: str = "auto_common"
 
 class RuntimeConfig(BaseModel):
