@@ -78,6 +78,30 @@ make eval-smoke
 agoge merge-adapter --base-model <base_model> --adapter-path adapters/<run_name> --out-dir merged/<run_name>
 ```
 
+### 6. Resume From The Latest Valid Checkpoint
+
+```bash
+agoge train-qlora --config configs/my_run.yaml
+```
+
+Set these config fields to keep checkpoint growth under control and resume automatically:
+
+```yaml
+save_steps: 50
+save_total_limit: 2
+resume_from_latest_checkpoint: true
+```
+
+### 7. Export One Final Model Artifact
+
+Use this when a run has multiple `checkpoint-*` snapshots and you want one merged deliverable:
+
+```bash
+agoge export-final-model --run-dir adapters/<run_name> --out-dir merged/<run_name>
+```
+
+`checkpoint-*` directories are trainer recovery snapshots. The adapter saved at `adapters/<run_name>` is the LoRA output for continued PEFT work. The merged model under `merged/<run_name>` is the single final artifact to ship or evaluate as a standalone model.
+
 ## Cloud Infrastructure
 The `infra/` folder contains Terraform scaffolds for AWS, Azure, DigitalOcean, and IBM Cloud. They are stubs for future cloud-scale training using HCL.
 
@@ -92,3 +116,4 @@ This forge is designed to protect your environment and artifacts:
 - **Artifact Indexing**: All output directories generate an `artifact_index.json` containing the sizes and SHA256 hashes of the adapters/shards.
 - **Reproducible Manifests**: Every training run generates a comprehensive `manifest.json` including Git state, environment versions, tokenizer metadata, and exact GPU telemetry.
 - **Safe Metadata Inspection**: Model architecture metadata can be inspected entirely without downloading large weights using `agoge model-metadata`.
+- **Checkpoint Hygiene**: Training saves checkpoints on a fixed step interval, caps retained checkpoint trees, warns when local disk headroom is thin, and can resume from the latest valid checkpoint automatically.

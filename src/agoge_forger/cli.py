@@ -8,7 +8,7 @@ from .models.metadata import get_model_config_metadata
 from .train.qlora import train_qlora as _train_qlora
 from .train.lora import train_lora as _train_lora
 from .eval.smoke_eval import run_smoke_eval
-from .export.merge_adapter import merge_adapter as _merge_adapter
+from .export.merge_adapter import export_final_model as _export_final_model, merge_adapter as _merge_adapter
 from .artifacts.safetensors_io import inspect_safetensors_file
 from .datasets import dataset_stats as _dataset_stats
 from .logging import logger
@@ -90,6 +90,27 @@ def merge_adapter(
 ):
     """Merge PEFT adapter into base model."""
     _merge_adapter(base_model, adapter_path, out_dir)
+
+@app.command()
+def export_final_model(
+    out_dir: str = typer.Option(..., help="Output directory for the merged model"),
+    run_dir: str | None = typer.Option(None, help="Run directory containing checkpoints or a final adapter"),
+    adapter_path: str | None = typer.Option(None, help="Specific adapter or checkpoint directory to export"),
+    base_model: str = typer.Option(None, help="Base model ID override"),
+    save_safetensors: bool = typer.Option(True, help="Save using safetensors"),
+    allow_unsafe_serialization: bool = typer.Option(False, help="Allow .bin weight files"),
+    max_shard_size: str = typer.Option("4GB", help="Maximum shard size for merged weights"),
+):
+    """Export one final merged model from the latest valid checkpoint or adapter."""
+    _export_final_model(
+        out_dir=out_dir,
+        run_dir=run_dir,
+        adapter_path=adapter_path,
+        base_model_id=base_model,
+        save_safetensors=save_safetensors,
+        allow_unsafe=allow_unsafe_serialization,
+        max_shard_size=max_shard_size,
+    )
 
 @app.command()
 def inspect_safetensors(path: str = typer.Option(..., help="Path to safetensors file")):

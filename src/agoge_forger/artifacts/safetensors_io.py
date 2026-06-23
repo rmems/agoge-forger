@@ -10,6 +10,13 @@ try:
 except ImportError:
     safe_open = None
 
+# Pickle-based model weight files only — not Trainer optimizer/RNG state (*.pt under checkpoint-*).
+UNSAFE_WEIGHT_PATTERNS = [
+    "pytorch_model.bin",
+    "adapter_model.bin",
+    "*.ckpt",
+]
+
 def inspect_safetensors_file(path: str) -> Dict[str, Any]:
     if safe_open is None:
         logger.warning("safetensors library not installed.")
@@ -36,15 +43,15 @@ def find_safetensors_files(path: str) -> List[str]:
         return glob.glob(os.path.join(path, "**", "*.safetensors"), recursive=True)
     return []
 
-def assert_no_unsafe_weight_bins(path: str) -> None:
-    unsafe_patterns = ["pytorch_model.bin", "adapter_model.bin", "*.pt", "*.pth", "*.ckpt"]
+def assert_no_unsafe_weight_bins(path: str, *, recursive: bool = True) -> None:
     found_unsafe = []
-    
+
     if os.path.isdir(path):
-        for pattern in unsafe_patterns:
-            matches = glob.glob(os.path.join(path, "**", pattern), recursive=True)
+        for pattern in UNSAFE_WEIGHT_PATTERNS:
+            search_root = os.path.join(path, "**", pattern) if recursive else os.path.join(path, pattern)
+            matches = glob.glob(search_root, recursive=recursive)
             found_unsafe.extend(matches)
-            
+
     if found_unsafe:
         raise RuntimeError(f"Unsafe weight binaries found in {path}: {found_unsafe}. Safe serialization is required.")
 

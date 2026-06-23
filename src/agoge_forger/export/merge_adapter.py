@@ -3,6 +3,7 @@ from peft import PeftModel
 from ..models.load import load_base_model
 from ..logging import logger
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
+from ..train.checkpoints import infer_base_model_from_adapter, resolve_export_source
 
 def merge_adapter(base_model_id: str, adapter_path: str, out_dir: str, 
                   save_safetensors: bool = True, allow_unsafe: bool = False, max_shard_size: str = "4GB"):
@@ -23,3 +24,25 @@ def merge_adapter(base_model_id: str, adapter_path: str, out_dir: str,
         
     index_path = write_artifact_index(out_dir)
     logger.info(f"Artifact index written to {index_path}")
+
+
+def export_final_model(
+    out_dir: str,
+    run_dir: str | None = None,
+    adapter_path: str | None = None,
+    base_model_id: str | None = None,
+    save_safetensors: bool = True,
+    allow_unsafe: bool = False,
+    max_shard_size: str = "4GB",
+):
+    source_adapter = resolve_export_source(run_dir=run_dir, adapter_path=adapter_path)
+    resolved_base_model = base_model_id or infer_base_model_from_adapter(source_adapter)
+    logger.info(f"Exporting final merged model from {source_adapter}")
+    merge_adapter(
+        resolved_base_model,
+        source_adapter,
+        out_dir,
+        save_safetensors=save_safetensors,
+        allow_unsafe=allow_unsafe,
+        max_shard_size=max_shard_size,
+    )

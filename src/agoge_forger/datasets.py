@@ -34,7 +34,6 @@ def normalize_row(row, tokenizer=None, index=0):
         raise ValueError(f"Line {index}: Unknown format. Must contain 'text', 'messages', or 'instruction'.")
 
 def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
-def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
     def gen():
         with open(path, 'r') as f:
             for i, line in enumerate(f, 1):
