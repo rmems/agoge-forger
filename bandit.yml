@@ -1,0 +1,2 @@
+# Pytest uses assert; training code is not run with -O optimizations.
+skips: ['B101']

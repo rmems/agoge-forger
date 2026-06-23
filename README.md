@@ -57,6 +57,8 @@ save_total_limit: 2
 resume_from_latest_checkpoint: true
 ```
 
+**Release note:** training now defaults to `save_strategy="steps"` (previously `"no"`) so `--resume` and `resume_from_latest_checkpoint` work out of the box. Use `save_total_limit` to cap retained `checkpoint-*` trees and limit disk growth.
+
 ### 7. Export One Final Model Artifact
 
 Use this when a run has multiple `checkpoint-*` snapshots and you want one merged deliverable:
