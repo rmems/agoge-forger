@@ -105,7 +105,7 @@ The Rust smoke-test workflow (`.github/workflows/rust_smoke_test.yml`) writes to
 | `results.jsonl`       | JSONL      | Per-command status lines                 |
 | `summary.md`          | Markdown   | Human-readable smoke test summary        |
 
-The `agoge-cli validate` command prints JSONL validation reports to **stdout** (not to `runs/`).
+The `agoge-cli validate` command writes **plain-text status lines** to stdout (`Validating <file> ...`, `Validation successful.`). It does not emit JSON or JSONL on stdout; a zero exit code means every non-empty line parsed as JSON syntax. Row-schema validation remains Python-owned (see [dataset_jsonl.md](dataset_jsonl.md)).
 
 > **Note:** `workload.jsonl` is a planned output for a future `agoge-benchgen` tool. The Rust workspace currently only contains `agoge-cli`, `agoge-jsonl`, and `agoge-gguf`.
 
