@@ -3,6 +3,7 @@ import json
 import typer
 
 from .artifacts.safetensors_io import assert_no_unsafe_weight_bins, inspect_safetensors_file
+from .train.checkpoints import is_adapter_artifact
 from .backends.jax_backend import check_jax_env
 from .backends.torch_backend import check_torch_env
 from .config import load_config
@@ -106,9 +107,23 @@ def merge_adapter(
     adapter_path: str = typer.Option(..., help="Path to PEFT adapter"),
     out_dir: str = typer.Option(..., help="Output directory"),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    allow_unsafe_serialization: bool = typer.Option(False, help="Allow .bin weight files in the adapter"),
 ):
     """Merge PEFT adapter into base model."""
     safe_adapter_path = str(resolve_existing_path(adapter_path, must_be_dir=True))
+    # Enforce the safetensors-only policy before PeftModel.from_pretrained,
+    # mirroring smoke_eval and resolve_export_source so every adapter entry
+    # point applies the same safety check.
+    if not allow_unsafe_serialization:
+        if not is_adapter_artifact(safe_adapter_path):
+            raise typer.BadParameter(
+                f"Adapter path is not a valid safetensors adapter artifact: {safe_adapter_path}"
+            )
+        try:
+            assert_no_unsafe_weight_bins(safe_adapter_path, recursive=True)
+        except RuntimeError as e:
+            logger.error(str(e))
+            raise typer.Exit(code=1)
     safe_out_dir = str(resolve_output_directory(out_dir))
     _merge_adapter(base_model, safe_adapter_path, safe_out_dir, trust_remote_code=trust_remote_code)
 

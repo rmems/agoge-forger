@@ -3,23 +3,27 @@ from ..models.load import load_base_model
 from ..logging import logger
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
 from ..path_safety import resolve_output_directory
-from ..train.checkpoints import infer_base_model_from_adapter, resolve_export_source
+from ..train.checkpoints import (
+    infer_base_model_from_adapter,
+    is_adapter_artifact,
+    resolve_export_source,
+)
 
 def merge_adapter(base_model_id: str, adapter_path: str, out_dir: str,
                   save_safetensors: bool = True, allow_unsafe: bool = False, max_shard_size: str = "4GB",
                   trust_remote_code: bool = False):
     logger.info(f"Merging {adapter_path} into {base_model_id}")
 
-    # Validate adapter uses safetensors format
-    from pathlib import Path
-    adapter_dir = Path(adapter_path)
-    safetensors_file = adapter_dir / "adapter_model.safetensors"
-    bin_file = adapter_dir / "adapter_model.bin"
-
-    if not safetensors_file.exists() and bin_file.exists():
-        raise ValueError(f"Adapter at '{adapter_path}' uses unsafe .bin format. Only safetensors format is allowed.")
-    if not safetensors_file.exists():
-        raise ValueError(f"Adapter at '{adapter_path}' missing adapter_model.safetensors file.")
+    # Library-callers safety net: reject `.bin` adapters (incl. mixed
+    # `.safetensors`+`.bin`) before PeftModel.from_pretrained is invoked.
+    # The CLI command also enforces this at the boundary; keeping the check
+    # here protects direct library callers (e.g. `export_final_model`).
+    if not allow_unsafe and not is_adapter_artifact(adapter_path):
+        raise ValueError(
+            f"Adapter at '{adapter_path}' is not a valid safetensors-only "
+            f"adapter artifact. Mixed or pickle-based .bin weights are "
+            f"rejected; pass allow_unsafe=True to override."
+        )
 
     model, tokenizer = load_base_model(
         base_model_id, trust_remote_code=trust_remote_code, quant_config=None, bf16=True
