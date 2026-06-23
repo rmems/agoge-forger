@@ -124,8 +124,16 @@ def _collect_model_leaf_modules(model):
 
 
 def _module_matches_target(model, target):
+    try:
+        pattern = re.compile(target)
+    except re.error:
+        logger.warning(f"Invalid regex in LoRA target '{target}'; using literal substring match only.")
+        pattern = None
+
     for name, _ in model.named_modules():
-        if target in name or re.search(target, name):
+        if target in name:
+            return True
+        if pattern and pattern.search(name):
             return True
     return False
 
