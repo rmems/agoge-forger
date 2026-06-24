@@ -42,6 +42,11 @@ on:
         required: false
         default: true
         type: boolean
+      trust_remote_code:
+        description: "Allow Hugging Face to execute custom Python from the model repo"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -96,6 +101,7 @@ jobs:
           INPUT_CONCURRENCY: ${{ inputs.concurrency }}
           INPUT_STREAM: ${{ inputs.stream }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_TRUST_REMOTE_CODE: ${{ inputs.trust_remote_code }}
         run: |
           args=(
             --model "$INPUT_MODEL"
@@ -110,6 +116,9 @@ jobs:
           fi
           if [ "$INPUT_DRY_RUN" = "true" ]; then
             args+=(--dry-run)
+          fi
+          if [ "$INPUT_TRUST_REMOTE_CODE" = "true" ]; then
+            args+=(--trust-remote-code)
           fi
           uv run python scripts/smoke_test.py "${args[@]}"
 

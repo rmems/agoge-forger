@@ -43,15 +43,49 @@ def test_find_latest_valid_checkpoint_skips_incomplete_entries(tmp_path):
     assert latest == (run_dir / "checkpoint-100").resolve()
 
 
-def test_resolve_resume_checkpoint_falls_back_when_no_checkpoints(tmp_path):
+def _write_legacy_bin_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B"):
+    checkpoint_dir = root / f"checkpoint-{step}"
+    checkpoint_dir.mkdir(parents=True)
+    (checkpoint_dir / "trainer_state.json").write_text("{}")
+    (checkpoint_dir / "adapter_model.bin").write_text("legacy")
+    (checkpoint_dir / "adapter_config.json").write_text(
+        '{"base_model_name_or_path": "%s"}' % base_model
+    )
+    return checkpoint_dir
+
+
+def test_resolve_resume_checkpoint_honors_allow_unsafe_opt_in(tmp_path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
+    legacy = _write_legacy_bin_checkpoint(run_dir, 10)
+
+    class Runtime:
+        allow_unsafe_serialization = True
 
     class Training:
         resume_checkpoint_path = None
         resume_from_latest_checkpoint = True
 
     class Config:
+        runtime = Runtime()
+        training = Training()
+
+    assert resolve_resume_checkpoint(str(run_dir), Config()) == str(legacy.resolve())
+
+
+def test_resolve_resume_checkpoint_falls_back_when_no_checkpoints(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    class Runtime:
+        allow_unsafe_serialization = False
+
+    class Training:
+        resume_checkpoint_path = None
+        resume_from_latest_checkpoint = True
+
+    class Config:
+        runtime = Runtime()
         training = Training()
 
     assert resolve_resume_checkpoint(str(run_dir), Config()) is None

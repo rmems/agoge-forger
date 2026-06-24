@@ -100,22 +100,21 @@ def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
 
 
 def resolve_resume_checkpoint(run_dir: str, config) -> Optional[str]:
+    allow_unsafe = config.runtime.allow_unsafe_serialization
+
     if config.training.resume_checkpoint_path:
         checkpoint_path = str(
             resolve_existing_path(config.training.resume_checkpoint_path, must_be_dir=True)
         )
-        if not is_valid_checkpoint(checkpoint_path):
+        if not is_valid_checkpoint(checkpoint_path, allow_unsafe=allow_unsafe):
             raise ValueError(f"Configured resume checkpoint is not valid: {checkpoint_path}")
-        # is_valid_checkpoint already enforces safetensors-only.
         logger.info(f"Resuming from explicit checkpoint {checkpoint_path}")
         return checkpoint_path
 
     if not config.training.resume_from_latest_checkpoint:
         return None
 
-    # find_latest_valid_checkpoint only returns safetensors-clean
-    # checkpoints, so no further unsafe-bin scan is needed.
-    checkpoint_path = find_latest_valid_checkpoint(run_dir)
+    checkpoint_path = find_latest_valid_checkpoint(run_dir, allow_unsafe=allow_unsafe)
     if checkpoint_path:
         logger.info(f"Resuming from latest valid checkpoint {checkpoint_path}")
     else:
