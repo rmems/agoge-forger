@@ -18,7 +18,7 @@ def merge_adapter(base_model_id: str, adapter_path: str, out_dir: str,
     # `.safetensors`+`.bin`) before PeftModel.from_pretrained is invoked.
     # The CLI command also enforces this at the boundary; keeping the check
     # here protects direct library callers (e.g. `export_final_model`).
-    if not allow_unsafe and not is_adapter_artifact(adapter_path):
+    if not allow_unsafe and not is_adapter_artifact(adapter_path, allow_unsafe=False):
         raise ValueError(
             f"Adapter at '{adapter_path}' is not a valid safetensors-only "
             f"adapter artifact. Mixed or pickle-based .bin weights are "
@@ -58,7 +58,11 @@ def export_final_model(
     max_shard_size: str = "4GB",
     trust_remote_code: bool = False,
 ):
-    source_adapter = resolve_export_source(run_dir=run_dir, adapter_path=adapter_path)
+    source_adapter = resolve_export_source(
+        run_dir=run_dir,
+        adapter_path=adapter_path,
+        allow_unsafe=allow_unsafe,
+    )
     resolved_base_model = base_model_id or infer_base_model_from_adapter(source_adapter)
     logger.info(f"Exporting final merged model from {source_adapter}")
     merge_adapter(

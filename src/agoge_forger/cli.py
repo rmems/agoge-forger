@@ -125,7 +125,13 @@ def merge_adapter(
             logger.error(str(e))
             raise typer.Exit(code=1)
     safe_out_dir = str(resolve_output_directory(out_dir))
-    _merge_adapter(base_model, safe_adapter_path, safe_out_dir, trust_remote_code=trust_remote_code)
+    _merge_adapter(
+        base_model,
+        safe_adapter_path,
+        safe_out_dir,
+        trust_remote_code=trust_remote_code,
+        allow_unsafe=allow_unsafe_serialization,
+    )
 
 @app.command()
 def export_final_model(

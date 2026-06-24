@@ -9,6 +9,7 @@ from ..path_safety import resolve_existing_path
 
 CHECKPOINT_RE = re.compile(r"^checkpoint-(\d+)$")
 ADAPTER_WEIGHT_FILES = ("adapter_model.safetensors",)
+LEGACY_ADAPTER_WEIGHT_FILES = ("adapter_model.bin",)
 
 PathLike = Union[str, Path]
 
@@ -29,29 +30,34 @@ def _has_unsafe_weight_bins(adapter_dir: Path) -> bool:
         return True
 
 
-def is_adapter_artifact(path: PathLike) -> bool:
-    """A directory is a valid adapter artifact iff it has the required config,
-    at least one safetensors weight file, and NO pickle-based `.bin`/`.ckpt`
-    weight files (the safetensors-only policy is enforced even when both
-    formats are present).
+def is_adapter_artifact(path: PathLike, *, allow_unsafe: bool = False) -> bool:
+    """Return True when ``path`` looks like a PEFT adapter directory.
+
+    By default only safetensors-only adapters pass. With ``allow_unsafe=True``,
+    legacy ``adapter_model.bin``-only trees are accepted for explicit opt-in flows.
     """
     adapter_dir = Path(path)
     if not adapter_dir.is_dir():
         return False
     if not (adapter_dir / "adapter_config.json").is_file():
         return False
-    if not any((adapter_dir / weight_file).is_file() for weight_file in ADAPTER_WEIGHT_FILES):
+
+    weight_files = ADAPTER_WEIGHT_FILES
+    if allow_unsafe:
+        weight_files = ADAPTER_WEIGHT_FILES + LEGACY_ADAPTER_WEIGHT_FILES
+
+    if not any((adapter_dir / weight_file).is_file() for weight_file in weight_files):
         return False
-    if _has_unsafe_weight_bins(adapter_dir):
+    if not allow_unsafe and _has_unsafe_weight_bins(adapter_dir):
         return False
     return True
 
 
-def is_valid_checkpoint(path: PathLike) -> bool:
+def is_valid_checkpoint(path: PathLike, *, allow_unsafe: bool = False) -> bool:
     """A checkpoint is valid iff it is a `checkpoint-N` directory with the
-    required trainer state, AND it is a valid (safetensors-only) adapter
-    artifact. Unsafe-bin filtering happens here so callers selecting
-    among checkpoints never have to re-validate.
+    required trainer state, AND it is a valid adapter artifact. Unsafe-bin
+    filtering happens here so callers selecting among checkpoints never have
+    to re-validate unless ``allow_unsafe`` is explicitly enabled.
     """
     checkpoint_dir = Path(path)
     if not checkpoint_dir.is_dir():
@@ -60,20 +66,22 @@ def is_valid_checkpoint(path: PathLike) -> bool:
         return False
     if not (checkpoint_dir / "trainer_state.json").is_file():
         return False
-    return is_adapter_artifact(checkpoint_dir)
+    return is_adapter_artifact(checkpoint_dir, allow_unsafe=allow_unsafe)
 
 
-def list_valid_checkpoints(run_dir: PathLike) -> list[Path]:
+def list_valid_checkpoints(run_dir: PathLike, *, allow_unsafe: bool = False) -> list[Path]:
     root = Path(run_dir)
     if not root.is_dir():
         return []
-    checkpoints = [path for path in root.iterdir() if is_valid_checkpoint(path)]
+    checkpoints = [
+        path for path in root.iterdir() if is_valid_checkpoint(path, allow_unsafe=allow_unsafe)
+    ]
     checkpoints.sort(key=_checkpoint_step)
     return checkpoints
 
 
-def find_latest_valid_checkpoint(run_dir: PathLike) -> Optional[Path]:
-    checkpoints = list_valid_checkpoints(run_dir)
+def find_latest_valid_checkpoint(run_dir: PathLike, *, allow_unsafe: bool = False) -> Optional[Path]:
+    checkpoints = list_valid_checkpoints(run_dir, allow_unsafe=allow_unsafe)
     if not checkpoints:
         return None
     return checkpoints[-1]
@@ -115,22 +123,26 @@ def resolve_resume_checkpoint(run_dir: str, config) -> Optional[str]:
     return str(checkpoint_path) if checkpoint_path else None
 
 
-def resolve_export_source(run_dir: Optional[str] = None, adapter_path: Optional[str] = None) -> str:
+def resolve_export_source(
+    run_dir: Optional[str] = None,
+    adapter_path: Optional[str] = None,
+    *,
+    allow_unsafe: bool = False,
+) -> str:
     if adapter_path:
         safe_adapter_path = str(resolve_existing_path(adapter_path, must_be_dir=True))
-        if not is_adapter_artifact(safe_adapter_path):
+        if not is_adapter_artifact(safe_adapter_path, allow_unsafe=allow_unsafe):
             raise ValueError(f"Adapter path is not a valid adapter artifact: {safe_adapter_path}")
-        # is_adapter_artifact already enforces safetensors-only.
         return safe_adapter_path
 
     if not run_dir:
         raise ValueError("Either run_dir or adapter_path must be provided.")
 
     safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True))
-    if is_adapter_artifact(safe_run_dir):
+    if is_adapter_artifact(safe_run_dir, allow_unsafe=allow_unsafe):
         return safe_run_dir
 
-    checkpoint_path = find_latest_valid_checkpoint(safe_run_dir)
+    checkpoint_path = find_latest_valid_checkpoint(safe_run_dir, allow_unsafe=allow_unsafe)
     if checkpoint_path:
         return str(checkpoint_path)
 

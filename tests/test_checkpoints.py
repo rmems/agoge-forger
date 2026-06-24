@@ -1,3 +1,5 @@
+import pytest
+
 from agoge_forger.export.merge_adapter import export_final_model
 from agoge_forger.train.checkpoints import (
     find_latest_valid_checkpoint,
@@ -111,6 +113,20 @@ def test_adapter_artifact_rejects_mixed_safetensors_and_bin(tmp_path):
     (adapter_dir / "adapter_model.bin").write_text("unsafe")
 
     assert is_adapter_artifact(adapter_dir) is False
+
+
+def test_resolve_export_source_accepts_legacy_bin_with_opt_in(tmp_path):
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    (adapter_dir / "adapter_config.json").write_text('{"base_model_name_or_path": "test-model"}')
+    (adapter_dir / "adapter_model.bin").write_text("legacy")
+
+    with pytest.raises(ValueError, match="not a valid adapter artifact"):
+        resolve_export_source(adapter_path=str(adapter_dir))
+
+    assert resolve_export_source(adapter_path=str(adapter_dir), allow_unsafe=True) == str(
+        adapter_dir.resolve()
+    )
 
 
 def test_export_helpers_support_final_adapter_directory(tmp_path):
