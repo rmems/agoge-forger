@@ -5,9 +5,16 @@ from peft import PeftModel
 from ..models.load import load_base_model
 from ..logging import logger
 
-def run_smoke_eval(base_model_id: str, adapter_path: str, run_name: str = "smoke_eval_run"):
+def run_smoke_eval(
+    base_model_id: str,
+    adapter_path: str,
+    run_name: str = "smoke_eval_run",
+    trust_remote_code: bool = False,
+):
     logger.info(f"Loading base model {base_model_id} and adapter {adapter_path}")
-    model, tokenizer = load_base_model(base_model_id, trust_remote_code=True, quant_config=None, bf16=True)
+    model, tokenizer = load_base_model(
+        base_model_id, trust_remote_code=trust_remote_code, quant_config=None, bf16=True
+    )
     model = PeftModel.from_pretrained(model, adapter_path)
     
     prompts = [

@@ -1,6 +1,7 @@
 import json
 from datasets import Dataset
 from .logging import logger
+from .path_safety import resolve_existing_path
 
 def normalize_row(row, tokenizer=None, index=0):
     if "text" in row:
@@ -34,8 +35,10 @@ def normalize_row(row, tokenizer=None, index=0):
         raise ValueError(f"Line {index}: Unknown format. Must contain 'text', 'messages', or 'instruction'.")
 
 def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
+    dataset_path = resolve_existing_path(path, must_be_file=True)
+
     def gen():
-        with open(path, 'r') as f:
+        with dataset_path.open("r") as f:
             for i, line in enumerate(f, 1):
                 if not line.strip():
                     continue
@@ -48,12 +51,12 @@ def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
     
     return Dataset.from_generator(gen)
 
-def dataset_stats(path: str, model_id: str):
+def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):
     from .models.load import load_base_model
     import numpy as np
     
     logger.info("Loading tokenizer for dataset stats...")
-    _, tokenizer = load_base_model(model_id, trust_remote_code=True, quant_config=None, bf16=False)
+    _, tokenizer = load_base_model(model_id, trust_remote_code, quant_config=None, bf16=False)
     
     dataset = load_jsonl_dataset(path, tokenizer)
     lengths = []

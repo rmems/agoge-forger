@@ -42,6 +42,11 @@ on:
         required: false
         default: true
         type: boolean
+      trust_remote_code:
+        description: "Allow Hugging Face to execute custom Python from the model repo"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -56,24 +61,33 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
-          cache: pip
 
-      - name: Install dependencies
+      - uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
+        with:
+          enable-cache: true
+
+      - name: Install dev dependencies
+        # Use `uv pip install -e .[dev]` rather than `uv sync --dev`
+        # so the project is installed in editable mode and the test
+        # scripts (which `from agoge_forger.X import Y`) can import
+        # the package directly. `uv sync --dev` only installs the
+        # dependencies, not the project itself.
         run: |
-          pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install httpx
+          uv venv
+          uv pip install -e ".[dev]"
 
       - name: Config check
         if: ${{ !inputs.dry_run }}
         run: |
-          python -c "
+          uv run python -c "
           from agoge_forger.config import load_config
           cfg = load_config('configs/smoke_test.yaml')
           print(f'Config OK: model_id={cfg.model_id}')
@@ -87,6 +101,7 @@ jobs:
           INPUT_CONCURRENCY: ${{ inputs.concurrency }}
           INPUT_STREAM: ${{ inputs.stream }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_TRUST_REMOTE_CODE: ${{ inputs.trust_remote_code }}
         run: |
           args=(
             --model "$INPUT_MODEL"
@@ -102,12 +117,14 @@ jobs:
           if [ "$INPUT_DRY_RUN" = "true" ]; then
             args+=(--dry-run)
           fi
-          args+=(--output-dir "$GITHUB_WORKSPACE/smoke_output")
-          python scripts/smoke_test.py "${args[@]}"
+          if [ "$INPUT_TRUST_REMOTE_CODE" = "true" ]; then
+            args+=(--trust-remote-code)
+          fi
+          uv run python scripts/smoke_test.py "${args[@]}"
 
       - name: Upload artifacts
         if: ${{ always() && inputs.upload_artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: smoke-test-artifacts
           path: |

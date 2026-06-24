@@ -1,7 +1,7 @@
 # Minimal config for fast smoke testing
 model_id: "HuggingFaceM4/tiny-random-LlamaForCausalLM"
 trust_remote_code: true
-dataset_path: "datasets/samples/tiny_sft.jsonl"
+dataset_path: "../datasets/samples/tiny_sft.jsonl"
 dataset_text_field: "text"
 output_dir: "adapters"
 run_name: "smoke_test_run"

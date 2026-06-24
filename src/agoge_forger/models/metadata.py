@@ -6,7 +6,7 @@ try:
 except ImportError:
     model_info = None
 
-def get_model_config_metadata(model_id: str, trust_remote_code: bool = True, revision: str = None):
+def get_model_config_metadata(model_id: str, trust_remote_code: bool = False, revision: str = None):
     logger.info(f"Fetching metadata for {model_id}")
     config = AutoConfig.from_pretrained(
         model_id, 

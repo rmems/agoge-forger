@@ -17,6 +17,11 @@ def load_base_model(model_id: str, trust_remote_code: bool, quant_config=None, b
                     revision: str = None, local_files_only: bool = False, attn_implementation: str = None,
                     torch_dtype_str: str = "auto", device_map: str = "auto"):
     
+    if trust_remote_code:
+        logger.warning(
+            "trust_remote_code=True: Hugging Face may execute arbitrary Python from the model repo."
+        )
+
     logger.info(f"Loading tokenizer {model_id}")
     tokenizer = AutoTokenizer.from_pretrained(
         model_id, 

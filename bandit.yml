@@ -1,2 +1,6 @@
-# Pytest uses assert; training code is not run with -O optimizations.
-skips: ['B101']
+# Skip assert-used (B101) in pytest files only; keep B101 enabled for runtime code.
+assert_used:
+  skips:
+    - "*/*_test.py"
+    - "*/test_*.py"
+    - "tests/*.py"
