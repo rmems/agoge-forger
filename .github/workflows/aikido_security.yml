@@ -32,16 +32,20 @@ jobs:
 
       - name: Aikido PR gating scan
         if: ${{ env.AIKIDO_API_KEY != '' }}
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          aikido-local-scanner scan ${{ github.event.repository.name }} \
-            --apikey ${{ secrets.AIKIDO_API_KEY }} \
-            --repositoryname ${{ github.event.repository.name }} \
-            --branchname ${{ github.event.pull_request.head.ref }} \
+          aikido-local-scanner scan "$REPO_NAME" \
+            --apikey "$AIKIDO_API_KEY" \
+            --repositoryname "$REPO_NAME" \
+            --branchname "$HEAD_REF" \
             --gating-mode pr \
             --fail-on critical \
-            --base-commit-id ${{ github.event.pull_request.base.sha }} \
-            --head-commit-id ${{ github.event.pull_request.head.sha }}
-
+            --base-commit-id "$BASE_SHA" \
+            --head-commit-id "$HEAD_SHA"
       - name: Skip (AIKIDO_API_KEY not configured)
         if: ${{ env.AIKIDO_API_KEY == '' }}
         run: echo "AIKIDO_API_KEY not set; skipping Aikido PR gating scan."
