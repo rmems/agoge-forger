@@ -123,7 +123,8 @@ Both also support manual runs via **workflow_dispatch**.
 | Secret | Workflow | Source |
 |--------|----------|--------|
 | `SNYK_TOKEN` | Snyk Security | [Snyk account settings](https://app.snyk.io/account) |
-| `AIKIDO_API_KEY` | Aikido Security | [Aikido Local Scanner setup](https://app.aikido.dev/settings/integrations/localscan) |
+| `AIKIDO_CLIENT_API_KEY` | Aikido Security | [Aikido Continuous Integration settings](https://app.aikido.dev/settings/integrations/continuous-integration) |
+| `AIKIDO_API_KEY` | Aikido Security (fallback) | Same CI token if stored under this name |
 
 When a secret is unset, the corresponding scan steps are skipped so forks and unconfigured repos still pass.
 
@@ -142,8 +143,10 @@ When a secret is unset, the corresponding scan steps are skipped so forks and un
 
 | Job | When | Behavior |
 |-----|------|----------|
-| `aikido-pr-gate` | `pull_request` | Local Scanner PR gating (`--gating-mode pr`, `--fail-on critical`) — only **new** issues fail |
-| `aikido-baseline` | `workflow_dispatch` | Full-repo scan on the selected branch (seed comparison baseline) |
+| `aikido-pr-gate` | `pull_request` | `@aikidosec/ci-api-client scan` with GitHub `repository_id`, base/head SHAs, `--minimum-severity-level=CRITICAL` |
+| `aikido-release-gate` | `workflow_dispatch` | `scan-release` on the checked-out commit |
+
+**Note:** The repo must be connected in Aikido (GitHub integration). The workflow uses your CI API token (`AIKIDO_CLIENT_API_KEY` or `AIKIDO_API_KEY`), not the Local Scanner or IDE MCP tokens.
 
 **Alternative (no workflow YAML):** Install the [Aikido PR Checks GitHub App](https://help.aikido.dev/pr-and-release-gating/github-ci-pr-gating-via-aikido-dashboard) and configure gating from the Aikido dashboard.
 
@@ -160,7 +163,7 @@ cargo cyclonedx --format json --override-filename sbom
 find crates -name sbom.json -exec snyk sbom test --file={} \;
 
 # Aikido — use IDE MCP during development (.cursor/rules/aikido_rules.mdc)
-# CI uses the Local Scanner container; see aikido_security.yml for flags.
+# CI uses @aikidosec/ci-api-client; see aikido_security.yml for flags.
 ```
 
 ### Branch protection (optional)

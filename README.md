@@ -92,6 +92,6 @@ This forge is designed to protect your environment and artifacts:
 - **Dependabot** watches Python, GitHub Actions, and Rust dependencies (`.github/dependabot.yml`).
 - **CI quality gate** runs pytest and Rust checks on pull requests (`.github/workflows/security_scan.yml`).
 - **Snyk CI** (`.github/workflows/snyk_security.yml`): Python SCA, SAST (`src/`, `rust-tools/`), Rust SBOM (`cargo cyclonedx` → `snyk sbom test`), Terraform IaC, and SARIF upload. Requires `SNYK_TOKEN`.
-- **Aikido CI** (`.github/workflows/aikido_security.yml`): Local Scanner PR gating for SAST, IaC, and secrets (base vs head). Requires `AIKIDO_API_KEY`.
+- **Aikido CI** (`.github/workflows/aikido_security.yml`): `@aikidosec/ci-api-client` PR/release gating. Requires `AIKIDO_CLIENT_API_KEY` (or `AIKIDO_API_KEY`).
 - **Aikido MCP** (local dev): Enable the IDE issue feed at [Aikido MCP permissions](https://app.us.aikido.dev/settings/integrations/ide/mcp/permissions), then use `/aikido:setup` in Cursor.
 - **Snyk CLI** (local dev): `snyk code test` and `snyk test` after `uv pip install -e ".[dev]"`. See `docs/ci_smoke_tests.md` for the full local/CI matrix.

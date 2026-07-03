@@ -18,61 +18,85 @@ jobs:
   aikido-pr-gate:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    container:
-      image: aikidosecurity/local-scanner:latest
     env:
+      AIKIDO_CLIENT_API_KEY: ${{ secrets.AIKIDO_CLIENT_API_KEY }}
       AIKIDO_API_KEY: ${{ secrets.AIKIDO_API_KEY }}
     steps:
-      - name: Checkout
-        if: ${{ env.AIKIDO_API_KEY != '' }}
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Node.js
+        if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          path: ${{ github.event.repository.name }}
-          fetch-depth: 0
+          node-version: "22"
+
+      - name: Install Aikido CI API Client
+        if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
+        run: npm install --global @aikidosec/ci-api-client@1.0.16
 
       - name: Aikido PR gating scan
-        if: ${{ env.AIKIDO_API_KEY != '' }}
+        if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
         env:
-          REPO_NAME: ${{ github.event.repository.name }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
-          aikido-local-scanner scan "$REPO_NAME" \
-            --apikey "$AIKIDO_API_KEY" \
-            --repositoryname "$REPO_NAME" \
-            --branchname "$HEAD_REF" \
-            --gating-mode pr \
-            --fail-on critical \
-            --base-commit-id "$BASE_SHA" \
-            --head-commit-id "$HEAD_SHA"
-      - name: Skip (AIKIDO_API_KEY not configured)
-        if: ${{ env.AIKIDO_API_KEY == '' }}
-        run: echo "AIKIDO_API_KEY not set; skipping Aikido PR gating scan."
+          if [ -n "$AIKIDO_CLIENT_API_KEY" ]; then
+            API_KEY="$AIKIDO_CLIENT_API_KEY"
+          else
+            API_KEY="$AIKIDO_API_KEY"
+          fi
 
-  aikido-baseline:
+          aikido-api-client scan "${{ github.repository_id }}" \
+            "$BASE_SHA" \
+            "$HEAD_SHA" \
+            "$HEAD_REF" \
+            --apikey "$API_KEY" \
+            --pull-request-title "$PR_TITLE" \
+            --pull-request-url "$PR_URL" \
+            --minimum-severity-level=CRITICAL \
+            --no-fail-on-dependency-scan
+
+      - name: Skip (no Aikido CI API key configured)
+        if: ${{ env.AIKIDO_CLIENT_API_KEY == '' && env.AIKIDO_API_KEY == '' }}
+        run: echo "Set AIKIDO_CLIENT_API_KEY or AIKIDO_API_KEY to enable Aikido PR gating."
+
+  aikido-release-gate:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    container:
-      image: aikidosecurity/local-scanner:latest
     env:
+      AIKIDO_CLIENT_API_KEY: ${{ secrets.AIKIDO_CLIENT_API_KEY }}
       AIKIDO_API_KEY: ${{ secrets.AIKIDO_API_KEY }}
     steps:
-      - name: Checkout
-        if: ${{ env.AIKIDO_API_KEY != '' }}
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          path: ${{ github.event.repository.name }}
+          persist-credentials: false
           fetch-depth: 0
 
-      - name: Aikido baseline scan
-        if: ${{ env.AIKIDO_API_KEY != '' }}
-        run: |
-          aikido-local-scanner scan ${{ github.event.repository.name }} \
-            --repositoryname ${{ github.event.repository.name }} \
-            --repositoryname ${{ github.event.repository.name }} \
-            --branchname ${{ github.ref_name }}
+      - name: Set up Node.js
+        if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
 
-      - name: Skip (AIKIDO_API_KEY not configured)
-        if: ${{ env.AIKIDO_API_KEY == '' }}
-        run: echo "AIKIDO_API_KEY not set; skipping Aikido baseline scan."
+      - name: Install Aikido CI API Client
+        if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
+        run: npm install --global @aikidosec/ci-api-client@1.0.16
+
+      - name: Aikido release gating scan
+        if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
+        run: |
+          if [ -n "$AIKIDO_CLIENT_API_KEY" ]; then
+            API_KEY="$AIKIDO_CLIENT_API_KEY"
+          else
+            API_KEY="$AIKIDO_API_KEY"
+          fi
+
+          aikido-api-client scan-release "${{ github.repository_id }}" "${{ github.sha }}" \
+            --apikey "$API_KEY" \
+            --minimum-severity-level=CRITICAL \
+            --no-fail-on-dependency-scan
+
+      - name: Skip (no Aikido CI API key configured)
+        if: ${{ env.AIKIDO_CLIENT_API_KEY == '' && env.AIKIDO_API_KEY == '' }}
+        run: echo "Set AIKIDO_CLIENT_API_KEY or AIKIDO_API_KEY to enable Aikido release gating."
