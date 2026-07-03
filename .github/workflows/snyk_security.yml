@@ -13,6 +13,10 @@ on:
       - "infra/**"
       - ".github/workflows/snyk_security.yml"
 
+concurrency:
+  group: snyk-security-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
