@@ -73,13 +73,15 @@ jobs:
         uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
 
       - name: Snyk Code (Python)
+      - name: Snyk Code (Python)
         if: ${{ env.SNYK_TOKEN != '' }}
+        continue-on-error: true
+        id: snyk-python-code
         run: |
           snyk code test src/ scripts/ \
             --severity-threshold=high \
             --sarif-file-output=snyk-python.sarif
 
-      - name: Upload Python SARIF
       - name: Upload Python SARIF
         if: ${{ always() && env.SNYK_TOKEN != '' && hashFiles('snyk-python.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@3c3833e0f8c1c83d449a7478aa59c036a9165498 # v3.29.11
@@ -87,6 +89,9 @@ jobs:
           sarif_file: snyk-python.sarif
           category: snyk-python
 
+      - name: Fail on Snyk Code findings
+        if: ${{ env.SNYK_TOKEN != '' && steps.snyk-python-code.outcome == 'failure' }}
+        run: exit 1
   snyk-rust:
     runs-on: ubuntu-latest
     permissions:
