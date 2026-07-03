@@ -114,7 +114,8 @@ Two workflows run automatically on pull requests when matching paths change:
 | Workflow | File | Triggers on |
 |----------|------|-------------|
 | Snyk Security | `.github/workflows/snyk_security.yml` | `src/`, `scripts/`, Python manifests, `rust-tools/`, `infra/` |
-| Aikido Security | `.github/workflows/aikido_security.yml` | `src/`, `scripts/`, `rust-tools/`, `infra/`, security workflows |
+| Aikido Security (release) | `.github/workflows/aikido_security.yml` | Manual `workflow_dispatch` only |
+| Aikido PR Checks (GitHub App) | Aikido dashboard | All pull requests (status: `Aikido Security: check code`) |
 
 Both also support manual runs via **workflow_dispatch**.
 
@@ -133,22 +134,20 @@ When a secret is unset, the corresponding scan steps are skipped so forks and un
 | Job | Scan | Blocking? |
 |-----|------|-----------|
 | `snyk-python-sca` | `uv.lock` (fallback: `requirements.txt`) | No (`continue-on-error`) — transformers advisories may have no upstream fix |
-| `snyk-python-code` | SAST on `src/`, `scripts/` + SARIF upload | Yes (high+) |
-| `snyk-rust` | SAST on `rust-tools/` + CycloneDX SBOM → `snyk sbom test` + SARIF | Yes |
+| `snyk-python-code` | SAST on `src/`, `scripts/` + SARIF upload | Yes (high+); skips if Snyk Code is not enabled for the org (`SNYK-CODE-0005`) |
+| `snyk-rust` | SAST on `rust-tools/` + CycloneDX SBOM → `snyk sbom test` + SARIF | Yes; SAST skips on `SNYK-CODE-0005`, SBOM scan still runs |
 | `snyk-iac` | Terraform under `infra/terraform/` | Yes (medium+) |
 
 **Plan notes:** `uv.lock` SCA and Rust Snyk Code may require Snyk Enterprise Early Access. Do not use `snyk test --all-projects` — it picks up unrelated manifests (e.g. `.kilo/`).
 
-### Aikido jobs
+### Aikido
 
-| Job | When | Behavior |
-|-----|------|----------|
-| `aikido-pr-gate` | `pull_request` | `@aikidosec/ci-api-client scan` with GitHub `repository_id`, base/head SHAs, `--minimum-severity-level=CRITICAL` |
-| `aikido-release-gate` | `workflow_dispatch` | `scan-release` on the checked-out commit |
+| Check | When | Behavior |
+|-------|------|----------|
+| `Aikido Security: check code` (GitHub App) | `pull_request` | Dashboard PR gating — primary gate for merges |
+| `aikido-release-gate` (workflow) | `workflow_dispatch` | `@aikidosec/ci-api-client scan-release` on the checked-out commit |
 
-**Note:** The repo must be connected in Aikido (GitHub integration). The workflow uses your CI API token (`AIKIDO_CLIENT_API_KEY` or `AIKIDO_API_KEY`), not the Local Scanner or IDE MCP tokens.
-
-**Alternative (no workflow YAML):** Install the [Aikido PR Checks GitHub App](https://help.aikido.dev/pr-and-release-gating/github-ci-pr-gating-via-aikido-dashboard) and configure gating from the Aikido dashboard.
+**Note:** PR gating uses the [Aikido PR Checks GitHub App](https://help.aikido.dev/pr-and-release-gating/github-ci-pr-gating-via-aikido-dashboard), not the CI API client workflow (the client `scan` command requires a matching Aikido `repoId` and fails with "Please verify your repoId..." when misconfigured). Release gating uses `AIKIDO_CLIENT_API_KEY` or `AIKIDO_API_KEY`.
 
 ### Local commands
 
@@ -173,7 +172,7 @@ After baselines are clean, require these status checks under branch protection:
 - `Snyk Security / snyk-python-code`
 - `Snyk Security / snyk-rust`
 - `Snyk Security / snyk-iac`
-- `Aikido Security / aikido-pr-gate`
+- `Aikido Security: check code` (GitHub App)
 
 ---
 

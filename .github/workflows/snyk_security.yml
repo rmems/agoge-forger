@@ -72,14 +72,19 @@ jobs:
         uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
 
       - name: Snyk Code (Python)
-      - name: Snyk Code (Python)
         if: ${{ env.SNYK_TOKEN != '' }}
-        continue-on-error: true
-        id: snyk-python-code
         run: |
-          snyk code test src/ scripts/ \
+          set +e
+          output=$(snyk code test src/ scripts/ \
             --severity-threshold=high \
-            --sarif-file-output=snyk-python.sarif
+            --sarif-file-output=snyk-python.sarif 2>&1)
+          exit_code=$?
+          echo "$output"
+          if echo "$output" | grep -q 'SNYK-CODE-0005'; then
+            echo "::warning::Snyk Code not enabled for this org; skipping Python SAST gate"
+            exit 0
+          fi
+          exit "$exit_code"
 
       - name: Upload Python SARIF
         if: ${{ always() && env.SNYK_TOKEN != '' && hashFiles('snyk-python.sarif') != '' }}
@@ -87,10 +92,6 @@ jobs:
         with:
           sarif_file: snyk-python.sarif
           category: snyk-python
-
-      - name: Fail on Snyk Code findings
-        if: ${{ env.SNYK_TOKEN != '' && steps.snyk-python-code.outcome == 'failure' }}
-        run: exit 1
   snyk-rust:
     runs-on: ubuntu-latest
     permissions:
@@ -114,9 +115,17 @@ jobs:
       - name: Snyk Code (Rust)
         if: ${{ env.SNYK_TOKEN != '' }}
         run: |
-          snyk code test rust-tools/ \
+          set +e
+          output=$(snyk code test rust-tools/ \
             --severity-threshold=high \
-            --sarif-file-output=snyk-rust.sarif
+            --sarif-file-output=snyk-rust.sarif 2>&1)
+          exit_code=$?
+          echo "$output"
+          if echo "$output" | grep -q 'SNYK-CODE-0005'; then
+            echo "::warning::Snyk Code not enabled for this org; skipping Rust SAST gate"
+            exit 0
+          fi
+          exit "$exit_code"
 
       - name: Upload Rust SARIF
         if: ${{ always() && env.SNYK_TOKEN != '' && hashFiles('snyk-rust.sarif') != '' }}
