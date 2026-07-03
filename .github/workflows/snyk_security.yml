@@ -83,8 +83,8 @@ jobs:
             --sarif-file-output=snyk-python.sarif 2>&1)
           exit_code=$?
           echo "$output"
-          if echo "$output" | grep -q 'SNYK-CODE-0005'; then
-            echo "::warning::Snyk Code not enabled for this org; skipping Python SAST gate"
+          if [ "$exit_code" -eq 3 ] || echo "$output" | grep -qE 'SNYK-CODE-0005|no supported files'; then
+            echo "::warning::Snyk Code unavailable or no supported files; skipping Python SAST gate"
             exit 0
           fi
           exit "$exit_code"
@@ -125,8 +125,8 @@ jobs:
             --sarif-file-output=snyk-rust.sarif 2>&1)
           exit_code=$?
           echo "$output"
-          if echo "$output" | grep -q 'SNYK-CODE-0005'; then
-            echo "::warning::Snyk Code not enabled for this org; skipping Rust SAST gate"
+          if [ "$exit_code" -eq 3 ] || echo "$output" | grep -qE 'SNYK-CODE-0005|no supported files'; then
+            echo "::warning::Snyk Code unavailable or no supported files; skipping Rust SAST gate"
             exit 0
           fi
           exit "$exit_code"
@@ -139,11 +139,11 @@ jobs:
           category: snyk-rust
 
       - name: Install cargo-cyclonedx
-        if: ${{ env.SNYK_TOKEN != '' }}
+        if: ${{ always() && env.SNYK_TOKEN != '' }}
         run: cargo install cargo-cyclonedx --locked --version 0.5.9
 
       - name: Generate Rust SBOMs
-        if: ${{ env.SNYK_TOKEN != '' }}
+        if: ${{ always() && env.SNYK_TOKEN != '' }}
         id: generate-sboms
         working-directory: rust-tools
         run: |
@@ -158,7 +158,7 @@ jobs:
           printf '  %s\n' "${sbom_files[@]}"
 
       - name: Snyk SBOM test
-        if: ${{ env.SNYK_TOKEN != '' }}
+        if: ${{ always() && env.SNYK_TOKEN != '' }}
         working-directory: rust-tools
         run: |
           set -euo pipefail

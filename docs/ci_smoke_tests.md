@@ -109,15 +109,15 @@ julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
 ## Security Scanning (Snyk + Aikido)
 
-Two workflows run automatically on pull requests when matching paths change:
+On pull requests, one workflow auto-triggers when matching paths change. Aikido PR gating is handled separately by the Aikido PR Checks GitHub App (dashboard status check). Release gating uses a manual workflow only.
 
 | Workflow | File | Triggers on |
 |----------|------|-------------|
-| Snyk Security | `.github/workflows/snyk_security.yml` | `src/`, `scripts/`, Python manifests, `rust-tools/`, `infra/` |
+| Snyk Security | `.github/workflows/snyk_security.yml` | `src/`, `scripts/`, Python manifests, `rust-tools/`, `infra/` (PR paths + `workflow_dispatch`) |
 | Aikido Security (release) | `.github/workflows/aikido_security.yml` | Manual `workflow_dispatch` only |
 | Aikido PR Checks (GitHub App) | Aikido dashboard | All pull requests (status: `Aikido Security: check code`) |
 
-Both also support manual runs via **workflow_dispatch**.
+`snyk_security.yml` and `aikido_security.yml` support manual runs via **workflow_dispatch**.
 
 ### Repository secrets
 
