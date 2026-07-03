@@ -65,7 +65,7 @@ jobs:
         if: ${{ env.AIKIDO_API_KEY != '' }}
         run: |
           aikido-local-scanner scan ${{ github.event.repository.name }} \
-            --apikey ${{ secrets.AIKIDO_API_KEY }} \
+            --repositoryname ${{ github.event.repository.name }} \
             --repositoryname ${{ github.event.repository.name }} \
             --branchname ${{ github.ref_name }}
 
