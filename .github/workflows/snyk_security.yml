@@ -48,12 +48,11 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' }}
         continue-on-error: true
         run: |
-          set +e
-          snyk test --file=uv.lock --package-manager=uv --severity-threshold=medium
-          status=$?
-          if [ "$status" -ne 0 ]; then
-            echo "uv.lock scan unavailable or found issues; falling back to requirements.txt"
+          if snyk test --file=uv.lock --package-manager=uv --severity-threshold=medium 2>&1 | grep -q "Could not detect supported target files"; then
+            echo "uv.lock scan unavailable; falling back to requirements.txt"
             snyk test --file=requirements.txt --severity-threshold=medium
+          else
+            snyk test --file=uv.lock --package-manager=uv --severity-threshold=medium
           fi
 
   snyk-python-code:
