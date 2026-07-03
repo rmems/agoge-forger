@@ -151,7 +151,7 @@ When a secret is unset, the corresponding scan steps are skipped so forks and un
 
 ```bash
 # Snyk (after uv pip install -e ".[dev]")
-snyk test --file=uv.lock --package-manager=uv
+snyk test --file=uv.lock
 snyk code test src/ scripts/ --severity-threshold=high
 snyk code test rust-tools/ --severity-threshold=high
 snyk iac test infra/terraform --severity-threshold=medium
