@@ -1,0 +1,159 @@
+name: Snyk Security
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "uv.lock"
+      - "rust-tools/**"
+      - "infra/**"
+      - ".github/workflows/snyk_security.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  snyk-python-sca:
+    runs-on: ubuntu-latest
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
+        with:
+          enable-cache: true
+
+      - name: Install dev dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
+
+      - name: Snyk setup
+        if: ${{ env.SNYK_TOKEN != '' }}
+        uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+
+      # Report-only until upstream transformers advisories have fixes (#37).
+      - name: Snyk Python SCA (uv.lock)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        continue-on-error: true
+        run: |
+          set +e
+          snyk test --file=uv.lock --package-manager=uv --severity-threshold=medium
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "uv.lock scan unavailable or found issues; falling back to requirements.txt"
+            snyk test --file=requirements.txt --severity-threshold=medium
+          fi
+
+  snyk-python-code:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Snyk setup
+        if: ${{ env.SNYK_TOKEN != '' }}
+        uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+
+      - name: Snyk Code (Python)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: |
+          snyk code test src/ scripts/ \
+            --severity-threshold=high \
+            --sarif-file-output=snyk-python.sarif
+
+      - name: Upload Python SARIF
+        if: ${{ env.SNYK_TOKEN != '' && hashFiles('snyk-python.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@3c3833e0f8c1c83d449a7478aa59c036a9165498 # v3.29.11
+        with:
+          sarif_file: snyk-python.sarif
+          category: snyk-python
+
+  snyk-rust:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Snyk setup
+        if: ${{ env.SNYK_TOKEN != '' }}
+        uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+
+      - name: Snyk Code (Rust)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: |
+          snyk code test rust-tools/ \
+            --severity-threshold=high \
+            --sarif-file-output=snyk-rust.sarif
+
+      - name: Upload Rust SARIF
+        if: ${{ env.SNYK_TOKEN != '' && hashFiles('snyk-rust.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@3c3833e0f8c1c83d449a7478aa59c036a9165498 # v3.29.11
+        with:
+          sarif_file: snyk-rust.sarif
+          category: snyk-rust
+
+      - name: Install cargo-cyclonedx
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate Rust SBOMs
+        if: ${{ env.SNYK_TOKEN != '' }}
+        working-directory: rust-tools
+        run: cargo cyclonedx --format json --override-filename sbom
+
+      - name: Snyk SBOM test
+        if: ${{ env.SNYK_TOKEN != '' }}
+        working-directory: rust-tools
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r sbom; do
+            found=1
+            echo "Scanning $sbom"
+            snyk sbom test --file="$sbom" --severity-threshold=medium
+          done < <(find crates -name 'sbom.json' -type f)
+          if [ "$found" -eq 0 ]; then
+            echo "No Rust SBOM files found under rust-tools/crates"
+            exit 1
+          fi
+
+  snyk-iac:
+    runs-on: ubuntu-latest
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Snyk setup
+        if: ${{ env.SNYK_TOKEN != '' }}
+        uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+
+      - name: Snyk IaC (Terraform)
+        if: ${{ env.SNYK_TOKEN != '' }}
+        run: snyk iac test infra/terraform --severity-threshold=medium

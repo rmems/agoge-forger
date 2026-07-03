@@ -1,0 +1,74 @@
+name: Aikido Security
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "rust-tools/**"
+      - "infra/**"
+      - ".github/workflows/aikido_security.yml"
+      - ".github/workflows/snyk_security.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  aikido-pr-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container:
+      image: aikidosecurity/local-scanner:latest
+    env:
+      AIKIDO_API_KEY: ${{ secrets.AIKIDO_API_KEY }}
+    steps:
+      - name: Checkout
+        if: ${{ env.AIKIDO_API_KEY != '' }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: ${{ github.event.repository.name }}
+          fetch-depth: 0
+
+      - name: Aikido PR gating scan
+        if: ${{ env.AIKIDO_API_KEY != '' }}
+        run: |
+          aikido-local-scanner scan ${{ github.event.repository.name }} \
+            --apikey ${{ secrets.AIKIDO_API_KEY }} \
+            --repositoryname ${{ github.event.repository.name }} \
+            --branchname ${{ github.event.pull_request.head.ref }} \
+            --gating-mode pr \
+            --fail-on critical \
+            --base-commit-id ${{ github.event.pull_request.base.sha }} \
+            --head-commit-id ${{ github.event.pull_request.head.sha }}
+
+      - name: Skip (AIKIDO_API_KEY not configured)
+        if: ${{ env.AIKIDO_API_KEY == '' }}
+        run: echo "AIKIDO_API_KEY not set; skipping Aikido PR gating scan."
+
+  aikido-baseline:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    container:
+      image: aikidosecurity/local-scanner:latest
+    env:
+      AIKIDO_API_KEY: ${{ secrets.AIKIDO_API_KEY }}
+    steps:
+      - name: Checkout
+        if: ${{ env.AIKIDO_API_KEY != '' }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: ${{ github.event.repository.name }}
+          fetch-depth: 0
+
+      - name: Aikido baseline scan
+        if: ${{ env.AIKIDO_API_KEY != '' }}
+        run: |
+          aikido-local-scanner scan ${{ github.event.repository.name }} \
+            --apikey ${{ secrets.AIKIDO_API_KEY }} \
+            --repositoryname ${{ github.event.repository.name }} \
+            --branchname ${{ github.ref_name }}
+
+      - name: Skip (AIKIDO_API_KEY not configured)
+        if: ${{ env.AIKIDO_API_KEY == '' }}
+        run: echo "AIKIDO_API_KEY not set; skipping Aikido baseline scan."
