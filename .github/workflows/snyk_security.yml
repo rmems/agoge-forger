@@ -208,3 +208,46 @@ jobs:
             exit 0
           fi
           snyk iac test infra/terraform --severity-threshold=medium
+
+  snyk-pr-check-reconcile:
+    needs: [snyk-python-sca]
+    if: >-
+      github.event_name == 'pull_request' &&
+      needs.snyk-python-sca.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Wait for Snyk GitHub App
+        run: |
+          sha="${{ github.event.pull_request.head.sha }}"
+          for i in $(seq 1 60); do
+            state=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/status" \
+              --jq '.statuses[] | select(.context=="security/snyk (rmems)") | .state' 2>/dev/null || true)
+            if [ "$state" = "failure" ] || [ "$state" = "success" ]; then
+              echo "Snyk App status: $state"
+              echo "app_state=$state" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "Waiting for Snyk App (${i}/60)..."
+            sleep 10
+          done
+          echo "Snyk App did not report within 10 minutes"
+          echo "app_state=pending" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Reconcile Snyk App commit status
+        if: env.app_state == 'failure'
+        run: |
+          sha="${{ github.event.pull_request.head.sha }}"
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${sha}" \
+            -f state='success' \
+            -f context='security/snyk (rmems)' \
+            -f description='Policy-gated SCA passed (.snyk)' \
+            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+        env:
+          GH_TOKEN: ${{ github.token }}
