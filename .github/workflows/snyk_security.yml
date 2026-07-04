@@ -44,17 +44,15 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' }}
         uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
 
-      # Report-only until upstream transformers advisories have fixes (#37).
       - name: Snyk Python SCA (uv.lock)
         if: ${{ env.SNYK_TOKEN != '' }}
-        continue-on-error: true
         run: |
           set +e
-          snyk test --file=uv.lock --package-manager=uv --severity-threshold=medium
+          snyk test --file=uv.lock --package-manager=uv --severity-threshold=medium --policy-path=.snyk
           exit_code=$?
           if [ "$exit_code" -eq 2 ]; then
             echo "uv.lock scan failed with CLI/scan error (exit 2); falling back to requirements.txt"
-            snyk test --file=requirements.txt --severity-threshold=medium
+            snyk test --file=requirements.txt --severity-threshold=medium --policy-path=.snyk
             exit $?
           fi
           exit "$exit_code"
