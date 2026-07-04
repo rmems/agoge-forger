@@ -167,10 +167,15 @@ jobs:
             echo "::error::No Rust SBOM files found under rust-tools/crates; SBOM generation produced zero files"
             exit 1
           fi
+          failed=0
           for sbom in "${sbom_files[@]}"; do
             echo "Scanning $sbom"
-            snyk sbom test --file="$sbom" --severity-threshold=medium
+            if ! snyk sbom test --file="$sbom" --severity-threshold=medium; then
+              failed=1
+            fi
           done
+          exit "$failed"
+
 
   snyk-iac:
     runs-on: ubuntu-latest
