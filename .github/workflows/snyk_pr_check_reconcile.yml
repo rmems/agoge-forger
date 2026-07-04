@@ -4,6 +4,7 @@ name: Snyk PR Check Reconcile
 # always honor the branch .snyk policy before merge. After a policy-gated CLI scan passes,
 # post a success status for the same context so branch protection reflects repo policy.
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
   status:
@@ -74,6 +75,12 @@ jobs:
           set +e
           snyk test --file=requirements.txt --severity-threshold=medium --policy-path=.snyk
           code=$?
+          if [ "$code" -eq 2 ]; then
+            echo "requirements.txt scan missing packages (exit 2); installing locked deps"
+            uv pip install -r requirements.txt
+            snyk test --file=requirements.txt --severity-threshold=medium --policy-path=.snyk
+            code=$?
+          fi
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -ne 0 ]; then
             echo "::error::Policy-gated Snyk SCA failed (exit $code); not reconciling App status"
