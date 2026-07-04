@@ -33,14 +33,8 @@ jobs:
       - name: Aikido release gating scan
         if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
         run: |
-          if [ -n "$AIKIDO_CLIENT_API_KEY" ]; then
-            API_KEY="$AIKIDO_CLIENT_API_KEY"
-          else
-            API_KEY="$AIKIDO_API_KEY"
-          fi
-
+          export AIKIDO_API_KEY="${AIKIDO_CLIENT_API_KEY:-$AIKIDO_API_KEY}"
           aikido-api-client scan-release "${{ github.repository_id }}" "${{ github.sha }}" \
-            --apikey "$API_KEY" \
             --minimum-severity-level=CRITICAL \
             --no-fail-on-dependency-scan
 

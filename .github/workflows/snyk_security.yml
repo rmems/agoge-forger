@@ -44,14 +44,17 @@ jobs:
         if: ${{ env.SNYK_TOKEN != '' }}
         uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
 
+      # Report-only: uv.lock SCA needs Enterprise Early Access; fallback uses requirements.txt.
       - name: Snyk Python SCA (uv.lock)
         if: ${{ env.SNYK_TOKEN != '' }}
+        continue-on-error: true
         run: |
           set +e
           snyk test --file=uv.lock --package-manager=uv --severity-threshold=medium --policy-path=.snyk
           exit_code=$?
           if [ "$exit_code" -eq 2 ]; then
             echo "uv.lock scan failed with CLI/scan error (exit 2); falling back to requirements.txt"
+            uv pip install -r requirements.txt
             snyk test --file=requirements.txt --severity-threshold=medium --policy-path=.snyk
             exit $?
           fi
@@ -199,4 +202,9 @@ jobs:
 
       - name: Snyk IaC (Terraform)
         if: ${{ env.SNYK_TOKEN != '' }}
-        run: snyk iac test infra/terraform --severity-threshold=medium
+        run: |
+          if [ ! -d infra/terraform ] || [ -z "$(find infra/terraform -name '*.tf' -print -quit)" ]; then
+            echo "::warning::No Terraform files under infra/terraform; skipping IaC scan"
+            exit 0
+          fi
+          snyk iac test infra/terraform --severity-threshold=medium
