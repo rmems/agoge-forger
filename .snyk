@@ -1,0 +1,76 @@
+# Snyk (https://snyk.io) policy file, patches or ignores known vulnerabilities.
+version: v1.25.1
+# ignores vulnerabilities until expiry date; change duration by modifying expiry date
+ignore:
+  SNYK-PYTHON-TRANSFORMERS-14560695:
+    - '*':
+        reason: >-
+          No upstream fix available; accepted baseline for ML training stack
+          (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:09:27.663Z
+  SNYK-PYTHON-TRANSFORMERS-14563374:
+    - '*':
+        reason: >-
+          No upstream fix available; accepted baseline for ML training stack
+          (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:09:28.853Z
+  SNYK-PYTHON-TRANSFORMERS-14564275:
+    - '*':
+        reason: >-
+          No upstream fix available; accepted baseline for ML training stack
+          (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:09:30.053Z
+  SNYK-PYTHON-TRANSFORMERS-14564363:
+    - '*':
+        reason: >-
+          No upstream fix available; accepted baseline for ML training stack
+          (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:09:31.145Z
+  SNYK-PYTHON-TRANSFORMERS-14564364:
+    - '*':
+        reason: >-
+          No upstream fix available; accepted baseline for ML training stack
+          (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:09:33.320Z
+  SNYK-PYTHON-TRANSFORMERS-14564365:
+    - '*':
+        reason: >-
+          No upstream fix available; accepted baseline for ML training stack
+          (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:09:34.952Z
+  SNYK-PYTHON-TRANSFORMERS-14564366:
+    - '*':
+        reason: >-
+          No upstream fix available; accepted baseline for ML training stack
+          (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:09:36.187Z
+  SNYK-PYTHON-ACCELERATE-14566490:
+    - '*':
+        reason: >-
+          No upstream fix available; accepted baseline for ML training stack
+          (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:09:37.634Z
+  SNYK-PYTHON-CLICK-16347201:
+    - '*':
+        reason: Pinned to fixed versions in uv.lock and requirements.txt (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:11:46.747Z
+  SNYK-PYTHON-IDNA-16769942:
+    - '*':
+        reason: Pinned to fixed versions in uv.lock and requirements.txt (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:11:49.230Z
+  SNYK-PYTHON-PYGMENTS-15746419:
+    - '*':
+        reason: Pinned to fixed versions in uv.lock and requirements.txt (#37)
+        expires: 2027-01-01T00:00:00.000Z
+        created: 2026-07-04T03:11:50.421Z
+patch: {}
