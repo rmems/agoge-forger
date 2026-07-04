@@ -21,12 +21,6 @@ permissions:
 jobs:
   python-tests:
     runs-on: ubuntu-latest
-    env:
-      # Hoist SNYK_TOKEN to the job level so the Snyk step's `if:` check
-      # can see it. GitHub evaluates `if:` against the workflow + job env,
-      # not the same step's `env:` block, so setting it only on the step
-      # silently skips the gate on pull_request runs.
-      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -48,22 +42,6 @@ jobs:
 
       - name: Run pytest
         run: .venv/bin/pytest tests/
-
-      # Snyk SCA against the locked/installed environment (compliance PR #21).
-      # Uses the official snyk/actions/setup step to install the real Snyk
-      # CLI (the previous `uv run --with snyk` invocation used a Python
-      # wrapper, not the official binary, and the trailing `|| true` would
-      # silently no-op on failure). The step is gated on SNYK_TOKEN being
-      # configured as a repository secret; without it, the step is skipped
-      # entirely so forks and unauthenticated PRs still pass the gate.
-      - name: Snyk SCA
-        if: ${{ env.SNYK_TOKEN != '' }}
-        uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
-
-      - name: Snyk test
-        if: ${{ env.SNYK_TOKEN != '' }}
-        continue-on-error: true
-        run: snyk test --all-projects --severity-threshold=medium
 
   rust-check:
     runs-on: ubuntu-latest

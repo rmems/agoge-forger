@@ -1,0 +1,43 @@
+name: Aikido Security
+
+# PR gating is handled by the Aikido PR Checks GitHub App (dashboard status:
+# "Aikido Security: check code"). This workflow only runs release gating on demand.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  aikido-release-gate:
+    runs-on: ubuntu-latest
+    env:
+      AIKIDO_CLIENT_API_KEY: ${{ secrets.AIKIDO_CLIENT_API_KEY }}
+      AIKIDO_API_KEY: ${{ secrets.AIKIDO_API_KEY }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Install Aikido CI API Client
+        if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
+        run: npm install --global @aikidosec/ci-api-client@1.0.16
+
+      - name: Aikido release gating scan
+        if: ${{ env.AIKIDO_CLIENT_API_KEY != '' || env.AIKIDO_API_KEY != '' }}
+        run: |
+          export AIKIDO_API_KEY="${AIKIDO_CLIENT_API_KEY:-$AIKIDO_API_KEY}"
+          aikido-api-client scan-release "${{ github.repository_id }}" "${{ github.sha }}" \
+            --minimum-severity-level=CRITICAL \
+            --no-fail-on-dependency-scan
+
+      - name: Skip (no Aikido CI API key configured)
+        if: ${{ env.AIKIDO_CLIENT_API_KEY == '' && env.AIKIDO_API_KEY == '' }}
+        run: echo "Set AIKIDO_CLIENT_API_KEY or AIKIDO_API_KEY to enable Aikido release gating."
