@@ -215,12 +215,11 @@ jobs:
           snyk iac test infra/terraform --severity-threshold=medium
 
   # Bypass Snyk GitHub App PR check when it fails (quota, policy drift) but in-repo jobs passed.
-  # Disabled for unconfigured repos (no SNYK_TOKEN) to avoid a 10-minute poll.
+  # Skips when SNYK_TOKEN is unset (unconfigured forks) — secrets cannot gate job if: conditions.
   snyk-pr-check-reconcile:
     needs: [snyk-python-sca, snyk-python-code, snyk-rust, snyk-iac]
     if: >-
       github.event_name == 'pull_request' &&
-      secrets.SNYK_TOKEN != '' &&
       needs.snyk-python-sca.result == 'success' &&
       needs.snyk-python-code.result == 'success' &&
       needs.snyk-rust.result == 'success' &&
@@ -229,8 +228,21 @@ jobs:
     permissions:
       contents: read
       statuses: write
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
     steps:
+      - name: Skip when Snyk is not configured
+        id: snyk_configured
+        run: |
+          if [ -z "${SNYK_TOKEN}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "SNYK_TOKEN unset; skipping Snyk App bypass"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Wait briefly for Snyk GitHub App
+        if: steps.snyk_configured.outputs.configured == 'true'
         run: |
           sha="${{ github.event.pull_request.head.sha }}"
           for i in $(seq 1 12); do
@@ -250,7 +262,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Bypass Snyk App commit status
-        if: env.app_state != 'success'
+        if: >-
+          steps.snyk_configured.outputs.configured == 'true' &&
+          env.app_state != 'success'
         run: |
           sha="${{ github.event.pull_request.head.sha }}"
           gh api \
