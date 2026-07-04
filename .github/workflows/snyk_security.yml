@@ -167,7 +167,7 @@ jobs:
           printf '  %s\n' "${sbom_files[@]}"
 
       - name: Snyk SBOM test
-        if: ${{ (success() || failure()) && env.SNYK_TOKEN != '' }}
+        if: ${{ steps.generate-sboms.outcome == 'success' && env.SNYK_TOKEN != '' }}
         working-directory: rust-tools
         run: |
           set -euo pipefail
