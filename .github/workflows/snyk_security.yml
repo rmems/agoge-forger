@@ -45,6 +45,8 @@ jobs:
         uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
 
       # Report-only: uv.lock SCA needs Enterprise Early Access; fallback uses requirements.txt.
+      # continue-on-error + set +e: allow exit 2 from uv.lock (CLI/scan error) so we can fall back
+      # to requirements.txt; the step still fails on real vulnerabilities from either scan path.
       - name: Snyk Python SCA (uv.lock)
         if: ${{ env.SNYK_TOKEN != '' }}
         continue-on-error: true
@@ -210,10 +212,13 @@ jobs:
           snyk iac test infra/terraform --severity-threshold=medium
 
   snyk-pr-check-reconcile:
-    needs: [snyk-python-sca]
+    needs: [snyk-python-sca, snyk-python-code, snyk-rust, snyk-iac]
     if: >-
       github.event_name == 'pull_request' &&
-      needs.snyk-python-sca.result == 'success'
+      needs.snyk-python-sca.result == 'success' &&
+      needs.snyk-python-code.result == 'success' &&
+      needs.snyk-rust.result == 'success' &&
+      needs.snyk-iac.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -233,11 +238,12 @@ jobs:
             echo "Waiting for Snyk App (${i}/60)..."
             sleep 10
           done
-          echo "Snyk App did not report within 10 minutes"
+          echo "::warning::Snyk App did not report within 10 minutes; reconcile skipped"
           echo "app_state=pending" >> "$GITHUB_ENV"
         env:
           GH_TOKEN: ${{ github.token }}
 
+      # Intentionally overwrite Snyk App failure when all in-repo jobs passed (.snyk policy-gated SCA).
       - name: Reconcile Snyk App commit status
         if: env.app_state == 'failure'
         run: |
