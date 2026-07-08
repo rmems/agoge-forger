@@ -102,7 +102,7 @@ jobs:
 
       - name: Upload Python SARIF
         if: ${{ always() && env.SNYK_TOKEN != '' && hashFiles('snyk-python.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@3c3833e0f8c1c83d449a7478aa59c036a9165498 # v3.29.11
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
         with:
           sarif_file: snyk-python.sarif
           category: snyk-python
@@ -148,7 +148,7 @@ jobs:
 
       - name: Upload Rust SARIF
         if: ${{ always() && env.SNYK_TOKEN != '' && hashFiles('snyk-rust.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@3c3833e0f8c1c83d449a7478aa59c036a9165498 # v3.29.11
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4.36.3
         with:
           sarif_file: snyk-rust.sarif
           category: snyk-rust
