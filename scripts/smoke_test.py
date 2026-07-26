@@ -33,7 +33,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--stream", action="store_true", default=False)
     p.add_argument("--no-stream", dest="stream", action="store_false")
     p.add_argument("--dry-run", action="store_true", default=False)
-    p.add_argument("--output-dir", default="smoke_output", help="Output directory under cwd (default: smoke_output)")
+    p.add_argument(
+        "--output-dir",
+        default=("smoke_output" if hasattr(os, "O_DIRECTORY") else "."),
+        help="Output directory under cwd (default: smoke_output on POSIX, . without openat)",
+    )
     p.add_argument(
         "--trust-remote-code",
         action="store_true",
@@ -266,27 +270,6 @@ def _is_symlink_or_reparse(path: Path) -> bool:
     return bool(attrs & 0x400)
 
 
-def _mkdir_single_under_cwd(cwd: Path, name: str) -> Path:
-    """Create or accept one real directory segment under cwd (non-dirfd platforms).
-
-    Only a single path segment is allowed (e.g. default ``smoke_output``). Nested
-    multi-segment paths require openat/dirfd.
-    """
-    if name in ("", ".", "..") or "/" in name or chr(92) in name:
-        raise ValueError(f"Invalid output directory segment: {name!r}")
-    target = cwd / name
-    if _is_symlink_or_reparse(target):
-        raise ValueError(f"Refusing symlink/junction output directory: {target}")
-    if target.exists():
-        if not target.is_dir() or _is_symlink_or_reparse(target):
-            raise ValueError(f"Output path is not a real directory: {target}")
-    else:
-        os.mkdir(target, 0o755)
-        if _is_symlink_or_reparse(target):
-            raise ValueError(f"Refusing reparse point at output directory: {target}")
-    return _require_under_cwd(target.resolve(), cwd.resolve())
-
-
 def _jailed_output_dir(raw: str) -> Path:
     """Sanitize ``--output-dir`` and jail it under the process cwd.
 
@@ -294,21 +277,20 @@ def _jailed_output_dir(raw: str) -> Path:
     each path component with openat + ``O_NOFOLLOW`` so intermediate symlink
     components cannot redirect the jail outside cwd.
 
-    Platforms without dirfd/openat (e.g. Windows) allow only ``.`` or a single
-    real directory segment under cwd (so the default ``smoke_output`` works).
-    Multi-segment nested paths require openat.
+    Platforms without dirfd/openat cannot safely create or write under nested
+    directories (pathname reopen races). Fail closed: only ``--output-dir .``
+    is accepted there. Default is ``smoke_output`` on POSIX and ``.`` without
+    openat.
     """
     cwd, parts = _relative_parts_under_cwd(raw)
     if not parts:
         return cwd
 
     if not _supports_dirfd():
-        if len(parts) != 1:
-            raise ValueError(
-                "Multi-segment --output-dir is unsupported without openat/dirfd; "
-                "use a single directory segment (e.g. smoke_output) or ."
-            )
-        return _mkdir_single_under_cwd(cwd, parts[0])
+        raise ValueError(
+            "Non-cwd --output-dir requires openat/dirfd; "
+            "use --output-dir . on this platform"
+        )
 
     dir_fd = _open_path_under_cwd(parts, create=True)
     os.close(dir_fd)
@@ -379,76 +361,65 @@ def _replace_temp_onto_artifact(tmp_path: Path, path: Path) -> None:
 
 
 def _write_text_nofollow_fallback(path: Path, text: str) -> None:
-    """Windows/non-dirfd write: exclusive temp + replace under cwd or one child.
-
-    Parent must be the process cwd or a single real (non-reparse) directory
-    segment under cwd (matches non-dirfd jail). Final path is never opened for
-    write (O_EXCL temp sibling + os.replace); temp is removed if replace fails.
-    """
+    """Windows/non-dirfd write: exclusive temp + replace under process cwd only."""
     cwd = Path.cwd().resolve()
-    parent = path.parent.resolve()
-    try:
-        rel = parent.relative_to(cwd)
-    except ValueError as exc:
+    if path.parent.resolve() != cwd:
         raise ValueError(
-            f"Without openat/dirfd, artifact parent must be under cwd ({cwd}): {parent}"
-        ) from exc
-    if len(rel.parts) > 1:
-        raise ValueError(
-            "Without openat/dirfd, multi-segment artifact parents are unsupported"
+            "Without openat/dirfd, artifacts must be written under the process cwd"
         )
-    if len(rel.parts) == 1:
-        child = cwd / rel.parts[0]
-        if _is_symlink_or_reparse(child) or not child.is_dir():
-            raise ValueError(f"Artifact parent is not a real directory under cwd: {child}")
     _refuse_symlink_artifact(path)
-    tmp_path = _exclusive_temp_path(parent, path.name)
+    tmp_path = _exclusive_temp_path(cwd, path.name)
     _write_exclusive_temp(tmp_path, text)
-    _replace_temp_onto_artifact(tmp_path, path)
+    _replace_temp_onto_artifact(tmp_path, cwd / path.name)
+
+
+def _unlink_at(dir_fd: int, name: str) -> None:
+    """Best-effort unlink of ``name`` relative to ``dir_fd``."""
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except OSError:
+        pass
+
+
+def _write_exclusive_temp_at(dir_fd: int, tmp_name: str, text: str) -> None:
+    """Create ``tmp_name`` under ``dir_fd`` with O_EXCL and write ``text``."""
+    fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=dir_fd)
+    try:
+        _write_via_fd(fd, text)
+    except Exception:
+        _unlink_at(dir_fd, tmp_name)
+        raise
+
+
+def _replace_temp_at(dir_fd: int, tmp_name: str, final_name: str) -> None:
+    """Rename temp onto final basename under ``dir_fd``; unlink temp on failure."""
+    try:
+        os.replace(tmp_name, final_name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except Exception:
+        _unlink_at(dir_fd, tmp_name)
+        raise
+
+
+def _write_text_nofollow_dirfd(path: Path, rel_parts: tuple[str, ...], text: str) -> None:
+    """Write via exclusive temp + renameat under an openat parent directory."""
+    dir_fd = _open_path_under_cwd(rel_parts, create=False) if rel_parts else _open_cwd_dir_fd()
+    tmp_name = f".{path.name}.{secrets.token_hex(8)}.tmp"
+    try:
+        _write_exclusive_temp_at(dir_fd, tmp_name, text)
+        _replace_temp_at(dir_fd, tmp_name, path.name)
+    finally:
+        os.close(dir_fd)
 
 
 def _write_text_nofollow(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` without following symlinks or truncating hard links.
-
-    Requires the parent directory to resolve under cwd. Parent components are
-    opened with openat + ``O_NOFOLLOW`` when available. Content is always written
-    to a new exclusive temp inode in that directory and then renamed over the
-    final basename so hard-linked outside targets are not truncated.
-
-    On platforms without dirfd (Windows), only cwd-parent writes are allowed and
-    the same exclusive-temp + replace strategy is used.
-    """
+    """Write ``text`` to ``path`` without following symlinks or truncating hard links."""
     cwd = Path.cwd().resolve()
     rel = _require_under_cwd(path.parent.resolve(), cwd).relative_to(cwd)
-
     if not _supports_dirfd():
         _write_text_nofollow_fallback(path, text)
         return
-
     parts = tuple(p for p in rel.parts if p not in ("", "."))
-    dir_fd = _open_path_under_cwd(parts, create=False) if parts else _open_cwd_dir_fd()
-    tmp_name = f".{path.name}.{secrets.token_hex(8)}.tmp"
-    try:
-        fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=dir_fd)
-        try:
-            _write_via_fd(fd, text)
-        except Exception:
-            try:
-                os.unlink(tmp_name, dir_fd=dir_fd)
-            except OSError:
-                pass
-            raise
-        try:
-            # New inode + rename: does not open/truncate an existing hard-linked dirent.
-            os.replace(tmp_name, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-        except Exception:
-            try:
-                os.unlink(tmp_name, dir_fd=dir_fd)
-            except OSError:
-                pass
-            raise
-    finally:
-        os.close(dir_fd)
+    _write_text_nofollow_dirfd(path, parts, text)
 
 
 def _write_json_under(out_dir: Path, name: str, data: Any) -> None:
