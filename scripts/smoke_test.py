@@ -33,7 +33,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--stream", action="store_true", default=False)
     p.add_argument("--no-stream", dest="stream", action="store_false")
     p.add_argument("--dry-run", action="store_true", default=False)
-    p.add_argument("--output-dir", default="smoke_output")
+    p.add_argument("--output-dir", default=".", help="Output directory under cwd (default: .; required on Windows)")
     p.add_argument(
         "--trust-remote-code",
         action="store_true",
@@ -369,17 +369,15 @@ def _write_text_nofollow_fallback(path: Path, text: str) -> None:
 
 
 def _write_text_nofollow(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` without following symlinks in any component.
+    """Write ``text`` to ``path`` without following symlinks or truncating hard links.
 
-    Requires the parent directory to resolve under cwd. Each directory
-    component is opened with openat + ``O_NOFOLLOW`` (when available); the
-    final file is created with ``O_NOFOLLOW`` so a pre-created final-component
-    symlink cannot redirect the write. Never falls back to opening an
-    out-of-cwd parent (that would reintroduce symlink escape).
+    Requires the parent directory to resolve under cwd. Parent components are
+    opened with openat + ``O_NOFOLLOW`` when available. Content is always written
+    to a new exclusive temp inode in that directory and then renamed over the
+    final basename so hard-linked outside targets are not truncated.
 
-    On platforms without dirfd/O_NOFOLLOW (Windows fallback), write via exclusive
-    temp + ``os.replace`` so the final path is never opened for write (closes
-    symlink check/open races).
+    On platforms without dirfd (Windows), only cwd-parent writes are allowed and
+    the same exclusive-temp + replace strategy is used.
     """
     cwd = Path.cwd().resolve()
     rel = _require_under_cwd(path.parent.resolve(), cwd).relative_to(cwd)
@@ -390,11 +388,21 @@ def _write_text_nofollow(path: Path, text: str) -> None:
 
     parts = tuple(p for p in rel.parts if p not in ("", "."))
     dir_fd = _open_path_under_cwd(parts, create=False) if parts else _open_cwd_dir_fd()
+    tmp_name = f".{path.name}.{secrets.token_hex(8)}.tmp"
     try:
-        fd = os.open(path.name, _write_flags_nofollow(), 0o644, dir_fd=dir_fd)
+        fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=dir_fd)
+        try:
+            _write_via_fd(fd, text)
+        except Exception:
+            try:
+                os.unlink(tmp_name, dir_fd=dir_fd)
+            except OSError:
+                pass
+            raise
+        # New inode + rename: does not open/truncate an existing hard-linked dirent.
+        os.replace(tmp_name, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
     finally:
         os.close(dir_fd)
-    _write_via_fd(fd, text)
 
 
 def _write_json_under(out_dir: Path, name: str, data: Any) -> None:

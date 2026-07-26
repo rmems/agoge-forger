@@ -180,14 +180,21 @@ class TestWriteJsonUnder:
         assert json.loads(path.read_text(encoding="utf-8")) == {"fresh": True}
 
     def test_refuses_to_write_through_symlink(self, tmp_path, monkeypatch):
+        """Writing must not follow a symlink artifact to its target."""
         monkeypatch.chdir(tmp_path)
         target = tmp_path / "elsewhere.txt"
         target.write_text("original", encoding="utf-8")
         link = tmp_path / "manifest.json"
         link.symlink_to(target)
-        with pytest.raises((OSError, ValueError)):
+        # Exclusive temp + replace either fails closed or replaces the symlink
+        # dirent with a new regular file — never truncates the outside target.
+        try:
             smoke_test._write_json_under(tmp_path, "manifest.json", {"hijacked": True})
+        except (OSError, ValueError):
+            pass
         assert target.read_text(encoding="utf-8") == "original"
+        if link.exists() and not link.is_symlink():
+            assert json.loads(link.read_text(encoding="utf-8")) == {"hijacked": True}
 
     def test_windows_fallback_refuses_symlink_artifact(self, tmp_path, monkeypatch):
         """Non-dirfd path must fail closed on symlink artifacts (Codex P2)."""
@@ -221,6 +228,25 @@ class TestWriteJsonUnder:
         smoke_test._write_json_under(tmp_path, "manifest.json", {"fresh": True})
         assert json.loads(path.read_text(encoding="utf-8")) == {"fresh": True}
         assert not path.is_symlink()
+
+    def test_write_does_not_truncate_hard_link_target(self, tmp_path, monkeypatch):
+        """O_TRUNC on a hard-linked artifact must not clobber the outside inode."""
+        monkeypatch.chdir(tmp_path)
+        outside = tmp_path.parent / f"hardlink_target_{tmp_path.name}.txt"
+        outside.write_text("outside-original", encoding="utf-8")
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        artifact = out_dir / "manifest.json"
+        try:
+            os.link(outside, artifact)
+        except OSError as exc:
+            pytest.skip(f"hard links unsupported: {exc}")
+        smoke_test._write_json_under(out_dir, "manifest.json", {"fresh": True})
+        assert outside.read_text(encoding="utf-8") == "outside-original"
+        assert json.loads(artifact.read_text(encoding="utf-8")) == {"fresh": True}
+        # artifact should no longer share inode with outside
+        assert os.stat(artifact).st_ino != os.stat(outside).st_ino
+        outside.unlink(missing_ok=True)
 
     def test_windows_fallback_write_rejects_nested_parent(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
