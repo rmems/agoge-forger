@@ -163,15 +163,48 @@ def _safe_artifact_path(out_dir: Path, name: str) -> Path:
     return out_dir / name
 
 
+def _dir_open_flags() -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    return flags
+
+
+def _mkdir_nofollow_under(dir_fd: int, name: str) -> int:
+    """Create ``name`` under ``dir_fd`` if needed and open it without following symlinks."""
+    try:
+        os.mkdir(name, 0o755, dir_fd=dir_fd)
+    except FileExistsError:
+        pass
+    return os.open(name, _dir_open_flags(), dir_fd=dir_fd)
+
+
+def _open_path_under_cwd(rel_parts: tuple[str, ...], *, create: bool) -> int:
+    """Open a directory under cwd via openat, never following symlink components."""
+    cwd = Path.cwd().resolve()
+    fd = os.open(cwd, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in rel_parts:
+            if part in ("", ".", ".."):
+                raise ValueError(f"Invalid path segment in output directory: {part!r}")
+            if create:
+                next_fd = _mkdir_nofollow_under(fd, part)
+            else:
+                next_fd = os.open(part, _dir_open_flags(), dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
 def _jailed_output_dir(raw: str) -> Path:
     """Sanitize ``--output-dir`` and jail it under the process cwd.
 
-    Validate containment **before** creating anything on disk:
-
-    1. Reject empty paths and explicit ``..`` segments.
-    2. Resolve the candidate (no mkdir).
-    3. Require the resolved path to live under ``Path.cwd()``.
-    4. Rebuild from cwd + relative parts, then create only the jailed path.
+    Validate containment **before** creating anything on disk, then create
+    each path component with openat + ``O_NOFOLLOW`` so intermediate symlink
+    components cannot redirect the jail outside cwd.
     """
     if not raw or not str(raw).strip():
         raise ValueError("Output directory must not be empty")
@@ -190,25 +223,55 @@ def _jailed_output_dir(raw: str) -> Path:
             f"Output directory must be under the current working directory ({cwd}): {resolved}"
         ) from exc
 
-    jailed = cwd
-    for part in rel.parts:
-        if part in ("", ".", ".."):
-            raise ValueError(f"Invalid path segment in output directory: {part!r}")
-        jailed = jailed.joinpath(part)
-    jailed.mkdir(parents=True, exist_ok=True)
-    return jailed
+    parts = tuple(p for p in rel.parts if p not in ("", "."))
+    if not parts:
+        return cwd
+
+    # Create component-by-component under cwd without following symlinks.
+    dir_fd = _open_path_under_cwd(parts, create=True)
+    os.close(dir_fd)
+
+    jailed = cwd.joinpath(*parts)
+    # Final containment check after creation (still under cwd, no escape).
+    final = jailed.resolve()
+    try:
+        final.relative_to(cwd)
+    except ValueError as exc:
+        raise ValueError(
+            f"Output directory must be under the current working directory ({cwd}): {final}"
+        ) from exc
+    return final
 
 
 def _write_text_nofollow(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` without following a final-component symlink.
+    """Write ``text`` to ``path`` without following symlinks in any component.
 
-    Uses ``O_NOFOLLOW`` when available so a pre-created
-    ``out_dir/manifest.json -> /elsewhere`` cannot redirect the write.
+    When the parent lives under cwd (the normal CLI path), each directory
+    component is opened with openat + ``O_NOFOLLOW``. The final file is always
+    created with ``O_NOFOLLOW`` via openat so a pre-created final-component
+    symlink cannot redirect the write.
     """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(path, flags, 0o644)
+    cwd = Path.cwd().resolve()
+    parent = path.parent
+    try:
+        rel = parent.resolve().relative_to(cwd)
+        parts = tuple(p for p in rel.parts if p not in ("", "."))
+        dir_fd = (
+            _open_path_under_cwd(parts, create=False)
+            if parts
+            else os.open(cwd, os.O_RDONLY | os.O_DIRECTORY)
+        )
+    except (ValueError, OSError):
+        # Unit tests pass a pre-created out_dir not under cwd; open that parent
+        # directly and still refuse a final-component symlink.
+        dir_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(path.name, flags, 0o644, dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(text)
 

@@ -53,8 +53,12 @@ class TestFixtureTokenHelpers:
         assert _dummy_bearer_token() != _leak_probe_token()
 
     def test_tokens_are_non_empty_strings(self):
-        assert isinstance(_dummy_bearer_token(), str) and _dummy_bearer_token()
-        assert isinstance(_leak_probe_token(), str) and _leak_probe_token()
+        dummy = _dummy_bearer_token()
+        probe = _leak_probe_token()
+        assert isinstance(dummy, str)
+        assert dummy
+        assert isinstance(probe, str)
+        assert probe
 
 
 class TestChatCompletionsConfig:

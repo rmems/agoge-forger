@@ -117,6 +117,19 @@ class TestJailedOutputDir:
         # Containment is checked before mkdir — rejected paths must not appear.
         assert not outside.exists()
 
+    def test_rejects_directory_symlink_escaping_cwd(self, tmp_path, monkeypatch):
+        cwd_dir = tmp_path / "cwd"
+        outside = tmp_path / "outside"
+        cwd_dir.mkdir()
+        outside.mkdir()
+        monkeypatch.chdir(cwd_dir)
+        link = cwd_dir / "link"
+        link.symlink_to(outside)
+        # resolve() follows the link so the candidate lands outside cwd and is rejected.
+        with pytest.raises(ValueError, match="must be under the current working directory"):
+            smoke_test._jailed_output_dir("link/output")
+        assert not (outside / "output").exists()
+
     def test_returns_new_path_object_not_the_raw_resolved_one(self, tmp_path, monkeypatch):
         # The jailed path is rebuilt from cwd + relative parts rather than
         # returned as the raw resolved candidate, so the CLI string is never
