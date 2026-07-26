@@ -223,6 +223,27 @@ class TestWriteJsonUnder:
             smoke_test._write_json_under(tmp_path, "manifest.json", {"hijacked": True})
         assert target.read_text(encoding="utf-8") == "original"
 
+    def test_windows_fallback_write_does_not_follow_symlink_race(self, tmp_path, monkeypatch):
+        """Exclusive temp+replace must not truncate a symlink target (Codex P2)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
+        target = tmp_path / "elsewhere.txt"
+        target.write_text("original", encoding="utf-8")
+        link = tmp_path / "manifest.json"
+        link.symlink_to(target)
+        with pytest.raises(ValueError, match="symlink|reparse"):
+            smoke_test._write_json_under(tmp_path, "manifest.json", {"hijacked": True})
+        assert target.read_text(encoding="utf-8") == "original"
+
+    def test_windows_fallback_write_overwrites_regular_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
+        path = tmp_path / "manifest.json"
+        path.write_text("stale", encoding="utf-8")
+        smoke_test._write_json_under(tmp_path, "manifest.json", {"fresh": True})
+        assert json.loads(path.read_text(encoding="utf-8")) == {"fresh": True}
+        assert not path.is_symlink()
+
     def test_open_path_under_cwd_uses_dot_anchor(self, tmp_path, monkeypatch):
         """cwd openat root must be process '.' not a re-resolved absolute path."""
         monkeypatch.chdir(tmp_path)

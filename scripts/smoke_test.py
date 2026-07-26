@@ -15,6 +15,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -336,8 +337,49 @@ def _write_via_fd(fd: int, text: str) -> None:
 def _refuse_symlink_artifact(path: Path) -> None:
     """Raise if ``path`` is a symlink (final component) so writes cannot escape."""
     # Path.is_symlink() uses lstat and does not follow the link.
-    if path.is_symlink():
+    if path.is_symlink() or _is_symlink_or_reparse(path):
         raise ValueError(f"Refusing to write through symlink artifact: {path}")
+
+
+def _write_text_nofollow_fallback(path: Path, text: str) -> None:
+    """Windows/non-dirfd write: exclusive temp file + replace (no open-through-symlink).
+
+    Never opens the final path for write. Creates a uniquely named temp sibling with
+    ``O_CREAT|O_EXCL``, then ``os.replace`` onto the destination. Replace updates the
+    directory entry itself (including replacing a symlink node) rather than following
+    a reparse point to an outside target, closing the check/open TOCTOU.
+    """
+    _refuse_symlink_artifact(path)
+    parent = path.parent
+    tmp_path = parent / f".{path.name}.{secrets.token_hex(8)}.tmp"
+    if tmp_path.exists() or tmp_path.is_symlink():
+        raise ValueError(f"Temp artifact path already exists: {tmp_path}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    fd = os.open(tmp_path, flags, 0o644)
+    try:
+        _write_via_fd(fd, text)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    try:
+        # If a symlink appeared at the final path, replace still swaps the dirent
+        # (does not write through to the symlink target on POSIX/Windows).
+        if path.is_symlink() or _is_symlink_or_reparse(path):
+            # Prefer failing closed when final path is a reparse point rather than
+            # leaving ambiguous platform replace semantics.
+            raise ValueError(f"Refusing to replace symlink artifact: {path}")
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    if path.is_symlink() or _is_symlink_or_reparse(path):
+        raise ValueError(f"Artifact path is a reparse point after write: {path}")
 
 
 def _write_text_nofollow(path: Path, text: str) -> None:
@@ -349,20 +391,15 @@ def _write_text_nofollow(path: Path, text: str) -> None:
     symlink cannot redirect the write. Never falls back to opening an
     out-of-cwd parent (that would reintroduce symlink escape).
 
-    On platforms without dirfd/O_NOFOLLOW (Windows fallback), refuse pre-existing
-    symlink artifacts closed rather than following them with a plain open.
+    On platforms without dirfd/O_NOFOLLOW (Windows fallback), write via exclusive
+    temp + ``os.replace`` so the final path is never opened for write (closes
+    symlink check/open races).
     """
     cwd = Path.cwd().resolve()
     rel = _require_under_cwd(path.parent.resolve(), cwd).relative_to(cwd)
 
     if not _supports_dirfd():
-        # Fail closed: without O_NOFOLLOW, never open a symlink target.
-        _refuse_symlink_artifact(path)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        # Prefer O_EXCL if the path does not exist, still re-check race:
-        if not path.exists():
-            flags |= getattr(os, "O_EXCL", 0)
-        _write_via_fd(os.open(path, flags, 0o644), text)
+        _write_text_nofollow_fallback(path, text)
         return
 
     parts = tuple(p for p in rel.parts if p not in ("", "."))
