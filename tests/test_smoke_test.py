@@ -140,7 +140,8 @@ class TestJailedOutputDir:
 
 
 class TestWriteJsonUnder:
-    def test_writes_json_with_trailing_newline(self, tmp_path):
+    def test_writes_json_with_trailing_newline(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         data = {"a": 1, "b": [1, 2, 3]}
         smoke_test._write_json_under(tmp_path, "manifest.json", data)
 
@@ -149,18 +150,21 @@ class TestWriteJsonUnder:
         assert content.endswith("\n")
         assert json.loads(content) == data
 
-    def test_rejects_unsafe_artifact_name(self, tmp_path):
+    def test_rejects_unsafe_artifact_name(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         with pytest.raises(ValueError, match="plain basename"):
             smoke_test._write_json_under(tmp_path, "../escape.json", {"x": 1})
         assert not (tmp_path.parent / "escape.json").exists()
 
-    def test_overwrites_existing_file(self, tmp_path):
+    def test_overwrites_existing_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         path = tmp_path / "manifest.json"
         path.write_text("stale")
         smoke_test._write_json_under(tmp_path, "manifest.json", {"fresh": True})
         assert json.loads(path.read_text(encoding="utf-8")) == {"fresh": True}
 
-    def test_refuses_to_write_through_symlink(self, tmp_path):
+    def test_refuses_to_write_through_symlink(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         target = tmp_path / "elsewhere.txt"
         target.write_text("original", encoding="utf-8")
         link = tmp_path / "manifest.json"
@@ -169,14 +173,26 @@ class TestWriteJsonUnder:
             smoke_test._write_json_under(tmp_path, "manifest.json", {"hijacked": True})
         assert target.read_text(encoding="utf-8") == "original"
 
-    def test_missing_out_dir_raises_file_not_found(self, tmp_path):
+    def test_missing_out_dir_raises_file_not_found(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         missing = tmp_path / "does_not_exist"
         with pytest.raises(FileNotFoundError):
             smoke_test._write_json_under(missing, "manifest.json", {})
 
+    def test_rejects_out_of_cwd_parent(self, tmp_path, monkeypatch):
+        cwd_dir = tmp_path / "cwd"
+        outside = tmp_path / "outside"
+        cwd_dir.mkdir()
+        outside.mkdir()
+        monkeypatch.chdir(cwd_dir)
+        with pytest.raises(ValueError, match="must be under the current working directory"):
+            smoke_test._write_json_under(outside, "manifest.json", {"x": 1})
+        assert not (outside / "manifest.json").exists()
+
 
 class TestWriteResultsJsonl:
-    def test_writes_one_json_object_per_line(self, tmp_path):
+    def test_writes_one_json_object_per_line(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         results = [
             {"request_id": 1, "status": "ok"},
             {"request_id": 2, "status": "error"},
@@ -189,7 +205,8 @@ class TestWriteResultsJsonl:
         assert json.loads(lines[0]) == results[0]
         assert json.loads(lines[1]) == results[1]
 
-    def test_empty_results_writes_empty_file(self, tmp_path):
+    def test_empty_results_writes_empty_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         smoke_test._write_results_jsonl(tmp_path, [])
         path = tmp_path / "results.jsonl"
         assert path.exists()
@@ -204,7 +221,8 @@ class TestWriteSummaryUnder:
             {"status": "error", "prompt_tokens": 0, "completion_tokens": 0, "latency_ms": 0.0},
         ]
 
-    def test_summary_contains_expected_stats(self, tmp_path):
+    def test_summary_contains_expected_stats(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         results = self._sample_results()
         delta = {"tokens_prompt": 30, "tokens_completion": 15, "tokens_total": 45, "requests": 3}
         smoke_test._write_summary_under(tmp_path, results, delta, dry_run=False, model="my-model")
@@ -224,7 +242,8 @@ class TestWriteSummaryUnder:
         assert "| Requests | 3 |" in text
         assert text.endswith("\n")
 
-    def test_dry_run_mode_label_and_counts(self, tmp_path):
+    def test_dry_run_mode_label_and_counts(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         results = [{"status": "dry_run", "prompt_tokens": 0, "completion_tokens": 0, "latency_ms": 0.0}]
         delta = {"tokens_prompt": 0, "tokens_completion": 0, "tokens_total": 0, "requests": 0}
         smoke_test._write_summary_under(tmp_path, results, delta, dry_run=True, model="m")
@@ -233,7 +252,8 @@ class TestWriteSummaryUnder:
         assert "- **Mode**: dry-run" in text
         assert "**Dry-run**: 1" in text
 
-    def test_no_ok_results_avg_latency_is_zero(self, tmp_path):
+    def test_no_ok_results_avg_latency_is_zero(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         results = [{"status": "error", "prompt_tokens": 0, "completion_tokens": 0, "latency_ms": 0.0}]
         delta = {"tokens_prompt": 0, "tokens_completion": 0, "tokens_total": 0, "requests": 0}
         smoke_test._write_summary_under(tmp_path, results, delta, dry_run=False, model="m")
@@ -241,14 +261,16 @@ class TestWriteSummaryUnder:
         text = (tmp_path / "summary.md").read_text(encoding="utf-8")
         assert "**Avg latency**: 0.0 ms" in text
 
-    def test_empty_results_does_not_raise(self, tmp_path):
+    def test_empty_results_does_not_raise(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         delta = {"tokens_prompt": 0, "tokens_completion": 0, "tokens_total": 0, "requests": 0}
         smoke_test._write_summary_under(tmp_path, [], delta, dry_run=True, model="m")
 
         text = (tmp_path / "summary.md").read_text(encoding="utf-8")
         assert "**Total requests**: 0" in text
 
-    def test_missing_out_dir_raises_file_not_found(self, tmp_path):
+    def test_missing_out_dir_raises_file_not_found(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         missing = tmp_path / "does_not_exist"
         with pytest.raises(FileNotFoundError):
             smoke_test._write_summary_under(missing, [], {}, dry_run=True, model="m")

@@ -225,53 +225,73 @@ def _relative_parts_under_cwd(raw: str) -> tuple[Path, tuple[str, ...]]:
     return cwd, parts
 
 
+def _supports_dirfd() -> bool:
+    """True when openat/mkdir-at/O_DIRECTORY are available (POSIX; not Windows)."""
+    return hasattr(os, "O_DIRECTORY")
+
+
 def _jailed_output_dir(raw: str) -> Path:
     """Sanitize ``--output-dir`` and jail it under the process cwd.
 
     Validate containment **before** creating anything on disk, then create
     each path component with openat + ``O_NOFOLLOW`` so intermediate symlink
-    components cannot redirect the jail outside cwd.
+    components cannot redirect the jail outside cwd. On platforms without
+    dirfd support (e.g. Windows), fall back to Path.mkdir after the same
+    containment checks.
     """
     cwd, parts = _relative_parts_under_cwd(raw)
     if not parts:
         return cwd
+
+    if not _supports_dirfd():
+        jailed = cwd.joinpath(*parts)
+        jailed.mkdir(parents=True, exist_ok=True)
+        return _require_under_cwd(jailed.resolve(), cwd)
 
     dir_fd = _open_path_under_cwd(parts, create=True)
     os.close(dir_fd)
     return _require_under_cwd(cwd.joinpath(*parts).resolve(), cwd)
 
 
+def _write_flags_nofollow() -> int:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    return flags
+
+
+def _write_via_fd(fd: int, text: str) -> None:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
 def _write_text_nofollow(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` without following symlinks in any component.
 
-    When the parent lives under cwd (the normal CLI path), each directory
-    component is opened with openat + ``O_NOFOLLOW``. The final file is always
-    created with ``O_NOFOLLOW`` via openat so a pre-created final-component
-    symlink cannot redirect the write.
+    Requires the parent directory to resolve under cwd. Each directory
+    component is opened with openat + ``O_NOFOLLOW`` (when available); the
+    final file is created with ``O_NOFOLLOW`` so a pre-created final-component
+    symlink cannot redirect the write. Never falls back to opening an
+    out-of-cwd parent (that would reintroduce symlink escape).
     """
     cwd = Path.cwd().resolve()
-    parent = path.parent
+    rel = _require_under_cwd(path.parent.resolve(), cwd).relative_to(cwd)
+
+    if not _supports_dirfd():
+        _write_via_fd(os.open(path, _write_flags_nofollow(), 0o644), text)
+        return
+
+    parts = tuple(p for p in rel.parts if p not in ("", "."))
+    dir_fd = (
+        _open_path_under_cwd(parts, create=False)
+        if parts
+        else os.open(cwd, os.O_RDONLY | os.O_DIRECTORY)
+    )
     try:
-        rel = parent.resolve().relative_to(cwd)
-        parts = tuple(p for p in rel.parts if p not in ("", "."))
-        dir_fd = (
-            _open_path_under_cwd(parts, create=False)
-            if parts
-            else os.open(cwd, os.O_RDONLY | os.O_DIRECTORY)
-        )
-    except (ValueError, OSError):
-        # Unit tests pass a pre-created out_dir not under cwd; open that parent
-        # directly and still refuse a final-component symlink.
-        dir_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        fd = os.open(path.name, flags, 0o644, dir_fd=dir_fd)
+        fd = os.open(path.name, _write_flags_nofollow(), 0o644, dir_fd=dir_fd)
     finally:
         os.close(dir_fd)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    _write_via_fd(fd, text)
 
 
 def _write_json_under(out_dir: Path, name: str, data: Any) -> None:
