@@ -33,7 +33,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--stream", action="store_true", default=False)
     p.add_argument("--no-stream", dest="stream", action="store_false")
     p.add_argument("--dry-run", action="store_true", default=False)
-    p.add_argument("--output-dir", default=".", help="Output directory under cwd (default: .; required on Windows)")
+    p.add_argument("--output-dir", default="smoke_output", help="Output directory under cwd (default: smoke_output)")
     p.add_argument(
         "--trust-remote-code",
         action="store_true",
@@ -266,6 +266,27 @@ def _is_symlink_or_reparse(path: Path) -> bool:
     return bool(attrs & 0x400)
 
 
+def _mkdir_single_under_cwd(cwd: Path, name: str) -> Path:
+    """Create or accept one real directory segment under cwd (non-dirfd platforms).
+
+    Only a single path segment is allowed (e.g. default ``smoke_output``). Nested
+    multi-segment paths require openat/dirfd.
+    """
+    if name in ("", ".", "..") or "/" in name or chr(92) in name:
+        raise ValueError(f"Invalid output directory segment: {name!r}")
+    target = cwd / name
+    if _is_symlink_or_reparse(target):
+        raise ValueError(f"Refusing symlink/junction output directory: {target}")
+    if target.exists():
+        if not target.is_dir() or _is_symlink_or_reparse(target):
+            raise ValueError(f"Output path is not a real directory: {target}")
+    else:
+        os.mkdir(target, 0o755)
+        if _is_symlink_or_reparse(target):
+            raise ValueError(f"Refusing reparse point at output directory: {target}")
+    return _require_under_cwd(target.resolve(), cwd.resolve())
+
+
 def _jailed_output_dir(raw: str) -> Path:
     """Sanitize ``--output-dir`` and jail it under the process cwd.
 
@@ -273,19 +294,21 @@ def _jailed_output_dir(raw: str) -> Path:
     each path component with openat + ``O_NOFOLLOW`` so intermediate symlink
     components cannot redirect the jail outside cwd.
 
-    Platforms without dirfd/openat (e.g. Windows) cannot safely create nested
-    directories against concurrent reparse-point/parent swaps. Fail closed:
-    only ``--output-dir .`` (the process cwd itself) is accepted there.
+    Platforms without dirfd/openat (e.g. Windows) allow only ``.`` or a single
+    real directory segment under cwd (so the default ``smoke_output`` works).
+    Multi-segment nested paths require openat.
     """
     cwd, parts = _relative_parts_under_cwd(raw)
     if not parts:
         return cwd
 
     if not _supports_dirfd():
-        raise ValueError(
-            "Nested --output-dir is unsupported without openat/dirfd; "
-            "use --output-dir . (current working directory) on this platform"
-        )
+        if len(parts) != 1:
+            raise ValueError(
+                "Multi-segment --output-dir is unsupported without openat/dirfd; "
+                "use a single directory segment (e.g. smoke_output) or ."
+            )
+        return _mkdir_single_under_cwd(cwd, parts[0])
 
     dir_fd = _open_path_under_cwd(parts, create=True)
     os.close(dir_fd)
@@ -338,34 +361,50 @@ def _write_exclusive_temp(tmp_path: Path, text: str) -> None:
 
 
 def _replace_temp_onto_artifact(tmp_path: Path, path: Path) -> None:
-    """Atomically replace ``path`` with ``tmp_path``, refusing reparse destinations."""
+    """Atomically replace ``path`` with ``tmp_path``, refusing reparse destinations.
+
+    Always unlinks the temp file if replacement fails (including when the final
+    basename is an existing directory).
+    """
     try:
+        if path.exists() and path.is_dir() and not path.is_symlink():
+            raise ValueError(f"Refusing to replace directory at artifact path: {path}")
         _refuse_symlink_artifact(path)
         os.replace(tmp_path, path)
     except Exception:
         _unlink_quietly(tmp_path)
         raise
-    _refuse_symlink_artifact(path)
+    if path.is_symlink() or _is_symlink_or_reparse(path):
+        raise ValueError(f"Artifact path is a reparse point after write: {path}")
 
 
 def _write_text_nofollow_fallback(path: Path, text: str) -> None:
-    """Windows/non-dirfd write: exclusive temp + replace, cwd parent only.
+    """Windows/non-dirfd write: exclusive temp + replace under cwd or one child.
 
-    Without dirfd we cannot openat-anchor a nested parent against renames. Fail
-    closed unless the artifact parent is the process cwd. Final path is never
-    opened for write (O_EXCL temp sibling + os.replace).
+    Parent must be the process cwd or a single real (non-reparse) directory
+    segment under cwd (matches non-dirfd jail). Final path is never opened for
+    write (O_EXCL temp sibling + os.replace); temp is removed if replace fails.
     """
     cwd = Path.cwd().resolve()
     parent = path.parent.resolve()
-    if parent != cwd:
+    try:
+        rel = parent.relative_to(cwd)
+    except ValueError as exc:
         raise ValueError(
-            "Without openat/dirfd, artifacts must be written directly under the "
-            f"current working directory ({cwd}), not {parent}"
+            f"Without openat/dirfd, artifact parent must be under cwd ({cwd}): {parent}"
+        ) from exc
+    if len(rel.parts) > 1:
+        raise ValueError(
+            "Without openat/dirfd, multi-segment artifact parents are unsupported"
         )
+    if len(rel.parts) == 1:
+        child = cwd / rel.parts[0]
+        if _is_symlink_or_reparse(child) or not child.is_dir():
+            raise ValueError(f"Artifact parent is not a real directory under cwd: {child}")
     _refuse_symlink_artifact(path)
-    tmp_path = _exclusive_temp_path(cwd, path.name)
+    tmp_path = _exclusive_temp_path(parent, path.name)
     _write_exclusive_temp(tmp_path, text)
-    _replace_temp_onto_artifact(tmp_path, cwd / path.name)
+    _replace_temp_onto_artifact(tmp_path, path)
 
 
 def _write_text_nofollow(path: Path, text: str) -> None:
@@ -399,8 +438,15 @@ def _write_text_nofollow(path: Path, text: str) -> None:
             except OSError:
                 pass
             raise
-        # New inode + rename: does not open/truncate an existing hard-linked dirent.
-        os.replace(tmp_name, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        try:
+            # New inode + rename: does not open/truncate an existing hard-linked dirent.
+            os.replace(tmp_name, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except Exception:
+            try:
+                os.unlink(tmp_name, dir_fd=dir_fd)
+            except OSError:
+                pass
+            raise
     finally:
         os.close(dir_fd)
 

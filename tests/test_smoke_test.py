@@ -132,13 +132,20 @@ class TestJailedOutputDir:
         assert not (outside / "output").exists()
 
 
-    def test_windows_fallback_rejects_nested_output_dir(self, tmp_path, monkeypatch):
-        """Without dirfd, nested --output-dir is unsupported (fail closed)."""
+    def test_windows_fallback_rejects_multi_segment_output_dir(self, tmp_path, monkeypatch):
+        """Without dirfd, multi-segment --output-dir is unsupported."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
-        with pytest.raises(ValueError, match="Nested --output-dir is unsupported"):
+        with pytest.raises(ValueError, match="Multi-segment --output-dir is unsupported"):
             smoke_test._jailed_output_dir("a/b/c")
         assert not (tmp_path / "a").exists()
+
+    def test_windows_fallback_allows_default_smoke_output(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
+        result = smoke_test._jailed_output_dir("smoke_output")
+        assert result == (tmp_path / "smoke_output").resolve()
+        assert result.is_dir()
 
     def test_windows_fallback_allows_cwd_dot(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -248,13 +255,31 @@ class TestWriteJsonUnder:
         assert os.stat(artifact).st_ino != os.stat(outside).st_ino
         outside.unlink(missing_ok=True)
 
-    def test_windows_fallback_write_rejects_nested_parent(self, tmp_path, monkeypatch):
+    def test_windows_fallback_write_allows_single_child_parent(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
-        nested = tmp_path / "nested"
+        nested = tmp_path / "smoke_output"
         nested.mkdir()
-        with pytest.raises(ValueError, match="directly under the current working directory"):
-            smoke_test._write_json_under(nested, "manifest.json", {"x": 1})
+        smoke_test._write_json_under(nested, "manifest.json", {"x": 1})
+        assert json.loads((nested / "manifest.json").read_text(encoding="utf-8")) == {"x": 1}
+
+    def test_windows_fallback_write_rejects_multi_segment_parent(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
+        deep = tmp_path / "a" / "b"
+        deep.mkdir(parents=True)
+        with pytest.raises(ValueError, match="multi-segment artifact parents"):
+            smoke_test._write_json_under(deep, "manifest.json", {"x": 1})
+
+    def test_replace_removes_temp_when_destination_is_directory(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
+        dest = tmp_path / "manifest.json"
+        dest.mkdir()  # directory occupying artifact basename
+        with pytest.raises(ValueError, match="directory"):
+            smoke_test._write_json_under(tmp_path, "manifest.json", {"x": 1})
+        leftovers = list(tmp_path.glob(".manifest.json.*.tmp"))
+        assert leftovers == []
 
     def test_open_path_under_cwd_uses_dot_anchor(self, tmp_path, monkeypatch):
         """cwd openat root must be process '.' not a re-resolved absolute path."""
