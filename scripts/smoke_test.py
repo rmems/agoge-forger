@@ -199,13 +199,19 @@ def _open_path_under_cwd(rel_parts: tuple[str, ...], *, create: bool) -> int:
         raise
 
 
-def _jailed_output_dir(raw: str) -> Path:
-    """Sanitize ``--output-dir`` and jail it under the process cwd.
+def _require_under_cwd(path: Path, cwd: Path) -> Path:
+    """Return ``path`` if it is under ``cwd``; otherwise raise ValueError."""
+    try:
+        path.relative_to(cwd)
+    except ValueError as exc:
+        raise ValueError(
+            f"Output directory must be under the current working directory ({cwd}): {path}"
+        ) from exc
+    return path
 
-    Validate containment **before** creating anything on disk, then create
-    each path component with openat + ``O_NOFOLLOW`` so intermediate symlink
-    components cannot redirect the jail outside cwd.
-    """
+
+def _relative_parts_under_cwd(raw: str) -> tuple[Path, tuple[str, ...]]:
+    """Resolve ``raw`` under cwd without creating anything; return (cwd, parts)."""
     if not raw or not str(raw).strip():
         raise ValueError("Output directory must not be empty")
 
@@ -213,34 +219,26 @@ def _jailed_output_dir(raw: str) -> Path:
     if ".." in candidate.parts:
         raise ValueError(f"Path must not contain '..': {candidate}")
 
-    # Resolve without mkdir so rejected absolute paths never create trees.
-    resolved = candidate.resolve()
     cwd = Path.cwd().resolve()
-    try:
-        rel = resolved.relative_to(cwd)
-    except ValueError as exc:
-        raise ValueError(
-            f"Output directory must be under the current working directory ({cwd}): {resolved}"
-        ) from exc
+    resolved = _require_under_cwd(candidate.resolve(), cwd)
+    parts = tuple(p for p in resolved.relative_to(cwd).parts if p not in ("", "."))
+    return cwd, parts
 
-    parts = tuple(p for p in rel.parts if p not in ("", "."))
+
+def _jailed_output_dir(raw: str) -> Path:
+    """Sanitize ``--output-dir`` and jail it under the process cwd.
+
+    Validate containment **before** creating anything on disk, then create
+    each path component with openat + ``O_NOFOLLOW`` so intermediate symlink
+    components cannot redirect the jail outside cwd.
+    """
+    cwd, parts = _relative_parts_under_cwd(raw)
     if not parts:
         return cwd
 
-    # Create component-by-component under cwd without following symlinks.
     dir_fd = _open_path_under_cwd(parts, create=True)
     os.close(dir_fd)
-
-    jailed = cwd.joinpath(*parts)
-    # Final containment check after creation (still under cwd, no escape).
-    final = jailed.resolve()
-    try:
-        final.relative_to(cwd)
-    except ValueError as exc:
-        raise ValueError(
-            f"Output directory must be under the current working directory ({cwd}): {final}"
-        ) from exc
-    return final
+    return _require_under_cwd(cwd.joinpath(*parts).resolve(), cwd)
 
 
 def _write_text_nofollow(path: Path, text: str) -> None:
