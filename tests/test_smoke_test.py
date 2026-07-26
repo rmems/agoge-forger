@@ -6,6 +6,7 @@ loaded directly from its file path via ``importlib``.
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -169,9 +170,40 @@ class TestWriteJsonUnder:
         target.write_text("original", encoding="utf-8")
         link = tmp_path / "manifest.json"
         link.symlink_to(target)
-        with pytest.raises(OSError):
+        with pytest.raises((OSError, ValueError)):
             smoke_test._write_json_under(tmp_path, "manifest.json", {"hijacked": True})
         assert target.read_text(encoding="utf-8") == "original"
+
+    def test_windows_fallback_refuses_symlink_artifact(self, tmp_path, monkeypatch):
+        """Non-dirfd path must fail closed on symlink artifacts (Codex P2)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
+        target = tmp_path / "elsewhere.txt"
+        target.write_text("original", encoding="utf-8")
+        link = tmp_path / "manifest.json"
+        link.symlink_to(target)
+        with pytest.raises(ValueError, match="symlink artifact"):
+            smoke_test._write_json_under(tmp_path, "manifest.json", {"hijacked": True})
+        assert target.read_text(encoding="utf-8") == "original"
+
+    def test_open_path_under_cwd_uses_dot_anchor(self, tmp_path, monkeypatch):
+        """cwd openat root must be process '.' not a re-resolved absolute path."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "out").mkdir()
+        opened = []
+        real_open = os.open
+
+        def tracking_open(path, flags, *args, **kwargs):
+            opened.append((path, flags, kwargs.get("dir_fd")))
+            return real_open(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(smoke_test.os, "open", tracking_open)
+        fd = smoke_test._open_path_under_cwd(("out",), create=False)
+        smoke_test.os.close(fd)
+        # First open must be the process cwd anchor "."
+        assert opened, "expected os.open calls"
+        first_path = opened[0][0]
+        assert first_path == "." or first_path == b".", f"expected '.' anchor, got {first_path!r}"
 
     def test_missing_out_dir_raises_file_not_found(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

@@ -179,10 +179,25 @@ def _mkdir_nofollow_under(dir_fd: int, name: str) -> int:
     return os.open(name, _dir_open_flags(), dir_fd=dir_fd)
 
 
+def _open_cwd_dir_fd() -> int:
+    """Open the process working directory by descriptor, not by absolute path.
+
+    Using ``"."`` anchors the openat walk to the process cwd. Reopening
+    ``Path.cwd().resolve()`` by pathname would follow a replacement if another
+    process renamed the old cwd path and substituted a symlink between resolve
+    and open.
+    """
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    # Do not set O_NOFOLLOW on ".": POSIX cwd open is the process's own
+    # working directory; O_NOFOLLOW on "." is not portable and not required.
+    return os.open(".", flags)
+
+
 def _open_path_under_cwd(rel_parts: tuple[str, ...], *, create: bool) -> int:
     """Open a directory under cwd via openat, never following symlink components."""
-    cwd = Path.cwd().resolve()
-    fd = os.open(cwd, os.O_RDONLY | os.O_DIRECTORY)
+    fd = _open_cwd_dir_fd()
     try:
         for part in rel_parts:
             if part in ("", ".", ".."):
@@ -265,6 +280,13 @@ def _write_via_fd(fd: int, text: str) -> None:
         handle.write(text)
 
 
+def _refuse_symlink_artifact(path: Path) -> None:
+    """Raise if ``path`` is a symlink (final component) so writes cannot escape."""
+    # Path.is_symlink() uses lstat and does not follow the link.
+    if path.is_symlink():
+        raise ValueError(f"Refusing to write through symlink artifact: {path}")
+
+
 def _write_text_nofollow(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` without following symlinks in any component.
 
@@ -273,20 +295,25 @@ def _write_text_nofollow(path: Path, text: str) -> None:
     final file is created with ``O_NOFOLLOW`` so a pre-created final-component
     symlink cannot redirect the write. Never falls back to opening an
     out-of-cwd parent (that would reintroduce symlink escape).
+
+    On platforms without dirfd/O_NOFOLLOW (Windows fallback), refuse pre-existing
+    symlink artifacts closed rather than following them with a plain open.
     """
     cwd = Path.cwd().resolve()
     rel = _require_under_cwd(path.parent.resolve(), cwd).relative_to(cwd)
 
     if not _supports_dirfd():
-        _write_via_fd(os.open(path, _write_flags_nofollow(), 0o644), text)
+        # Fail closed: without O_NOFOLLOW, never open a symlink target.
+        _refuse_symlink_artifact(path)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        # Prefer O_EXCL if the path does not exist, still re-check race:
+        if not path.exists():
+            flags |= getattr(os, "O_EXCL", 0)
+        _write_via_fd(os.open(path, flags, 0o644), text)
         return
 
     parts = tuple(p for p in rel.parts if p not in ("", "."))
-    dir_fd = (
-        _open_path_under_cwd(parts, create=False)
-        if parts
-        else os.open(cwd, os.O_RDONLY | os.O_DIRECTORY)
-    )
+    dir_fd = _open_path_under_cwd(parts, create=False) if parts else _open_cwd_dir_fd()
     try:
         fd = os.open(path.name, _write_flags_nofollow(), 0o644, dir_fd=dir_fd)
     finally:
