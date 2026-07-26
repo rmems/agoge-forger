@@ -13,10 +13,11 @@ from agoge_forger.providers.chat_completions import (
 )
 
 def _dummy_bearer_token() -> str:
-    """Runtime-built fixture value (not a real credential).
-
-    Built dynamically so static secret scanners do not treat a string
-    literal assigned to ``api_key`` as a hardcoded secret.
+    """
+    Create a deterministic, non-secret bearer token for test fixtures.
+    
+    Returns:
+    	str: The token ``fixture-token-0000``.
     """
     return f"fixture-token-{0:04d}"
 
