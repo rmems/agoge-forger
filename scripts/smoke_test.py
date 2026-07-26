@@ -245,23 +245,76 @@ def _supports_dirfd() -> bool:
     return hasattr(os, "O_DIRECTORY")
 
 
+def _is_symlink_or_reparse(path: Path) -> bool:
+    """True if ``path`` is a symlink, junction, or other reparse point (lstat)."""
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if callable(is_junction):
+        try:
+            if is_junction():
+                return True
+        except OSError:
+            pass
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    # Windows: st_file_attributes includes FILE_ATTRIBUTE_REPARSE_POINT (0x400).
+    attrs = getattr(st, "st_file_attributes", 0) or 0
+    return bool(attrs & 0x400)
+
+
+def _mkdir_parts_nofollow_fallback(cwd: Path, parts: tuple[str, ...]) -> Path:
+    """Create nested dirs under cwd without following symlinks/reparse points.
+
+    Used when openat/dirfd is unavailable (Windows). Creates one component at a
+    time and refuses any intermediate path that is a symlink/junction, so a
+    parent swap between validation and mkdir cannot redirect creation outside
+    the cwd jail. Never uses Path.mkdir(parents=True) on the full path.
+    """
+    current = cwd
+    for part in parts:
+        if part in ("", ".", ".."):
+            raise ValueError(f"Invalid path segment in output directory: {part!r}")
+        next_path = current / part
+        if _is_symlink_or_reparse(next_path):
+            raise ValueError(
+                f"Refusing symlink/junction path component in output directory: {next_path}"
+            )
+        if next_path.exists():
+            if not next_path.is_dir() or _is_symlink_or_reparse(next_path):
+                raise ValueError(
+                    f"Output path component is not a real directory: {next_path}"
+                )
+        else:
+            # parents=False: only create this leaf under the already-checked parent.
+            next_path.mkdir(mode=0o755, parents=False, exist_ok=False)
+            if _is_symlink_or_reparse(next_path):
+                # TOCTOU: something replaced the new entry with a reparse point.
+                raise ValueError(
+                    f"Refusing reparse point created at output path component: {next_path}"
+                )
+        current = next_path
+    # Containment after creation — resolve may follow final real path only.
+    return _require_under_cwd(current.resolve(), cwd.resolve())
+
+
 def _jailed_output_dir(raw: str) -> Path:
     """Sanitize ``--output-dir`` and jail it under the process cwd.
 
     Validate containment **before** creating anything on disk, then create
     each path component with openat + ``O_NOFOLLOW`` so intermediate symlink
     components cannot redirect the jail outside cwd. On platforms without
-    dirfd support (e.g. Windows), fall back to Path.mkdir after the same
-    containment checks.
+    dirfd support (e.g. Windows), create one component at a time and refuse
+    symlink/junction parents rather than ``Path.mkdir(parents=True)``.
     """
     cwd, parts = _relative_parts_under_cwd(raw)
     if not parts:
         return cwd
 
     if not _supports_dirfd():
-        jailed = cwd.joinpath(*parts)
-        jailed.mkdir(parents=True, exist_ok=True)
-        return _require_under_cwd(jailed.resolve(), cwd)
+        return _mkdir_parts_nofollow_fallback(cwd, parts)
 
     dir_fd = _open_path_under_cwd(parts, create=True)
     os.close(dir_fd)
