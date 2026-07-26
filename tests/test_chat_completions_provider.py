@@ -26,6 +26,36 @@ def _leak_probe_token() -> str:
     return f"leak-probe-{99:04d}"
 
 
+class TestFixtureTokenHelpers:
+    """Tests for the runtime-built fixture token helpers.
+
+    These helpers exist so test fixtures aren't literal strings that a
+    static secret scanner could mistake for a hardcoded credential. Their
+    determinism and distinctness are relied upon by other tests in this
+    module (e.g. header assertions, redaction assertions), so it's worth
+    pinning that behavior directly.
+    """
+
+    def test_dummy_bearer_token_value(self):
+        assert _dummy_bearer_token() == "fixture-token-0000"
+
+    def test_dummy_bearer_token_is_deterministic(self):
+        assert _dummy_bearer_token() == _dummy_bearer_token()
+
+    def test_leak_probe_token_value(self):
+        assert _leak_probe_token() == "leak-probe-0099"
+
+    def test_leak_probe_token_is_deterministic(self):
+        assert _leak_probe_token() == _leak_probe_token()
+
+    def test_dummy_and_leak_probe_tokens_are_distinct(self):
+        assert _dummy_bearer_token() != _leak_probe_token()
+
+    def test_tokens_are_non_empty_strings(self):
+        assert isinstance(_dummy_bearer_token(), str) and _dummy_bearer_token()
+        assert isinstance(_leak_probe_token(), str) and _leak_probe_token()
+
+
 class TestChatCompletionsConfig:
     def test_defaults(self):
         cfg = ChatCompletionsConfig(model="test-model")
