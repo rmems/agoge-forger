@@ -83,9 +83,8 @@ class TestChatCompletionsConfig:
             stream=False,
             max_tokens=1024,
             temperature=0.2,
+            api_key=token,
         )
-        # Assign after construction so the field is not initialized from a literal.
-        cfg.api_key = token
         assert cfg.base_url == "http://remote:9999/v1"
         assert cfg.model == "big-model"
         assert cfg.timeout_s == 30.0
@@ -262,8 +261,7 @@ class TestChatCompletionsClientNonStreaming:
         mock_post.return_value = _mock_response(NON_STREAM_BODY)
 
         token = _dummy_bearer_token()
-        cfg = ChatCompletionsConfig(model="test-model", stream=False)
-        cfg.api_key = token
+        cfg = ChatCompletionsConfig(model="test-model", stream=False, api_key=token)
         client = ChatCompletionsClient(cfg, run_name=str(tmp_path / "runs" / "test"))
         client.chat([{"role": "user", "content": "Hi"}])
 
@@ -296,6 +294,11 @@ class TestChatCompletionsClientNonStreaming:
 
     @patch("agoge_forger.providers.chat_completions.httpx.post")
     def test_no_credentials_in_error(self, mock_post, tmp_path):
+        """Generic exceptions store only the type name, never the message.
+
+        That is the redaction property under test: a probe token embedded in
+        the exception message must not appear in the serialized result.
+        """
         probe = _leak_probe_token()
         mock_post.side_effect = Exception(f"Failed with key={probe}")
 
@@ -303,8 +306,11 @@ class TestChatCompletionsClientNonStreaming:
         client = ChatCompletionsClient(cfg, run_name=str(tmp_path / "runs" / "test"))
         result = client.chat([{"role": "user", "content": "Hi"}])
 
+        # Positive control: type-only capture (not the full message).
+        assert result.error == "Exception"
         result_json = result.to_json()
         assert probe not in result_json
+        assert "Failed with key=" not in result_json
 
     @patch("agoge_forger.providers.chat_completions.httpx.post")
     def test_usage_missing(self, mock_post, tmp_path):

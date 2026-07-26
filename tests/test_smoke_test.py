@@ -114,11 +114,13 @@ class TestJailedOutputDir:
         outside = tmp_path / "outside"
         with pytest.raises(ValueError, match="must be under the current working directory"):
             smoke_test._jailed_output_dir(str(outside))
+        # Containment is checked before mkdir — rejected paths must not appear.
+        assert not outside.exists()
 
     def test_returns_new_path_object_not_the_raw_resolved_one(self, tmp_path, monkeypatch):
         # The jailed path is rebuilt from cwd + relative parts rather than
-        # returned directly from resolve_output_directory, so the raw CLI
-        # string is never itself used as the returned filesystem path.
+        # returned as the raw resolved candidate, so the CLI string is never
+        # itself used as the returned filesystem path.
         monkeypatch.chdir(tmp_path)
         result = smoke_test._jailed_output_dir("out")
         assert result.is_relative_to(tmp_path.resolve())
@@ -144,6 +146,15 @@ class TestWriteJsonUnder:
         path.write_text("stale")
         smoke_test._write_json_under(tmp_path, "manifest.json", {"fresh": True})
         assert json.loads(path.read_text(encoding="utf-8")) == {"fresh": True}
+
+    def test_refuses_to_write_through_symlink(self, tmp_path):
+        target = tmp_path / "elsewhere.txt"
+        target.write_text("original", encoding="utf-8")
+        link = tmp_path / "manifest.json"
+        link.symlink_to(target)
+        with pytest.raises(OSError):
+            smoke_test._write_json_under(tmp_path, "manifest.json", {"hijacked": True})
+        assert target.read_text(encoding="utf-8") == "original"
 
     def test_missing_out_dir_raises_file_not_found(self, tmp_path):
         missing = tmp_path / "does_not_exist"
@@ -325,3 +336,6 @@ class TestMainIntegration:
 
         with pytest.raises(ValueError, match="must be under the current working directory"):
             smoke_test.main()
+
+        # Jail validates before mkdir — rejected absolute paths must not appear.
+        assert not outside.exists()

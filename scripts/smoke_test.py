@@ -166,14 +166,22 @@ def _safe_artifact_path(out_dir: Path, name: str) -> Path:
 def _jailed_output_dir(raw: str) -> Path:
     """Sanitize ``--output-dir`` and jail it under the process cwd.
 
-    1. Reject ``..`` via :func:`resolve_output_directory`.
-    2. Require the resolved path to live under ``Path.cwd()``.
-    3. Rebuild the path from cwd + relative parts so the raw CLI string is
-       never used as a filesystem path argument.
-    """
-    from agoge_forger.path_safety import resolve_output_directory
+    Validate containment **before** creating anything on disk:
 
-    resolved = resolve_output_directory(raw).resolve()
+    1. Reject empty paths and explicit ``..`` segments.
+    2. Resolve the candidate (no mkdir).
+    3. Require the resolved path to live under ``Path.cwd()``.
+    4. Rebuild from cwd + relative parts, then create only the jailed path.
+    """
+    if not raw or not str(raw).strip():
+        raise ValueError("Output directory must not be empty")
+
+    candidate = Path(raw).expanduser()
+    if ".." in candidate.parts:
+        raise ValueError(f"Path must not contain '..': {candidate}")
+
+    # Resolve without mkdir so rejected absolute paths never create trees.
+    resolved = candidate.resolve()
     cwd = Path.cwd().resolve()
     try:
         rel = resolved.relative_to(cwd)
@@ -187,17 +195,32 @@ def _jailed_output_dir(raw: str) -> Path:
         if part in ("", ".", ".."):
             raise ValueError(f"Invalid path segment in output directory: {part!r}")
         jailed = jailed.joinpath(part)
+    jailed.mkdir(parents=True, exist_ok=True)
     return jailed
+
+
+def _write_text_nofollow(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` without following a final-component symlink.
+
+    Uses ``O_NOFOLLOW`` when available so a pre-created
+    ``out_dir/manifest.json -> /elsewhere`` cannot redirect the write.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 def _write_json_under(out_dir: Path, name: str, data: Any) -> None:
     path = _safe_artifact_path(out_dir, name)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _write_text_nofollow(path, json.dumps(data, indent=2) + "\n")
 
 
 def _write_results_jsonl(out_dir: Path, results: list[dict[str, Any]]) -> None:
     path = _safe_artifact_path(out_dir, _ARTIFACT_RESULTS)
-    path.write_text("".join(json.dumps(r) + "\n" for r in results), encoding="utf-8")
+    _write_text_nofollow(path, "".join(json.dumps(r) + "\n" for r in results))
 
 
 def _write_summary_under(
@@ -237,7 +260,7 @@ def _write_summary_under(
         "Agent: Kilo agent OpenCode Go/MiniMax-M3",
     ]
     path = _safe_artifact_path(out_dir, _ARTIFACT_SUMMARY)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _write_text_nofollow(path, "\n".join(lines) + "\n")
 
 
 def main() -> None:
