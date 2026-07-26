@@ -266,56 +266,26 @@ def _is_symlink_or_reparse(path: Path) -> bool:
     return bool(attrs & 0x400)
 
 
-def _mkdir_parts_nofollow_fallback(cwd: Path, parts: tuple[str, ...]) -> Path:
-    """Create nested dirs under cwd without following symlinks/reparse points.
-
-    Used when openat/dirfd is unavailable (Windows). Creates one component at a
-    time and refuses any intermediate path that is a symlink/junction, so a
-    parent swap between validation and mkdir cannot redirect creation outside
-    the cwd jail. Never uses Path.mkdir(parents=True) on the full path.
-    """
-    current = cwd
-    for part in parts:
-        if part in ("", ".", ".."):
-            raise ValueError(f"Invalid path segment in output directory: {part!r}")
-        next_path = current / part
-        if _is_symlink_or_reparse(next_path):
-            raise ValueError(
-                f"Refusing symlink/junction path component in output directory: {next_path}"
-            )
-        if next_path.exists():
-            if not next_path.is_dir() or _is_symlink_or_reparse(next_path):
-                raise ValueError(
-                    f"Output path component is not a real directory: {next_path}"
-                )
-        else:
-            # parents=False: only create this leaf under the already-checked parent.
-            next_path.mkdir(mode=0o755, parents=False, exist_ok=False)
-            if _is_symlink_or_reparse(next_path):
-                # TOCTOU: something replaced the new entry with a reparse point.
-                raise ValueError(
-                    f"Refusing reparse point created at output path component: {next_path}"
-                )
-        current = next_path
-    # Containment after creation — resolve may follow final real path only.
-    return _require_under_cwd(current.resolve(), cwd.resolve())
-
-
 def _jailed_output_dir(raw: str) -> Path:
     """Sanitize ``--output-dir`` and jail it under the process cwd.
 
     Validate containment **before** creating anything on disk, then create
     each path component with openat + ``O_NOFOLLOW`` so intermediate symlink
-    components cannot redirect the jail outside cwd. On platforms without
-    dirfd support (e.g. Windows), create one component at a time and refuse
-    symlink/junction parents rather than ``Path.mkdir(parents=True)``.
+    components cannot redirect the jail outside cwd.
+
+    Platforms without dirfd/openat (e.g. Windows) cannot safely create nested
+    directories against concurrent reparse-point/parent swaps. Fail closed:
+    only ``--output-dir .`` (the process cwd itself) is accepted there.
     """
     cwd, parts = _relative_parts_under_cwd(raw)
     if not parts:
         return cwd
 
     if not _supports_dirfd():
-        return _mkdir_parts_nofollow_fallback(cwd, parts)
+        raise ValueError(
+            "Nested --output-dir is unsupported without openat/dirfd; "
+            "use --output-dir . (current working directory) on this platform"
+        )
 
     dir_fd = _open_path_under_cwd(parts, create=True)
     os.close(dir_fd)
@@ -379,17 +349,23 @@ def _replace_temp_onto_artifact(tmp_path: Path, path: Path) -> None:
 
 
 def _write_text_nofollow_fallback(path: Path, text: str) -> None:
-    """Windows/non-dirfd write: exclusive temp file + replace (no open-through-symlink).
+    """Windows/non-dirfd write: exclusive temp + replace, cwd parent only.
 
-    Never opens the final path for write. Creates a uniquely named temp sibling with
-    ``O_CREAT|O_EXCL``, then ``os.replace`` onto the destination. Replace updates the
-    directory entry itself (including replacing a symlink node) rather than following
-    a reparse point to an outside target, closing the check/open TOCTOU.
+    Without dirfd we cannot openat-anchor a nested parent against renames. Fail
+    closed unless the artifact parent is the process cwd. Final path is never
+    opened for write (O_EXCL temp sibling + os.replace).
     """
+    cwd = Path.cwd().resolve()
+    parent = path.parent.resolve()
+    if parent != cwd:
+        raise ValueError(
+            "Without openat/dirfd, artifacts must be written directly under the "
+            f"current working directory ({cwd}), not {parent}"
+        )
     _refuse_symlink_artifact(path)
-    tmp_path = _exclusive_temp_path(path.parent, path.name)
+    tmp_path = _exclusive_temp_path(cwd, path.name)
     _write_exclusive_temp(tmp_path, text)
-    _replace_temp_onto_artifact(tmp_path, path)
+    _replace_temp_onto_artifact(tmp_path, cwd / path.name)
 
 
 def _write_text_nofollow(path: Path, text: str) -> None:

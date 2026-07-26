@@ -132,41 +132,19 @@ class TestJailedOutputDir:
         assert not (outside / "output").exists()
 
 
-    def test_windows_fallback_component_mkdir_creates_nested(self, tmp_path, monkeypatch):
+    def test_windows_fallback_rejects_nested_output_dir(self, tmp_path, monkeypatch):
+        """Without dirfd, nested --output-dir is unsupported (fail closed)."""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
-        result = smoke_test._jailed_output_dir("a/b/c")
-        assert result == tmp_path / "a" / "b" / "c"
-        assert result.is_dir()
-        assert not result.is_symlink()
+        with pytest.raises(ValueError, match="Nested --output-dir is unsupported"):
+            smoke_test._jailed_output_dir("a/b/c")
+        assert not (tmp_path / "a").exists()
 
-    def test_mkdir_parts_nofollow_refuses_symlink_parent(self, tmp_path, monkeypatch):
-        """Direct fallback: parent component is a symlink -> refuse (Codex P2)."""
+    def test_windows_fallback_allows_cwd_dot(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        outside = tmp_path.parent / f"escape_{tmp_path.name}"
-        outside.mkdir(exist_ok=True)
-        try:
-            link = tmp_path / "parent"
-            link.symlink_to(outside)
-            cwd = tmp_path.resolve()
-            with pytest.raises(ValueError, match="symlink/junction"):
-                smoke_test._mkdir_parts_nofollow_fallback(cwd, ("parent", "child"))
-            assert not (outside / "child").exists()
-        finally:
-            try:
-                outside.rmdir()
-            except OSError:
-                pass
-
-    def test_mkdir_parts_nofollow_refuses_symlink_leaf(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        target = tmp_path / "real_dir"
-        target.mkdir()
-        link = tmp_path / "out"
-        link.symlink_to(target)
-        cwd = tmp_path.resolve()
-        with pytest.raises(ValueError, match="symlink/junction"):
-            smoke_test._mkdir_parts_nofollow_fallback(cwd, ("out",))
+        monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
+        result = smoke_test._jailed_output_dir(".")
+        assert result == tmp_path.resolve()
 
     def test_returns_new_path_object_not_the_raw_resolved_one(self, tmp_path, monkeypatch):
         # The jailed path is rebuilt from cwd + relative parts rather than
@@ -243,6 +221,14 @@ class TestWriteJsonUnder:
         smoke_test._write_json_under(tmp_path, "manifest.json", {"fresh": True})
         assert json.loads(path.read_text(encoding="utf-8")) == {"fresh": True}
         assert not path.is_symlink()
+
+    def test_windows_fallback_write_rejects_nested_parent(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(smoke_test, "_supports_dirfd", lambda: False)
+        nested = tmp_path / "nested"
+        nested.mkdir()
+        with pytest.raises(ValueError, match="directly under the current working directory"):
+            smoke_test._write_json_under(nested, "manifest.json", {"x": 1})
 
     def test_open_path_under_cwd_uses_dot_anchor(self, tmp_path, monkeypatch):
         """cwd openat root must be process '.' not a re-resolved absolute path."""
