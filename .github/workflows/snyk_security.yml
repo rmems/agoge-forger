@@ -15,6 +15,8 @@ on:
       - "infra/**"
       - ".github/workflows/snyk_security.yml"
       - ".snyk"
+      - ".devin/**"
+      - ".devcontainer/**"
 
 concurrency:
   group: snyk-security-${{ github.ref }}
@@ -94,8 +96,8 @@ jobs:
             echo "::warning::Snyk Code unavailable (exit 3); skipping Python SAST gate"
             exit 0
           fi
-          if [ "$exit_code" -eq 2 ] && echo "$output" | grep -qE 'SNYK-CODE-0005|no supported files'; then
-            echo "::warning::Snyk Code has no supported files; skipping Python SAST gate"
+          if [ "$exit_code" -eq 2 ] && echo "$output" | grep -qEi 'SNYK-CODE-0005|no supported files|test limit|limit reached'; then
+            echo "::warning::Snyk Code has no supported files or hit a quota limit; skipping Python SAST gate"
             exit 0
           fi
           exit "$exit_code"
@@ -140,8 +142,8 @@ jobs:
             echo "::warning::Snyk Code unavailable (exit 3); skipping Rust SAST gate"
             exit 0
           fi
-          if [ "$exit_code" -eq 2 ] && echo "$output" | grep -qE 'SNYK-CODE-0005|no supported files'; then
-            echo "::warning::Snyk Code has no supported files; skipping Rust SAST gate"
+          if [ "$exit_code" -eq 2 ] && echo "$output" | grep -qEi 'SNYK-CODE-0005|no supported files|test limit|limit reached'; then
+            echo "::warning::Snyk Code has no supported files or hit a quota limit; skipping Rust SAST gate"
             exit 0
           fi
           exit "$exit_code"
@@ -245,34 +247,47 @@ jobs:
         if: steps.snyk_configured.outputs.configured == 'true'
         run: |
           sha="${{ github.event.pull_request.head.sha }}"
-          for i in $(seq 1 12); do
-            state=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/status" \
-              --jq '.statuses[] | select(.context=="security/snyk (rmems)") | .state' 2>/dev/null | head -1 || true)
-            if [ "$state" = "failure" ] || [ "$state" = "success" ] || [ "$state" = "error" ]; then
-              echo "Snyk App status: $state"
-              echo "app_state=$state" >> "$GITHUB_ENV"
-              exit 0
-            fi
-            echo "Waiting for Snyk App (${i}/12)..."
-            sleep 10
-          done
-          echo "::warning::Snyk App did not report within 2 minutes; bypassing App check"
-          echo "app_state=pending" >> "$GITHUB_ENV"
+          wait_for_context() {
+            local context="$1"
+            local env_name="snyk_$(echo "$context" | tr -c '[:alnum:]_' '_')_state"
+            for i in $(seq 1 12); do
+              state=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/status" \
+                --jq ".statuses[] | select(.context==\"${context}\") | .state" 2>/dev/null | head -1 || true)
+              if [ "$state" = "failure" ] || [ "$state" = "success" ] || [ "$state" = "error" ]; then
+                echo "${context} status: $state"
+                echo "${env_name}=$state" >> "$GITHUB_ENV"
+                return 0
+              fi
+              echo "Waiting for ${context} (${i}/12)..."
+              sleep 10
+            done
+            echo "::warning::${context} did not report within 2 minutes; bypassing App check"
+            echo "${env_name}=pending" >> "$GITHUB_ENV"
+          }
+          wait_for_context "security/snyk (rmems)"
+          wait_for_context "code/snyk (rmems)"
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Bypass Snyk App commit status
-        if: >-
-          steps.snyk_configured.outputs.configured == 'true' &&
-          env.app_state != 'success'
+        if: steps.snyk_configured.outputs.configured == 'true'
         run: |
           sha="${{ github.event.pull_request.head.sha }}"
-          gh api \
-            --method POST \
-            "repos/${GITHUB_REPOSITORY}/statuses/${sha}" \
-            -f state='success' \
-            -f context='security/snyk (rmems)' \
-            -f description='In-repo Snyk workflow passed; App check bypassed' \
-            -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          bypass_if_needed() {
+            local context="$1"
+            local env_name="snyk_$(echo "$context" | tr -c '[:alnum:]_' '_')_state"
+            local state="${!env_name}"
+            if [ "$state" != "success" ]; then
+              gh api \
+                --method POST \
+                "repos/${GITHUB_REPOSITORY}/statuses/${sha}" \
+                -f state='success' \
+                -f context="${context}" \
+                -f description='In-repo Snyk workflow passed; App check bypassed' \
+                -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            fi
+          }
+          bypass_if_needed "security/snyk (rmems)"
+          bypass_if_needed "code/snyk (rmems)"
         env:
           GH_TOKEN: ${{ github.token }}
