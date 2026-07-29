@@ -9,6 +9,11 @@ Produces the following artifacts in --output-dir:
   usage_delta.json   Difference (after - before)
   results.jsonl      Per-request results (one JSON object per line)
   summary.md         Human-readable summary
+
+Artifact creation requires openat/dirfd (``os.O_DIRECTORY``), i.e. POSIX.
+Platforms without that API (typical Windows CPython) refuse writes fail-closed
+so path-jail guarantees are not silently weakened by pathname reopen races.
+Use WSL or another POSIX environment for smoke runs that need artifacts.
 """
 
 import argparse
@@ -36,7 +41,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--output-dir",
         default=("smoke_output" if hasattr(os, "O_DIRECTORY") else "."),
-        help="Output directory under cwd (default: smoke_output on POSIX, . without openat)",
+        help=(
+            "Output directory under cwd (default: smoke_output). "
+            "Requires openat/dirfd (POSIX); non-POSIX platforms exit before writing."
+        ),
     )
     p.add_argument(
         "--trust-remote-code",
@@ -457,6 +465,14 @@ def _write_usage_after(out: Path, model: str, results: list[dict[str, Any]]) -> 
 
 def main() -> None:
     args = _parse_args()
+    if not _supports_dirfd():
+        print(
+            "error: smoke_test artifact writes require openat/dirfd (os.O_DIRECTORY). "
+            "This platform cannot safely write jailed artifacts; use a POSIX environment "
+            "(e.g. Linux or WSL).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if args.trust_remote_code:
         print("WARNING: trust_remote_code enabled; model repos may execute arbitrary Python.")
 
