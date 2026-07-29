@@ -1,7 +1,11 @@
 import json
-from datasets import Dataset
+from typing import List
+
+import numpy as np
+from datasets import Dataset  # type: ignore[attr-defined]
 from .logging import logger
 from .path_safety import resolve_existing_path
+
 
 def normalize_row(row, tokenizer=None, index=0):
     if "text" in row:
@@ -16,9 +20,11 @@ def normalize_row(row, tokenizer=None, index=0):
                 raise ValueError(f"Line {index}: messages must contain 'role' and 'content'.")
             if m["role"] not in ["user", "assistant", "system", "tool"]:
                 raise ValueError(f"Line {index}: invalid role '{m['role']}'.")
-                
+
         if tokenizer and hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-            text = tokenizer.apply_chat_template(row["messages"], tokenize=False, add_generation_prompt=False)
+            text = tokenizer.apply_chat_template(
+                row["messages"], tokenize=False, add_generation_prompt=False
+            )
             return {"text": text}
         else:
             text = "\n".join([f"{m['role'].capitalize()}: {m['content']}" for m in row["messages"]])
@@ -32,7 +38,10 @@ def normalize_row(row, tokenizer=None, index=0):
         text += f"Output: {row.get('output', '')}"
         return {"text": text}
     else:
-        raise ValueError(f"Line {index}: Unknown format. Must contain 'text', 'messages', or 'instruction'.")
+        raise ValueError(
+            f"Line {index}: Unknown format. Must contain 'text', 'messages', or 'instruction'."
+        )
+
 
 def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
     dataset_path = resolve_existing_path(path, must_be_file=True)
@@ -46,27 +55,27 @@ def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
                     row = json.loads(line)
                 except json.JSONDecodeError as e:
                     raise ValueError(f"Line {i}: Invalid JSON - {e}")
-                
+
                 yield normalize_row(row, tokenizer, index=i)
-    
+
     return Dataset.from_generator(gen)
+
 
 def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):
     from .models.load import load_base_model
-    import numpy as np
-    
+
     logger.info("Loading tokenizer for dataset stats...")
     _, tokenizer = load_base_model(model_id, trust_remote_code, quant_config=None, bf16=False)
-    
+
     dataset = load_jsonl_dataset(path, tokenizer)
-    lengths = []
-    
+    lengths: List[int] = []
+
     for row in dataset:
         tokens = tokenizer(row["text"])["input_ids"]
         lengths.append(len(tokens))
-        
-    lengths = np.array(lengths)
-    logger.info(f"Dataset Rows: {len(lengths)}")
-    logger.info(f"Max Tokens: {lengths.max()}")
-    logger.info(f"Mean Tokens: {lengths.mean():.2f}")
-    logger.info(f"Min Tokens: {lengths.min()}")
+
+    arr = np.asarray(lengths, dtype=np.int64)
+    logger.info(f"Dataset Rows: {len(arr)}")
+    logger.info(f"Max Tokens: {arr.max()}")
+    logger.info(f"Mean Tokens: {arr.mean():.2f}")
+    logger.info(f"Min Tokens: {arr.min()}")

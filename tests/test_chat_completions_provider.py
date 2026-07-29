@@ -3,7 +3,6 @@ import os
 from unittest.mock import patch, MagicMock
 
 import httpx
-import pytest
 
 from agoge_forger.providers.chat_completions import (
     ChatCompletionsClient,
@@ -12,12 +11,13 @@ from agoge_forger.providers.chat_completions import (
     _hash_prompt,
 )
 
+
 def _dummy_bearer_token() -> str:
     """
     Create a deterministic, non-secret bearer token for test fixtures.
-    
+
     Returns:
-    	str: The token ``fixture-token-0000``.
+        str: The token ``fixture-token-0000``.
     """
     return f"fixture-token-{0:04d}"
 
@@ -336,8 +336,11 @@ STREAM_CHUNKS = [
     {"id": "chatcmpl-s1", "choices": [{"delta": {"role": "assistant"}, "finish_reason": None}]},
     {"id": "chatcmpl-s1", "choices": [{"delta": {"content": "Hello"}, "finish_reason": None}]},
     {"id": "chatcmpl-s1", "choices": [{"delta": {"content": " world"}, "finish_reason": None}]},
-    {"id": "chatcmpl-s1", "choices": [{"delta": {}, "finish_reason": "stop"}],
-     "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11}},
+    {
+        "id": "chatcmpl-s1",
+        "choices": [{"delta": {}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
+    },
 ]
 
 
@@ -371,7 +374,10 @@ class TestChatCompletionsClientStreaming:
     @patch("agoge_forger.providers.chat_completions.httpx.stream")
     def test_streaming_with_reasoning(self, mock_stream_fn, tmp_path):
         chunks = [
-            {"id": "s", "choices": [{"delta": {"reasoning_content": "Thinking"}, "finish_reason": None}]},
+            {
+                "id": "s",
+                "choices": [{"delta": {"reasoning_content": "Thinking"}, "finish_reason": None}],
+            },
             {"id": "s", "choices": [{"delta": {"content": "Answer"}, "finish_reason": None}]},
             {"id": "s", "choices": [{"delta": {}, "finish_reason": "stop"}]},
         ]

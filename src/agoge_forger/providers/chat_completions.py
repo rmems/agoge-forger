@@ -6,10 +6,10 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 
 class ChatCompletionsConfig(BaseModel):
@@ -152,9 +152,7 @@ class ChatCompletionsClient:
 
         return result
 
-    def _chat_non_streaming(
-        self, payload: Dict[str, Any], result: InferenceResult
-    ) -> None:
+    def _chat_non_streaming(self, payload: Dict[str, Any], result: InferenceResult) -> None:
         t0 = time.monotonic()
         resp = httpx.post(
             self.config.chat_url,
@@ -201,7 +199,7 @@ class ChatCompletionsClient:
             for line in resp.iter_lines():
                 if not line or not line.startswith("data:"):
                     continue
-                data_str = line[len("data:"):].lstrip()
+                data_str = line[len("data:") :].lstrip()
                 if data_str.strip() == "[DONE]":
                     break
                 try:

@@ -1,11 +1,13 @@
 from agoge_forger.config import load_config, ExperimentConfig
 
+
 def test_load_smoke_config():
     config = load_config("configs/smoke_test.yaml")
     assert isinstance(config, ExperimentConfig)
     assert config.model_id == "HuggingFaceM4/tiny-random-LlamaForCausalLM"
     assert config.training.batch_size == 1
     assert config.quantization.load_in_4bit is False
+
 
 def test_config_loads_safetensors_fields():
     config = load_config("configs/smoke_test.yaml")
@@ -65,10 +67,7 @@ def test_config_resolves_relative_dataset_path_against_config_dir(tmp_path, monk
 
     config_path = config_dir / "exp.yaml"
     # Use a path that's relative to the config file's directory.
-    config_path.write_text(
-        'model_id: "m"\n'
-        'dataset_path: "../data/my_dataset.jsonl"\n'
-    )
+    config_path.write_text('model_id: "m"\ndataset_path: "../data/my_dataset.jsonl"\n')
 
     # Run the test from a different CWD to prove the config path
     # resolution is independent of the process working directory.

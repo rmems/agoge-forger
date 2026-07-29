@@ -1,6 +1,7 @@
 import torch
 from ..logging import logger
 
+
 def check_torch_env():
     logger.info(f"PyTorch Version: {torch.__version__}")
     if torch.cuda.is_available():

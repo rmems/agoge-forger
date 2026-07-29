@@ -25,9 +25,7 @@ def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B"):
 
 def _write_final_adapter(root, base_model="Qwen/Qwen3.5-0.5B"):
     (root / "adapter_model.safetensors").write_text("final-weights")
-    (root / "adapter_config.json").write_text(
-        '{"base_model_name_or_path": "%s"}' % base_model
-    )
+    (root / "adapter_config.json").write_text('{"base_model_name_or_path": "%s"}' % base_model)
 
 
 def test_find_latest_valid_checkpoint_skips_incomplete_entries(tmp_path):

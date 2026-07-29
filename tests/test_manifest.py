@@ -2,6 +2,7 @@ import os
 import json
 from agoge_forger.manifests import write_run_manifest
 
+
 def test_write_manifest(tmp_path):
     run_dir = str(tmp_path / "test_run")
     write_run_manifest(run_dir, {"a": 1}, {"vram": 10})

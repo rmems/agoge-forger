@@ -131,7 +131,6 @@ class TestJailedOutputDir:
             smoke_test._jailed_output_dir("link/output")
         assert not (outside / "output").exists()
 
-
     def test_windows_fallback_rejects_non_cwd_output_dir(self, tmp_path, monkeypatch):
         """Without dirfd, only --output-dir . is accepted."""
         monkeypatch.chdir(tmp_path)
@@ -331,7 +330,9 @@ class TestWriteSummaryUnder:
 
     def test_dry_run_mode_label_and_counts(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        results = [{"status": "dry_run", "prompt_tokens": 0, "completion_tokens": 0, "latency_ms": 0.0}]
+        results = [
+            {"status": "dry_run", "prompt_tokens": 0, "completion_tokens": 0, "latency_ms": 0.0}
+        ]
         delta = {"tokens_prompt": 0, "tokens_completion": 0, "tokens_total": 0, "requests": 0}
         smoke_test._write_summary_under(tmp_path, results, delta, dry_run=True, model="m")
 
@@ -341,7 +342,9 @@ class TestWriteSummaryUnder:
 
     def test_no_ok_results_avg_latency_is_zero(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        results = [{"status": "error", "prompt_tokens": 0, "completion_tokens": 0, "latency_ms": 0.0}]
+        results = [
+            {"status": "error", "prompt_tokens": 0, "completion_tokens": 0, "latency_ms": 0.0}
+        ]
         delta = {"tokens_prompt": 0, "tokens_completion": 0, "tokens_total": 0, "requests": 0}
         smoke_test._write_summary_under(tmp_path, results, delta, dry_run=False, model="m")
 
@@ -364,7 +367,9 @@ class TestWriteSummaryUnder:
 
 
 class TestMainIntegration:
-    def test_dry_run_creates_all_artifacts_under_jailed_output_dir(self, tmp_path, monkeypatch, capsys):
+    def test_dry_run_creates_all_artifacts_under_jailed_output_dir(
+        self, tmp_path, monkeypatch, capsys
+    ):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(
             sys,
@@ -404,7 +409,8 @@ class TestMainIntegration:
         assert manifest["config"]["dry_run"] is True
 
         results = [
-            json.loads(line) for line in (out_dir / "results.jsonl").read_text(encoding="utf-8").splitlines()
+            json.loads(line)
+            for line in (out_dir / "results.jsonl").read_text(encoding="utf-8").splitlines()
         ]
         assert len(results) == 2
         assert all(r["status"] == "dry_run" for r in results)
