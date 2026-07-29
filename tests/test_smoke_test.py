@@ -186,15 +186,12 @@ class TestWriteJsonUnder:
         target.write_text("original", encoding="utf-8")
         link = tmp_path / "manifest.json"
         link.symlink_to(target)
-        # Exclusive temp + replace either fails closed or replaces the symlink
-        # dirent with a new regular file — never truncates the outside target.
-        try:
-            smoke_test._write_json_under(tmp_path, "manifest.json", {"hijacked": True})
-        except (OSError, ValueError):
-            pass
+        # Exclusive temp + replace swaps the symlink dirent for a new regular
+        # file — the outside target must never be truncated.
+        smoke_test._write_json_under(tmp_path, "manifest.json", {"hijacked": True})
         assert target.read_text(encoding="utf-8") == "original"
-        if link.exists() and not link.is_symlink():
-            assert json.loads(link.read_text(encoding="utf-8")) == {"hijacked": True}
+        assert link.exists() and not link.is_symlink()
+        assert json.loads(link.read_text(encoding="utf-8")) == {"hijacked": True}
 
     def test_non_dirfd_write_fails_closed(self, tmp_path, monkeypatch):
         """Without openat/dirfd, refuse pathname-based writes (Cubic P2)."""
@@ -220,7 +217,8 @@ class TestWriteJsonUnder:
     def test_write_does_not_truncate_hard_link_target(self, tmp_path, monkeypatch):
         """O_TRUNC on a hard-linked artifact must not clobber the outside inode."""
         monkeypatch.chdir(tmp_path)
-        outside = tmp_path.parent / f"hardlink_target_{tmp_path.name}.txt"
+        outside = tmp_path / "outside" / "hardlink_target.txt"
+        outside.parent.mkdir()
         outside.write_text("outside-original", encoding="utf-8")
         out_dir = tmp_path / "out"
         out_dir.mkdir()
@@ -234,7 +232,6 @@ class TestWriteJsonUnder:
         assert json.loads(artifact.read_text(encoding="utf-8")) == {"fresh": True}
         # artifact should no longer share inode with outside
         assert os.stat(artifact).st_ino != os.stat(outside).st_ino
-        outside.unlink(missing_ok=True)
 
     def test_non_dirfd_write_rejects_nested_parent(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

@@ -29,6 +29,15 @@ from pathlib import Path
 from typing import Any
 
 
+def _supports_dirfd() -> bool:
+    """True when openat + no-follow directory opens are available (POSIX).
+
+    Requires both ``O_DIRECTORY`` and ``O_NOFOLLOW`` so nested path components
+    cannot be followed if replaced by a symlink after validation.
+    """
+    return hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Python smoke test for inference checks")
     p.add_argument("--model", required=True, help="Hugging Face model ID")
@@ -40,7 +49,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true", default=False)
     p.add_argument(
         "--output-dir",
-        default=("smoke_output" if hasattr(os, "O_DIRECTORY") else "."),
+        default=("smoke_output" if _supports_dirfd() else "."),
         help=(
             "Output directory under cwd (default: smoke_output). "
             "Requires openat/dirfd (POSIX); non-POSIX platforms exit before writing."
@@ -52,7 +61,12 @@ def _parse_args() -> argparse.Namespace:
         default=False,
         help="Allow Hugging Face to execute custom Python from the model repo",
     )
-    return p.parse_args()
+    args = p.parse_args()
+    if args.concurrency < 1:
+        p.error("--concurrency must be >= 1")
+    if args.max_requests < 1:
+        p.error("--max-requests must be >= 1")
+    return args
 
 
 def _git_info() -> dict[str, Any]:
@@ -253,11 +267,6 @@ def _relative_parts_under_cwd(raw: str) -> tuple[Path, tuple[str, ...]]:
     return cwd, parts
 
 
-def _supports_dirfd() -> bool:
-    """True when openat/mkdir-at/O_DIRECTORY are available (POSIX; not Windows)."""
-    return hasattr(os, "O_DIRECTORY")
-
-
 def _jailed_output_dir(raw: str) -> Path:
     """Sanitize ``--output-dir`` and jail it under the process cwd.
 
@@ -379,7 +388,7 @@ def _avg_ok_latency_ms(results: list[dict[str, Any]], ok_count: int) -> float:
 
 
 def _format_summary_md(
-    results: list[dict[str, Any]], delta: dict[str, Any], dry_run: bool, model: str
+    results: list[dict[str, Any]], delta: dict[str, Any], *, dry_run: bool, model: str
 ) -> str:
     ok, errors, dry = _result_status_counts(results)
     lines = [
@@ -409,10 +418,10 @@ def _format_summary_md(
 
 
 def _write_summary_under(
-    out_dir: Path, results: list[dict[str, Any]], delta: dict[str, Any], dry_run: bool, model: str
+    out_dir: Path, results: list[dict[str, Any]], delta: dict[str, Any], *, dry_run: bool, model: str
 ) -> None:
     path = _safe_artifact_path(out_dir, _ARTIFACT_SUMMARY)
-    _write_text_nofollow(path, _format_summary_md(results, delta, dry_run, model))
+    _write_text_nofollow(path, _format_summary_md(results, delta, dry_run=dry_run, model=model))
 
 
 def _dispatch_request(
@@ -508,7 +517,7 @@ def main() -> None:
     usage_after = _write_usage_after(out, model, results)
     delta = _compute_delta(usage_before, usage_after)
     _write_json_under(out, _ARTIFACT_USAGE_DELTA, delta)
-    _write_summary_under(out, results, delta, dry_run, model)
+    _write_summary_under(out, results, delta, dry_run=dry_run, model=model)
 
     ok = sum(1 for r in results if r["status"] in ("ok", "dry_run"))
     print(f"Completed {len(results)} requests ({ok} ok). Artifacts in {out}/")
