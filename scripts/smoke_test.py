@@ -250,26 +250,6 @@ def _supports_dirfd() -> bool:
     return hasattr(os, "O_DIRECTORY")
 
 
-def _is_symlink_or_reparse(path: Path) -> bool:
-    """True if ``path`` is a symlink, junction, or other reparse point (lstat)."""
-    if path.is_symlink():
-        return True
-    is_junction = getattr(path, "is_junction", None)
-    if callable(is_junction):
-        try:
-            if is_junction():
-                return True
-        except OSError:
-            pass
-    try:
-        st = os.lstat(path)
-    except FileNotFoundError:
-        return False
-    # Windows: st_file_attributes includes FILE_ATTRIBUTE_REPARSE_POINT (0x400).
-    attrs = getattr(st, "st_file_attributes", 0) or 0
-    return bool(attrs & 0x400)
-
-
 def _jailed_output_dir(raw: str) -> Path:
     """Sanitize ``--output-dir`` and jail it under the process cwd.
 
@@ -297,80 +277,24 @@ def _jailed_output_dir(raw: str) -> Path:
     return _require_under_cwd(cwd.joinpath(*parts).resolve(), cwd)
 
 
-def _write_flags_nofollow() -> int:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    return flags
-
-
 def _write_via_fd(fd: int, text: str) -> None:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(text)
 
 
-def _refuse_symlink_artifact(path: Path) -> None:
-    """Raise if ``path`` is a symlink (final component) so writes cannot escape."""
-    # Path.is_symlink() uses lstat and does not follow the link.
-    if path.is_symlink() or _is_symlink_or_reparse(path):
-        raise ValueError(f"Refusing to write through symlink artifact: {path}")
-
-
-def _unlink_quietly(path: Path) -> None:
-    """Best-effort unlink; ignore missing paths and OS errors."""
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
-
-
-def _exclusive_temp_path(parent: Path, final_name: str) -> Path:
-    """Return a unique sibling temp path that does not already exist."""
-    tmp_path = parent / f".{final_name}.{secrets.token_hex(8)}.tmp"
-    if tmp_path.exists() or tmp_path.is_symlink():
-        raise ValueError(f"Temp artifact path already exists: {tmp_path}")
-    return tmp_path
-
-
-def _write_exclusive_temp(tmp_path: Path, text: str) -> None:
-    """Create ``tmp_path`` with O_EXCL and write ``text``; unlink on failure."""
-    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-    try:
-        _write_via_fd(fd, text)
-    except Exception:
-        _unlink_quietly(tmp_path)
-        raise
-
-
-def _replace_temp_onto_artifact(tmp_path: Path, path: Path) -> None:
-    """Atomically replace ``path`` with ``tmp_path``, refusing reparse destinations.
-
-    Always unlinks the temp file if replacement fails (including when the final
-    basename is an existing directory).
-    """
-    try:
-        if path.exists() and path.is_dir() and not path.is_symlink():
-            raise ValueError(f"Refusing to replace directory at artifact path: {path}")
-        _refuse_symlink_artifact(path)
-        os.replace(tmp_path, path)
-    except Exception:
-        _unlink_quietly(tmp_path)
-        raise
-    if path.is_symlink() or _is_symlink_or_reparse(path):
-        raise ValueError(f"Artifact path is a reparse point after write: {path}")
-
-
 def _write_text_nofollow_fallback(path: Path, text: str) -> None:
-    """Windows/non-dirfd write: exclusive temp + replace under process cwd only."""
-    cwd = Path.cwd().resolve()
-    if path.parent.resolve() != cwd:
-        raise ValueError(
-            "Without openat/dirfd, artifacts must be written under the process cwd"
-        )
-    _refuse_symlink_artifact(path)
-    tmp_path = _exclusive_temp_path(cwd, path.name)
-    _write_exclusive_temp(tmp_path, text)
-    _replace_temp_onto_artifact(tmp_path, cwd / path.name)
+    """Fail closed without openat/dirfd (no safe pathname-only write).
+
+    Opening a temp file under cwd by absolute path races if another process
+    replaces the cwd directory with a symlink between containment checks and
+    ``os.open``. Without a directory handle there is no portable fix, so refuse
+    rather than reintroduce an escape hatch.
+    """
+    del path, text
+    raise ValueError(
+        "Artifact writes require openat/dirfd; "
+        "this platform cannot safely write smoke-test artifacts"
+    )
 
 
 def _unlink_at(dir_fd: int, name: str) -> None:
