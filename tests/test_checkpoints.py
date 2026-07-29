@@ -18,16 +18,14 @@ def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B"):
     (checkpoint_dir / "trainer_state.json").write_text("{}")
     (checkpoint_dir / "adapter_model.safetensors").write_text("weights")
     (checkpoint_dir / "adapter_config.json").write_text(
-        '{"base_model_name_or_path": "%s"}' % base_model
+        f'{{"base_model_name_or_path": "{base_model}"}}'
     )
     return checkpoint_dir
 
 
 def _write_final_adapter(root, base_model="Qwen/Qwen3.5-0.5B"):
     (root / "adapter_model.safetensors").write_text("final-weights")
-    (root / "adapter_config.json").write_text(
-        '{"base_model_name_or_path": "%s"}' % base_model
-    )
+    (root / "adapter_config.json").write_text(f'{{"base_model_name_or_path": "{base_model}"}}')
 
 
 def test_find_latest_valid_checkpoint_skips_incomplete_entries(tmp_path):
@@ -49,7 +47,7 @@ def _write_legacy_bin_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B"):
     (checkpoint_dir / "trainer_state.json").write_text("{}")
     (checkpoint_dir / "adapter_model.bin").write_text("legacy")
     (checkpoint_dir / "adapter_config.json").write_text(
-        '{"base_model_name_or_path": "%s"}' % base_model
+        f'{{"base_model_name_or_path": "{base_model}"}}'
     )
     return checkpoint_dir
 

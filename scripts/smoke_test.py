@@ -17,13 +17,13 @@ Use WSL or another POSIX environment for smoke runs that need artifacts.
 """
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import secrets
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -72,7 +72,9 @@ def _parse_args() -> argparse.Namespace:
 def _git_info() -> dict[str, Any]:
     try:
         commit = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
-        branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
+        branch = (
+            subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"]).decode().strip()
+        )
         dirty = bool(subprocess.check_output(["git", "status", "--porcelain"]).strip())
         return {"commit": commit, "branch": branch, "dirty": dirty}
     except Exception:
@@ -131,12 +133,14 @@ def _dry_run_request(idx: int, model: str, stream: bool) -> dict[str, Any]:
     }
 
 
-def _run_inference_request(idx: int, model: str, stream: bool, dry_run: bool, trust_remote_code: bool) -> dict[str, Any]:
+def _run_inference_request(
+    idx: int, model: str, stream: bool, dry_run: bool, trust_remote_code: bool
+) -> dict[str, Any]:
     if dry_run:
         return _dry_run_request(idx, model, stream)
 
     try:
-        from transformers import AutoTokenizer, AutoModelForCausalLM
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=trust_remote_code)
         pt_model = AutoModelForCausalLM.from_pretrained(
@@ -285,8 +289,7 @@ def _jailed_output_dir(raw: str) -> Path:
 
     if not _supports_dirfd():
         raise ValueError(
-            "Non-cwd --output-dir requires openat/dirfd; "
-            "use --output-dir . on this platform"
+            "Non-cwd --output-dir requires openat/dirfd; use --output-dir . on this platform"
         )
 
     dir_fd = _open_path_under_cwd(parts, create=True)
@@ -418,7 +421,12 @@ def _format_summary_md(
 
 
 def _write_summary_under(
-    out_dir: Path, results: list[dict[str, Any]], delta: dict[str, Any], *, dry_run: bool, model: str
+    out_dir: Path,
+    results: list[dict[str, Any]],
+    delta: dict[str, Any],
+    *,
+    dry_run: bool,
+    model: str,
 ) -> None:
     path = _safe_artifact_path(out_dir, _ARTIFACT_SUMMARY)
     _write_text_nofollow(path, _format_summary_md(results, delta, dry_run=dry_run, model=model))

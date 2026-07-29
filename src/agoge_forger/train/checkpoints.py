@@ -1,7 +1,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Optional, Union
+from typing import Union
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..logging import logger
@@ -42,15 +42,13 @@ def is_adapter_artifact(path: PathLike, *, allow_unsafe: bool = False) -> bool:
     if not (adapter_dir / "adapter_config.json").is_file():
         return False
 
-    weight_files = ADAPTER_WEIGHT_FILES
+    weight_files: tuple[str, ...] = ADAPTER_WEIGHT_FILES
     if allow_unsafe:
         weight_files = ADAPTER_WEIGHT_FILES + LEGACY_ADAPTER_WEIGHT_FILES
 
     if not any((adapter_dir / weight_file).is_file() for weight_file in weight_files):
         return False
-    if not allow_unsafe and _has_unsafe_weight_bins(adapter_dir):
-        return False
-    return True
+    return not (not allow_unsafe and _has_unsafe_weight_bins(adapter_dir))
 
 
 def is_valid_checkpoint(path: PathLike, *, allow_unsafe: bool = False) -> bool:
@@ -80,7 +78,7 @@ def list_valid_checkpoints(run_dir: PathLike, *, allow_unsafe: bool = False) -> 
     return checkpoints
 
 
-def find_latest_valid_checkpoint(run_dir: PathLike, *, allow_unsafe: bool = False) -> Optional[Path]:
+def find_latest_valid_checkpoint(run_dir: PathLike, *, allow_unsafe: bool = False) -> Path | None:
     checkpoints = list_valid_checkpoints(run_dir, allow_unsafe=allow_unsafe)
     if not checkpoints:
         return None
@@ -99,7 +97,7 @@ def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
     return base_model
 
 
-def resolve_resume_checkpoint(run_dir: str, config) -> Optional[str]:
+def resolve_resume_checkpoint(run_dir: str, config) -> str | None:
     allow_unsafe = config.runtime.allow_unsafe_serialization
 
     if config.training.resume_checkpoint_path:
@@ -114,17 +112,17 @@ def resolve_resume_checkpoint(run_dir: str, config) -> Optional[str]:
     if not config.training.resume_from_latest_checkpoint:
         return None
 
-    checkpoint_path = find_latest_valid_checkpoint(run_dir, allow_unsafe=allow_unsafe)
-    if checkpoint_path:
-        logger.info(f"Resuming from latest valid checkpoint {checkpoint_path}")
-    else:
-        logger.info(f"No valid checkpoints found under {run_dir}; starting a fresh run.")
-    return str(checkpoint_path) if checkpoint_path else None
+    latest = find_latest_valid_checkpoint(run_dir, allow_unsafe=allow_unsafe)
+    if latest is not None:
+        logger.info(f"Resuming from latest valid checkpoint {latest}")
+        return str(latest)
+    logger.info(f"No valid checkpoints found under {run_dir}; starting a fresh run.")
+    return None
 
 
 def resolve_export_source(
-    run_dir: Optional[str] = None,
-    adapter_path: Optional[str] = None,
+    run_dir: str | None = None,
+    adapter_path: str | None = None,
     *,
     allow_unsafe: bool = False,
 ) -> str:

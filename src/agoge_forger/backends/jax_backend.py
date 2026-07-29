@@ -1,8 +1,10 @@
 from ..logging import logger
 
+
 def check_jax_env():
     try:
         import jax
+
         logger.info(f"JAX Version: {jax.__version__}")
         devices = jax.devices()
         logger.info(f"JAX Devices: {devices}")

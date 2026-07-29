@@ -1,4 +1,5 @@
-from agoge_forger.config import load_config, ExperimentConfig
+from agoge_forger.config import ExperimentConfig, load_config
+
 
 def test_load_smoke_config():
     config = load_config("configs/smoke_test.yaml")
@@ -6,6 +7,7 @@ def test_load_smoke_config():
     assert config.model_id == "HuggingFaceM4/tiny-random-LlamaForCausalLM"
     assert config.training.batch_size == 1
     assert config.quantization.load_in_4bit is False
+
 
 def test_config_loads_safetensors_fields():
     config = load_config("configs/smoke_test.yaml")
@@ -25,18 +27,7 @@ def test_config_loads_checkpoint_controls(tmp_path):
 
     config_path = tmp_path / "checkpoint_config.yaml"
     config_path.write_text(
-        "\n".join(
-            [
-                'model_id: "test-model"',
-                'dataset_path: "datasets/samples/tiny_sft.jsonl"',
-                "save_steps: 12",
-                "save_total_limit: 3",
-                "resume_from_latest_checkpoint: true",
-                'resume_checkpoint_path: "adapters/run/checkpoint-12"',
-                "disk_free_warning_gb: 9",
-                "checkpoint_disk_buffer_gb: 4",
-            ]
-        )
+        'model_id: "test-model"\ndataset_path: "datasets/samples/tiny_sft.jsonl"\nsave_steps: 12\nsave_total_limit: 3\nresume_from_latest_checkpoint: true\nresume_checkpoint_path: "adapters/run/checkpoint-12"\ndisk_free_warning_gb: 9\ncheckpoint_disk_buffer_gb: 4'
     )
 
     config = load_config(str(config_path))
@@ -65,10 +56,7 @@ def test_config_resolves_relative_dataset_path_against_config_dir(tmp_path, monk
 
     config_path = config_dir / "exp.yaml"
     # Use a path that's relative to the config file's directory.
-    config_path.write_text(
-        'model_id: "m"\n'
-        'dataset_path: "../data/my_dataset.jsonl"\n'
-    )
+    config_path.write_text('model_id: "m"\ndataset_path: "../data/my_dataset.jsonl"\n')
 
     # Run the test from a different CWD to prove the config path
     # resolution is independent of the process working directory.

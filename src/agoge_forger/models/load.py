@@ -1,6 +1,8 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
 from ..logging import logger
+
 
 def get_bnb_config(quant_config):
     if not quant_config.load_in_4bit:
@@ -13,10 +15,19 @@ def get_bnb_config(quant_config):
         bnb_4bit_use_double_quant=quant_config.bnb_4bit_use_double_quant,
     )
 
-def load_base_model(model_id: str, trust_remote_code: bool, quant_config=None, bf16: bool = True, 
-                    revision: str = None, local_files_only: bool = False, attn_implementation: str = None,
-                    torch_dtype_str: str = "auto", device_map: str = "auto"):
-    
+
+def load_base_model(
+    model_id: str,
+    trust_remote_code: bool,
+    quant_config=None,
+    bf16: bool = True,
+    revision: str | None = None,
+    local_files_only: bool = False,
+    attn_implementation: str | None = None,
+    torch_dtype_str: str = "auto",
+    device_map: str = "auto",
+):
+
     if trust_remote_code:
         logger.warning(
             "trust_remote_code=True: Hugging Face may execute arbitrary Python from the model repo."
@@ -24,31 +35,31 @@ def load_base_model(model_id: str, trust_remote_code: bool, quant_config=None, b
 
     logger.info(f"Loading tokenizer {model_id}")
     tokenizer = AutoTokenizer.from_pretrained(
-        model_id, 
+        model_id,
         trust_remote_code=trust_remote_code,
         revision=revision,
-        local_files_only=local_files_only
+        local_files_only=local_files_only,
     )
-    
+
     if hasattr(tokenizer, "chat_template") and tokenizer.chat_template is not None:
         logger.info("Tokenizer has chat_template.")
-        
+
     if tokenizer.pad_token is None:
         if tokenizer.eos_token is not None:
             logger.info("Setting pad_token to eos_token.")
             tokenizer.pad_token = tokenizer.eos_token
         else:
             raise ValueError("Tokenizer has no pad_token and no eos_token. Cannot safely pad.")
-            
+
     tokenizer.padding_side = "right"
 
     kwargs = {
         "trust_remote_code": trust_remote_code,
         "device_map": device_map,
         "revision": revision,
-        "local_files_only": local_files_only
+        "local_files_only": local_files_only,
     }
-    
+
     if attn_implementation:
         kwargs["attn_implementation"] = attn_implementation
 

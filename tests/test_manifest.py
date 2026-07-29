@@ -1,6 +1,8 @@
-import os
 import json
+import os
+
 from agoge_forger.manifests import write_run_manifest
+
 
 def test_write_manifest(tmp_path):
     run_dir = str(tmp_path / "test_run")

@@ -14,7 +14,9 @@ def _check_no_parent_traversal(candidate: Path) -> None:
         raise ValueError(f"Path must not contain '..': {candidate}")
 
 
-def resolve_existing_path(path: str, *, must_be_file: bool = False, must_be_dir: bool = False) -> Path:
+def resolve_existing_path(
+    path: str, *, must_be_file: bool = False, must_be_dir: bool = False
+) -> Path:
     if not path or not path.strip():
         raise ValueError("Path must not be empty")
 

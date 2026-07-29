@@ -1,10 +1,12 @@
 import os
-import shutil
-import torch
 import re
+import shutil
+
+import torch
+
 from ..logging import logger
 
-BYTES_PER_GB = 1024 ** 3
+BYTES_PER_GB = 1024**3
 COMMON_LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 
@@ -40,10 +42,14 @@ def estimate_training_risk(config, gpu_report):
 
     if vram <= 16.5:
         if not config.quantization.load_in_4bit:
-            logger.warning("RISK: Training on <= 16GB VRAM without load_in_4bit is highly likely to OOM.")
+            logger.warning(
+                "RISK: Training on <= 16GB VRAM without load_in_4bit is highly likely to OOM."
+            )
 
         if config.training.batch_size > 1:
-            logger.warning("RISK: Batch size > 1 on 16GB VRAM may cause OOM. Consider gradient_accumulation_steps instead.")
+            logger.warning(
+                "RISK: Batch size > 1 on 16GB VRAM may cause OOM. Consider gradient_accumulation_steps instead."
+            )
 
         if config.training.max_seq_length > 2048:
             logger.warning("RISK: max_seq_length > 2048 on 16GB VRAM may cause OOM.")
@@ -127,7 +133,9 @@ def _module_matches_target(model, target):
     try:
         pattern = re.compile(target)
     except re.error:
-        logger.warning(f"Invalid regex in LoRA target '{target}'; using literal substring match only.")
+        logger.warning(
+            f"Invalid regex in LoRA target '{target}'; using literal substring match only."
+        )
         pattern = None
 
     for name, _ in model.named_modules():
@@ -164,7 +172,9 @@ def validate_lora_targets_exist(model, lora_config):
     requested_targets = lora_config.target_modules
 
     if mode == "discover_required" and not requested_targets:
-        raise ValueError("target_modules_mode is discover_required but no target_modules were provided.")
+        raise ValueError(
+            "target_modules_mode is discover_required but no target_modules were provided."
+        )
 
     model_modules = _collect_model_leaf_modules(model)
     if mode == "auto_common":

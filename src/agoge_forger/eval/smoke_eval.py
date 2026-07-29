@@ -1,9 +1,12 @@
 import json
 import os
+
 import torch
 from peft import PeftModel
-from ..models.load import load_base_model
+
 from ..logging import logger
+from ..models.load import load_base_model
+
 
 def run_smoke_eval(
     base_model_id: str,
@@ -16,13 +19,9 @@ def run_smoke_eval(
         base_model_id, trust_remote_code=trust_remote_code, quant_config=None, bf16=True
     )
     model = PeftModel.from_pretrained(model, adapter_path)
-    
-    prompts = [
-        "What is Agoge?",
-        "Explain QLoRA.",
-        "What does GGUF stand for?"
-    ]
-    
+
+    prompts = ["What is Agoge?", "Explain QLoRA.", "What does GGUF stand for?"]
+
     results = []
     model.eval()
     with torch.no_grad():
@@ -32,7 +31,7 @@ def run_smoke_eval(
             res = tokenizer.decode(outputs[0], skip_special_tokens=True)
             logger.info(f"Prompt: {p}\nResponse: {res}\n")
             results.append({"prompt": p, "response": res})
-            
+
     os.makedirs(os.path.join("runs", run_name), exist_ok=True)
     with open(os.path.join("runs", run_name, "smoke_eval.json"), "w") as f:
         json.dump(results, f, indent=2)
