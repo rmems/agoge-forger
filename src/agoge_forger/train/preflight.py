@@ -1,7 +1,9 @@
 import os
-import shutil
-import torch
 import re
+import shutil
+
+import torch
+
 from ..logging import logger
 
 BYTES_PER_GB = 1024**3

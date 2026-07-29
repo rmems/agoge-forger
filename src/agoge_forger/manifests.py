@@ -1,9 +1,10 @@
 import json
 import os
-import sys
 import subprocess
+import sys
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
+
 import torch
 
 
@@ -24,7 +25,7 @@ def get_git_info():
 def write_run_manifest(
     run_dir: str,
     config_dict: dict,
-    metrics: Optional[dict[Any, Any]] = None,
+    metrics: dict[Any, Any] | None = None,
     model=None,
     tokenizer=None,
     dataset=None,

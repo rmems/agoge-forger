@@ -1,20 +1,20 @@
-import re
 import json
 import os
-from typing import Any, Dict, List, Optional, Set
+import re
+from typing import Any
 
-from .load import load_base_model
 from ..logging import logger
+from .load import load_base_model
 
 
 def inspect_lora_targets(
-    model_id: str, trust_remote_code: bool = False, out_path: Optional[str] = None
+    model_id: str, trust_remote_code: bool = False, out_path: str | None = None
 ):
     logger.info(f"Finding potential LoRA targets in {model_id}...")
     model, _ = load_base_model(model_id, trust_remote_code, quant_config=None, bf16=True)
 
-    leaf_groups: Dict[str, Dict[str, Any]] = {}
-    full_module_matches: List[Dict[str, Any]] = []
+    leaf_groups: dict[str, dict[str, Any]] = {}
+    full_module_matches: list[dict[str, Any]] = []
 
     patterns = [
         r"q_proj",
@@ -40,7 +40,7 @@ def inspect_lora_targets(
                 leaf_groups[leaf] = {"count": 0, "types": set()}
 
             leaf_groups[leaf]["count"] = int(leaf_groups[leaf]["count"]) + 1
-            types_set: Set[str] = leaf_groups[leaf]["types"]
+            types_set: set[str] = leaf_groups[leaf]["types"]
             types_set.add(mod_class)
 
             params = sum(p.numel() for p in module.parameters())
@@ -62,7 +62,7 @@ def inspect_lora_targets(
 
     common_targets = [
         k
-        for k in leaf_groups.keys()
+        for k in leaf_groups
         if k in ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     ]
 

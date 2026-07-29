@@ -1,5 +1,5 @@
-from .load import load_base_model
 from ..logging import logger
+from .load import load_base_model
 
 
 def inspect_model(model_id: str, trust_remote_code: bool = False):
@@ -10,5 +10,5 @@ def inspect_model(model_id: str, trust_remote_code: bool = False):
     logger.info(f"Parameters: {model.num_parameters() / 1e9:.2f} B")
     logger.info(f"Dtype: {model.dtype}")
 
-    module_types = set([type(m).__name__ for _, m in model.named_modules()])
+    module_types = {type(m).__name__ for _, m in model.named_modules()}
     logger.info(f"Module types found: {module_types}")

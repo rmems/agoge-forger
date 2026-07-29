@@ -1,6 +1,8 @@
-import pytest
 import os
-from agoge_forger.artifacts.safetensors_io import write_artifact_index, assert_no_unsafe_weight_bins
+
+import pytest
+
+from agoge_forger.artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
 
 
 def test_artifact_index_hashes_file(tmp_path):

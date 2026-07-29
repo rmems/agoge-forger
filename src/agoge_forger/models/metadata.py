@@ -1,6 +1,7 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from transformers import AutoConfig
+
 from ..logging import logger
 
 try:
@@ -10,8 +11,8 @@ except ImportError:
 
 
 def get_model_config_metadata(
-    model_id: str, trust_remote_code: bool = False, revision: Optional[str] = None
-) -> Dict[str, Any]:
+    model_id: str, trust_remote_code: bool = False, revision: str | None = None
+) -> dict[str, Any]:
     logger.info(f"Fetching metadata for {model_id}")
     config = AutoConfig.from_pretrained(
         model_id, trust_remote_code=trust_remote_code, revision=revision

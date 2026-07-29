@@ -3,7 +3,6 @@ import json
 import typer
 
 from .artifacts.safetensors_io import assert_no_unsafe_weight_bins, inspect_safetensors_file
-from .train.checkpoints import is_adapter_artifact
 from .backends.jax_backend import check_jax_env
 from .backends.torch_backend import check_torch_env
 from .config import load_config
@@ -16,7 +15,7 @@ from .models.inspect import inspect_model as _inspect_model
 from .models.lora_targets import inspect_lora_targets as _inspect_lora_targets
 from .models.metadata import get_model_config_metadata
 from .path_safety import resolve_existing_path, resolve_output_directory
-from .train.checkpoints import infer_base_model_from_adapter
+from .train.checkpoints import infer_base_model_from_adapter, is_adapter_artifact
 from .train.lora import train_lora as _train_lora
 from .train.qlora import train_qlora as _train_qlora
 

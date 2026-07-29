@@ -1,8 +1,9 @@
-import os
 import glob
-import json
 import hashlib
-from typing import Any, Dict, List
+import json
+import os
+from typing import Any
+
 from ..logging import logger
 
 try:
@@ -18,16 +19,16 @@ UNSAFE_WEIGHT_PATTERNS = [
 ]
 
 
-def inspect_safetensors_file(path: str) -> Dict[str, Any]:
+def inspect_safetensors_file(path: str) -> dict[str, Any]:
     if safe_open is None:
         logger.warning("safetensors library not installed.")
         return {}
 
-    info: Dict[str, Any] = {"tensors": {}, "metadata": {}}
+    info: dict[str, Any] = {"tensors": {}, "metadata": {}}
     try:
         with safe_open(path, framework="pt") as f:
             info["metadata"] = f.metadata()
-            for key in f.keys():
+            for key in f:
                 tensor = f.get_slice(key)
                 info["tensors"][key] = {
                     "shape": tensor.get_shape(),
@@ -38,7 +39,7 @@ def inspect_safetensors_file(path: str) -> Dict[str, Any]:
     return info
 
 
-def find_safetensors_files(path: str) -> List[str]:
+def find_safetensors_files(path: str) -> list[str]:
     if os.path.isfile(path) and path.endswith(".safetensors"):
         return [path]
     if os.path.isdir(path):

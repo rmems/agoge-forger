@@ -1,4 +1,4 @@
-from agoge_forger.config import load_config, ExperimentConfig
+from agoge_forger.config import ExperimentConfig, load_config
 
 
 def test_load_smoke_config():
@@ -27,18 +27,7 @@ def test_config_loads_checkpoint_controls(tmp_path):
 
     config_path = tmp_path / "checkpoint_config.yaml"
     config_path.write_text(
-        "\n".join(
-            [
-                'model_id: "test-model"',
-                'dataset_path: "datasets/samples/tiny_sft.jsonl"',
-                "save_steps: 12",
-                "save_total_limit: 3",
-                "resume_from_latest_checkpoint: true",
-                'resume_checkpoint_path: "adapters/run/checkpoint-12"',
-                "disk_free_warning_gb: 9",
-                "checkpoint_disk_buffer_gb: 4",
-            ]
-        )
+        'model_id: "test-model"\ndataset_path: "datasets/samples/tiny_sft.jsonl"\nsave_steps: 12\nsave_total_limit: 3\nresume_from_latest_checkpoint: true\nresume_checkpoint_path: "adapters/run/checkpoint-12"\ndisk_free_warning_gb: 9\ncheckpoint_disk_buffer_gb: 4'
     )
 
     config = load_config(str(config_path))

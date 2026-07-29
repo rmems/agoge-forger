@@ -1,7 +1,6 @@
-from typing import Optional
-
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
 from ..logging import logger
 
 
@@ -22,9 +21,9 @@ def load_base_model(
     trust_remote_code: bool,
     quant_config=None,
     bf16: bool = True,
-    revision: Optional[str] = None,
+    revision: str | None = None,
     local_files_only: bool = False,
-    attn_implementation: Optional[str] = None,
+    attn_implementation: str | None = None,
     torch_dtype_str: str = "auto",
     device_map: str = "auto",
 ):

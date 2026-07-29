@@ -17,13 +17,13 @@ Use WSL or another POSIX environment for smoke runs that need artifacts.
 """
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import secrets
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -140,7 +140,7 @@ def _run_inference_request(
         return _dry_run_request(idx, model, stream)
 
     try:
-        from transformers import AutoTokenizer, AutoModelForCausalLM
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=trust_remote_code)
         pt_model = AutoModelForCausalLM.from_pretrained(

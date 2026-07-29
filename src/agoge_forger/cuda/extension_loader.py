@@ -3,8 +3,8 @@ from ..logging import logger
 
 def load_dummy_extension():
     try:
-        import torch
         import agoge_dummy_cuda
+        import torch
 
         a = torch.ones(5, device="cuda")
         b = torch.ones(5, device="cuda")

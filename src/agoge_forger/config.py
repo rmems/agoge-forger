@@ -1,5 +1,4 @@
 import yaml
-from typing import Optional
 from pydantic import BaseModel, Field
 
 from .path_safety import resolve_existing_path
@@ -15,9 +14,9 @@ class TrainingConfig(BaseModel):
     bf16: bool = True
     seed: int = 42
     save_steps: int = 50
-    save_total_limit: Optional[int] = 2
+    save_total_limit: int | None = 2
     resume_from_latest_checkpoint: bool = False
-    resume_checkpoint_path: Optional[str] = None
+    resume_checkpoint_path: str | None = None
 
 
 class QuantizationConfig(BaseModel):

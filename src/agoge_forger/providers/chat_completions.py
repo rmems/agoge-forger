@@ -5,8 +5,8 @@ import json
 import os
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 import httpx
 from pydantic import BaseModel, field_validator
@@ -50,7 +50,7 @@ class InferenceResult:
     raw_response_path: str = ""
     error: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def to_json(self) -> str:
@@ -68,7 +68,7 @@ class ChatCompletionsClient:
         self._raw_dir = os.path.join("runs", run_name, "raw")
         os.makedirs(self._raw_dir, exist_ok=True)
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
@@ -76,9 +76,9 @@ class ChatCompletionsClient:
 
     def _build_payload(
         self,
-        messages: List[Dict[str, str]],
-        stream: Optional[bool] = None,
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, str]],
+        stream: bool | None = None,
+    ) -> dict[str, Any]:
         is_streaming = stream if stream is not None else self.config.stream
         payload = {
             "model": self.config.model,
@@ -97,7 +97,7 @@ class ChatCompletionsClient:
             json.dump(data, f, indent=2, default=str)
         return path
 
-    def _parse_usage(self, usage: Optional[Dict[str, Any]]) -> Dict[str, int]:
+    def _parse_usage(self, usage: dict[str, Any] | None) -> dict[str, int]:
         if not usage or not isinstance(usage, dict):
             return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         return {
@@ -106,7 +106,7 @@ class ChatCompletionsClient:
             "total_tokens": usage.get("total_tokens") or 0,
         }
 
-    def _parse_choice(self, choice: Dict[str, Any]) -> Dict[str, str]:
+    def _parse_choice(self, choice: dict[str, Any]) -> dict[str, str]:
         message = choice.get("message") or {}
         content = message.get("content") or ""
         reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
@@ -115,8 +115,8 @@ class ChatCompletionsClient:
 
     def chat(
         self,
-        messages: List[Dict[str, str]],
-        stream: Optional[bool] = None,
+        messages: list[dict[str, str]],
+        stream: bool | None = None,
     ) -> InferenceResult:
         use_stream = stream if stream is not None else self.config.stream
 
@@ -152,7 +152,7 @@ class ChatCompletionsClient:
 
         return result
 
-    def _chat_non_streaming(self, payload: Dict[str, Any], result: InferenceResult) -> None:
+    def _chat_non_streaming(self, payload: dict[str, Any], result: InferenceResult) -> None:
         t0 = time.monotonic()
         resp = httpx.post(
             self.config.chat_url,
@@ -180,13 +180,13 @@ class ChatCompletionsClient:
             result.finish_reason = parsed["finish_reason"]
 
     def _chat_streaming(
-        self, payload: Dict[str, Any], result: InferenceResult, t_start: float
+        self, payload: dict[str, Any], result: InferenceResult, t_start: float
     ) -> None:
-        collected_content: List[str] = []
-        collected_reasoning: List[str] = []
+        collected_content: list[str] = []
+        collected_reasoning: list[str] = []
         finish_reason = ""
         first_token = True
-        raw_chunks: List[Dict[str, Any]] = []
+        raw_chunks: list[dict[str, Any]] = []
 
         with httpx.stream(
             "POST",
@@ -242,9 +242,9 @@ class ChatCompletionsClient:
         self,
         prompt: str,
         system: str = "",
-        stream: Optional[bool] = None,
+        stream: bool | None = None,
     ) -> InferenceResult:
-        messages: List[Dict[str, str]] = []
+        messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})

@@ -1,8 +1,9 @@
 import json
-from typing import List
 
 import numpy as np
+
 from datasets import Dataset  # type: ignore[attr-defined]
+
 from .logging import logger
 from .path_safety import resolve_existing_path
 
@@ -68,7 +69,7 @@ def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):
     _, tokenizer = load_base_model(model_id, trust_remote_code, quant_config=None, bf16=False)
 
     dataset = load_jsonl_dataset(path, tokenizer)
-    lengths: List[int] = []
+    lengths: list[int] = []
 
     for row in dataset:
         tokens = tokenizer(row["text"])["input_ids"]

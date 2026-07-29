@@ -1,11 +1,11 @@
 from .chat_completions import (
-    InferenceResult,
-    ChatCompletionsConfig,
     ChatCompletionsClient,
+    ChatCompletionsConfig,
+    InferenceResult,
 )
 
 __all__ = [
-    "InferenceResult",
-    "ChatCompletionsConfig",
     "ChatCompletionsClient",
+    "ChatCompletionsConfig",
+    "InferenceResult",
 ]
