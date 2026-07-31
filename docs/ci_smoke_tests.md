@@ -111,7 +111,14 @@ julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
 Aikido PR gating is handled by the Aikido PR Checks GitHub App (dashboard status check). Release gating uses a manual workflow only.
 
-**Snyk:** in-repo CI was removed after the private-test plan limit was exhausted. Uninstall or disable the Snyk GitHub App on this repo if `security/snyk` / `code/snyk` still appear as failing PR checks. Optional local CLI remains possible with your own token; see git history for the former `.github/workflows/snyk_security.yml`.
+**Snyk:** in-repo CI was removed after the private-test plan limit was exhausted. Uninstall or disable the Snyk GitHub App on this repo if `security/snyk` / `code/snyk` still appear as failing PR checks. Optional local CLI (uses root [`.snyk`](../.snyk); policy notes in [`docs/dependency_policy.md`](dependency_policy.md)):
+
+```bash
+# Requires SNYK_TOKEN and the Snyk CLI; not run in CI.
+snyk test --file=uv.lock --policy-path=.snyk
+snyk code test src/ scripts/ --severity-threshold=high
+snyk iac test infra/terraform --severity-threshold=medium
+```
 
 | Workflow | File | Triggers on |
 |----------|------|-------------|
@@ -150,7 +157,8 @@ When a secret is unset, the corresponding scan steps are skipped so forks and un
 After baselines are clean, require these status checks under branch protection:
 
 - `Aikido Security: check code` (GitHub App)
-- `python-quality` (PR quality gate) when Python paths change
+
+Do **not** require `python-quality` globally. That job is path-filtered (see `.github/workflows/pr_quality_gate.yml`: `src/**`, `tests/**`, `scripts/**`, Python manifests only). Path-unrelated PRs never emit the check; use a path-aware ruleset or an always-reporting wrapper if you want quality gating on every PR.
 
 
 ---
