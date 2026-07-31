@@ -107,38 +107,27 @@ Run the Julia smoke test locally:
 julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 ```
 
-## Security Scanning (Snyk + Aikido)
+## Security Scanning (Aikido)
 
-On pull requests, one workflow auto-triggers when matching paths change. Aikido PR gating is handled separately by the Aikido PR Checks GitHub App (dashboard status check). Release gating uses a manual workflow only.
+Aikido PR gating is handled by the Aikido PR Checks GitHub App (dashboard status check). Release gating uses a manual workflow only.
+
+**Snyk:** in-repo CI was removed after the private-test plan limit was exhausted. Uninstall or disable the Snyk GitHub App on this repo if `security/snyk` / `code/snyk` still appear as failing PR checks. Optional local CLI remains possible with your own token; see git history for the former `.github/workflows/snyk_security.yml`.
 
 | Workflow | File | Triggers on |
 |----------|------|-------------|
-| Snyk Security | `.github/workflows/snyk_security.yml` | `src/`, `scripts/`, Python manifests, `rust-tools/`, `infra/` (PR paths + `workflow_dispatch`) |
 | Aikido Security (release) | `.github/workflows/aikido_security.yml` | Manual `workflow_dispatch` only |
 | Aikido PR Checks (GitHub App) | Aikido dashboard | All pull requests (status: `Aikido Security: check code`) |
 
-`snyk_security.yml` and `aikido_security.yml` support manual runs via **workflow_dispatch**.
+`aikido_security.yml` supports manual runs via **workflow_dispatch**.
 
 ### Repository secrets
 
 | Secret | Workflow | Source |
 |--------|----------|--------|
-| `SNYK_TOKEN` | Snyk Security | [Snyk account settings](https://app.snyk.io/account) |
 | `AIKIDO_CLIENT_API_KEY` | Aikido Security | [Aikido Continuous Integration settings](https://app.aikido.dev/settings/integrations/continuous-integration) |
 | `AIKIDO_API_KEY` | Aikido Security (fallback) | Same CI token if stored under this name |
 
-When a secret is unset, the corresponding scan steps are skipped so forks and unconfigured repos still pass.
-
-### Snyk jobs
-
-| Job | Scan | Blocking? |
-|-----|------|-----------|
-| `snyk-python-sca` | `uv.lock` (fallback: `requirements.txt`) | No (`continue-on-error`) — transformers advisories may have no upstream fix |
-| `snyk-python-code` | SAST on `src/`, `scripts/` + SARIF upload | Yes (high+); skips if Snyk Code is not enabled for the org (`SNYK-CODE-0005`) |
-| `snyk-rust` | SAST on `rust-tools/` + CycloneDX SBOM → `snyk sbom test` + SARIF | Yes; SAST skips on `SNYK-CODE-0005`, SBOM scan still runs |
-| `snyk-iac` | Terraform under `infra/terraform/` | Yes (medium+) |
-
-**Plan notes:** `uv.lock` SCA and Rust Snyk Code may require Snyk Enterprise Early Access. Do not use `snyk test --all-projects` — it picks up unrelated manifests (e.g. `.kilo/`).
+When a secret is unset, the corresponding scan steps are skipped so forks and unconfigured repos still pass. `SNYK_TOKEN` is no longer required for CI.
 
 ### Aikido
 
@@ -152,15 +141,6 @@ When a secret is unset, the corresponding scan steps are skipped so forks and un
 ### Local commands
 
 ```bash
-# Snyk (after uv pip install -e ".[dev]")
-snyk test --file=uv.lock
-snyk code test src/ scripts/ --severity-threshold=high
-snyk code test rust-tools/ --severity-threshold=high
-snyk iac test infra/terraform --severity-threshold=medium
-cd rust-tools && cargo install cargo-cyclonedx --locked
-cargo cyclonedx --format json --override-filename sbom
-find crates -name sbom.json -exec snyk sbom test --file={} \;
-
 # Aikido — use IDE MCP during development (.cursor/rules/aikido_rules.mdc)
 # CI uses @aikidosec/ci-api-client; see aikido_security.yml for flags.
 ```
@@ -169,10 +149,9 @@ find crates -name sbom.json -exec snyk sbom test --file={} \;
 
 After baselines are clean, require these status checks under branch protection:
 
-- `Snyk Security / snyk-python-code`
-- `Snyk Security / snyk-rust`
-- `Snyk Security / snyk-iac`
 - `Aikido Security: check code` (GitHub App)
+- `python-quality` (PR quality gate) when Python paths change
+
 
 ---
 
