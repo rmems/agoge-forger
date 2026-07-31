@@ -34,7 +34,7 @@ def inspect_safetensors_file(path: str) -> dict[str, Any]:
                     "shape": tensor.get_shape(),
                     "dtype": str(tensor.get_dtype()),
                 }
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError, KeyError) as e:
         logger.error(f"Failed to inspect safetensors file {path}: {e}")
     return info
 

@@ -14,5 +14,5 @@ def load_dummy_extension():
         logger.info(f"CUDA Dummy Add Success. Output: {c}")
     except ImportError:
         logger.warning("agoge_dummy_cuda not built. Run `make cuda-build` first.")
-    except Exception as e:
+    except (OSError, RuntimeError) as e:
         logger.error(f"Failed to run CUDA extension: {e}")
