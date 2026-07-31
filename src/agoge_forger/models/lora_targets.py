@@ -57,8 +57,8 @@ def inspect_lora_targets(
             )
 
     # Convert sets to lists for JSON
-    for leaf in leaf_groups:
-        leaf_groups[leaf]["types"] = list(leaf_groups[leaf]["types"])
+    for leaf, group in leaf_groups.items():
+        group["types"] = list(group["types"])
 
     common_targets = [
         k
