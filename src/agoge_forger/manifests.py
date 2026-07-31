@@ -18,7 +18,7 @@ def get_git_info():
         )
         dirty = bool(subprocess.check_output(["git", "status", "--porcelain"]).strip())
         return {"commit": commit, "branch": branch, "dirty": dirty}
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return {}
 
 

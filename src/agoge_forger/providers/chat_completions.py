@@ -146,7 +146,9 @@ class ChatCompletionsClient:
             result.error = "Connection refused"
         except httpx.TimeoutException:
             result.error = "Request timed out"
-        except Exception as exc:
+        # Intentional catch-all: report exception type only so credentials in
+        # provider error messages never land in serialized results.
+        except Exception as exc:  # noqa: BLE001
             result.error = type(exc).__name__
         result.latency_ms = (time.monotonic() - t_start) * 1000
 
