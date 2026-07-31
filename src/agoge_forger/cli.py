@@ -105,7 +105,7 @@ def smoke_eval(
             raise typer.Exit(code=1)
     try:
         base_model = infer_base_model_from_adapter(str(safe_adapter_path))
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as e:
         logger.error(f"Could not infer base model: {e}")
         raise typer.Exit(code=1)
 
