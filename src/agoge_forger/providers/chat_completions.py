@@ -146,7 +146,7 @@ class ChatCompletionsClient:
             result.error = "Connection refused"
         except httpx.TimeoutException:
             result.error = "Request timed out"
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
             result.error = type(exc).__name__
         result.latency_ms = (time.monotonic() - t_start) * 1000
 

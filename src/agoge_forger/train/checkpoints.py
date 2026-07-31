@@ -1,7 +1,6 @@
 import json
 import re
 from pathlib import Path
-from typing import Union
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..logging import logger
@@ -11,7 +10,7 @@ CHECKPOINT_RE = re.compile(r"^checkpoint-(\d+)$")
 ADAPTER_WEIGHT_FILES = ("adapter_model.safetensors",)
 LEGACY_ADAPTER_WEIGHT_FILES = ("adapter_model.bin",)
 
-PathLike = Union[str, Path]
+PathLike = str | Path
 
 
 def _checkpoint_step(path: Path) -> int:

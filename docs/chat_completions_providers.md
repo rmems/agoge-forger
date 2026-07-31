@@ -40,10 +40,12 @@ config = ChatCompletionsConfig(
 )
 
 client = ChatCompletionsClient(config, run_name="my_run")
-result = client.chat([
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "Explain QLoRA in one sentence."},
-])
+result = client.chat(
+    [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Explain QLoRA in one sentence."},
+    ]
+)
 
 print(result.response_text)
 print(f"Tokens: {result.input_tokens} in / {result.output_tokens} out")
