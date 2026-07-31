@@ -36,7 +36,7 @@ def get_model_config_metadata(
             meta["has_safetensors"] = any(f.endswith(".safetensors") for f in filenames)
             meta["has_bin"] = any(f.endswith(".bin") for f in filenames)
             meta["has_custom_code"] = any(f.endswith(".py") for f in filenames)
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError) as e:
             logger.warning(f"Could not fetch hub metadata: {e}")
 
     return meta

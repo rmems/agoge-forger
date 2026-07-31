@@ -77,7 +77,7 @@ def _git_info() -> dict[str, Any]:
         )
         dirty = bool(subprocess.check_output(["git", "status", "--porcelain"]).strip())
         return {"commit": commit, "branch": branch, "dirty": dirty}
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return {}
 
 
@@ -164,7 +164,7 @@ def _run_inference_request(
             "latency_ms": round(elapsed, 2),
             "error": None,
         }
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError, TypeError, ImportError) as exc:
         return {
             "request_id": idx,
             "model_id": model,
