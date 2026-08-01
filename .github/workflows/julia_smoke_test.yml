@@ -66,7 +66,7 @@ jobs:
           version: "1.10"
 
       - name: Cache Julia artifacts
-        uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3.1.0
+        uses: julia-actions/cache@b7788abd52452d5bc033d69796e110d9906af4ab # v3.2.0
 
       - name: Report Julia version
         run: |
@@ -112,7 +112,7 @@ jobs:
           version: ${{ inputs.julia_version }}
 
       - name: Cache Julia artifacts
-        uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3.1.0
+        uses: julia-actions/cache@b7788abd52452d5bc033d69796e110d9906af4ab # v3.2.0
 
       - name: Record before snapshot
         run: |
