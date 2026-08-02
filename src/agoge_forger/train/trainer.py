@@ -14,6 +14,7 @@ from .preflight import (
     check_cuda_available,
     estimate_training_risk,
     get_gpu_report,
+    validate_dataset_text_field,
     validate_lora_targets_exist,
     warn_on_disk_pressure,
 )
@@ -141,6 +142,7 @@ def run_training(config):
     model = _prepare_peft_model(config, model)
 
     dataset = load_jsonl_dataset(config.dataset_path, tokenizer)
+    validate_dataset_text_field(dataset, config.dataset_text_field)
     logger.info(f"Dataset size: {len(dataset)}")
 
     out_dir = os.path.join(config.output_dir, config.run_name)
