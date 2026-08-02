@@ -18,7 +18,6 @@ so there is no GPU requirement and no Hugging Face Hub download.
 """
 
 import pytest
-from datasets import Dataset, disable_progress_bars, enable_progress_bars
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
@@ -27,6 +26,7 @@ from trl import SFTConfig
 
 from agoge_forger.config import ExperimentConfig
 from agoge_forger.train.trainer import _build_sft_trainer, _build_training_args
+from datasets import Dataset, disable_progress_bars, enable_progress_bars
 
 # Deliberately not "text": proves the configured field name is what reaches TRL.
 TEXT_FIELD = "body"
