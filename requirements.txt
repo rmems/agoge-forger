@@ -1,8 +1,8 @@
 torch>=2.0.0
-transformers>=4.40.0
+transformers>=5.0.0
 accelerate>=0.30.0
 peft>=0.10.0
-trl>=0.8.0
+trl>=1.0.0
 datasets>=2.19.0
 bitsandbytes>=0.43.0
 safetensors>=0.4.0
