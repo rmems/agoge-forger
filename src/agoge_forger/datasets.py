@@ -62,13 +62,13 @@ def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
     return Dataset.from_generator(gen)
 
 
-def peek_normalized_columns(path: str) -> set:
-    """Columns ``load_jsonl_dataset`` will produce, derived from the first row.
+def iter_normalized_rows(path: str):
+    """Yield ``(line_number, normalized_row)`` without needing a tokenizer.
 
     ``normalize_row`` picks its output keys from the row *format* and never from
-    the tokenizer, so this is exact for that row without first loading a model
-    or a tokenizer. Preflight uses it to reject a bad ``dataset_text_field``
-    before a run pays for ``load_base_model``.
+    the tokenizer, so preflight can see exactly what ``load_jsonl_dataset``
+    would produce without first paying for ``load_base_model``. Only the
+    ``messages`` chat-template *text* depends on the tokenizer; the keys do not.
     """
     dataset_path = resolve_existing_path(path, must_be_file=True)
 
@@ -81,9 +81,7 @@ def peek_normalized_columns(path: str) -> set:
             except json.JSONDecodeError as e:
                 raise ValueError(f"Line {i}: Invalid JSON - {e}")
 
-            return set(normalize_row(row, None, index=i))
-
-    raise ValueError(f"Dataset {path} contains no rows.")
+            yield i, normalize_row(row, None, index=i)
 
 
 def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):

@@ -5,7 +5,7 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
-from ..datasets import load_jsonl_dataset, peek_normalized_columns
+from ..datasets import load_jsonl_dataset
 from ..logging import logger
 from ..manifests import write_run_manifest
 from ..models.load import load_base_model
@@ -15,6 +15,7 @@ from .preflight import (
     estimate_training_risk,
     get_gpu_report,
     validate_dataset_text_field,
+    validate_dataset_text_field_in_source,
     validate_lora_targets_exist,
     warn_on_disk_pressure,
 )
@@ -132,12 +133,10 @@ def run_training(config):
     estimate_training_risk(config, gpu_report)
     warn_on_disk_pressure(config)
 
-    # Reject a bad dataset_text_field here, while it is still cheap: the peek
-    # reads one JSONL row and needs no tokenizer, so a misconfigured run dies
-    # before `load_base_model` spends time and VRAM below.
-    validate_dataset_text_field(
-        peek_normalized_columns(config.dataset_path), config.dataset_text_field
-    )
+    # Reject a bad dataset_text_field here, while it is still cheap: scanning
+    # the raw JSONL needs no tokenizer, so a misconfigured run dies before
+    # `load_base_model` spends time and VRAM below.
+    validate_dataset_text_field_in_source(config.dataset_path, config.dataset_text_field)
 
     logger.info(f"Loading {config.model_id} for run {config.run_name}")
     model, tokenizer = load_base_model(

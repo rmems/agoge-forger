@@ -3,10 +3,11 @@ import json
 import pytest
 
 from agoge_forger.config import ExperimentConfig
-from agoge_forger.datasets import load_jsonl_dataset, peek_normalized_columns
+from agoge_forger.datasets import load_jsonl_dataset
 from agoge_forger.train.preflight import (
     collect_disk_pressure_report,
     validate_dataset_text_field,
+    validate_dataset_text_field_in_source,
     validate_lora_targets_exist,
 )
 
@@ -89,30 +90,58 @@ def test_production_loader_always_yields_the_text_column(row, tmp_path):
     ],
     ids=["plain_text", "messages", "instruction"],
 )
-def test_peek_agrees_with_the_loader_without_a_tokenizer(row, tmp_path):
-    """The pre-model-load peek must predict what the real loader produces.
+def test_source_scan_agrees_with_the_loader_without_a_tokenizer(row, tmp_path):
+    """The pre-model-load scan must accept exactly what the real loader accepts.
 
-    `run_training` rejects a bad `dataset_text_field` using this peek *before*
-    `load_base_model` runs, so a peek that disagreed with the loader would
-    either abort valid runs or fail to save an invalid one from the GPU cost.
+    `run_training` rejects a bad `dataset_text_field` from this scan *before*
+    `load_base_model` runs, so a scan that disagreed with the loader would
+    either abort valid runs or fail to spare an invalid one the GPU cost.
     """
     dataset_path = tmp_path / "rows.jsonl"
     dataset_path.write_text(json.dumps(row) + "\n")
 
-    assert peek_normalized_columns(str(dataset_path)) == set(
-        load_jsonl_dataset(str(dataset_path)).column_names
+    assert "text" in load_jsonl_dataset(str(dataset_path)).column_names
+    assert validate_dataset_text_field_in_source(str(dataset_path), "text") == "text"
+
+
+@pytest.mark.parametrize(
+    ("second_row", "reason"),
+    [
+        ({"text": "b"}, "is missing"),
+        ({"text": "b", "body": None}, "is missing"),
+        ({"text": "b", "body": 7}, r"is not a string \(got int\)"),
+    ],
+    ids=["key_omitted", "explicit_null", "wrong_type"],
+)
+def test_source_scan_rejects_a_field_absent_from_a_later_row(second_row, reason, tmp_path):
+    """A first-row-only check is not enough, and both holes cost a model load.
+
+    With `dataset_text_field="body"`, a file whose first row carries `body` but
+    whose second does not fails in two distinct ways downstream — Arrow raises
+    `DatasetGenerationError` when the key is omitted, and TRL tokenizes a
+    `None` when it is explicitly null. Both land after the model is resident.
+    """
+    dataset_path = tmp_path / "mixed.jsonl"
+    dataset_path.write_text(
+        json.dumps({"text": "a", "body": "a"}) + "\n" + json.dumps(second_row) + "\n"
     )
 
+    # The name-only check cannot see it: row 1 supplies the column.
+    assert validate_dataset_text_field(["text", "body"], "body") == "body"
 
-def test_peek_skips_blank_lines_and_rejects_an_empty_dataset(tmp_path):
+    with pytest.raises(ValueError, match=f"Line 2: .*'body' {reason}"):
+        validate_dataset_text_field_in_source(str(dataset_path), "body")
+
+
+def test_source_scan_skips_blank_lines_and_rejects_an_empty_dataset(tmp_path):
     padded = tmp_path / "padded.jsonl"
     padded.write_text('\n\n{"text": "hello"}\n')
-    assert peek_normalized_columns(str(padded)) == {"text"}
+    assert validate_dataset_text_field_in_source(str(padded), "text") == "text"
 
     empty = tmp_path / "empty.jsonl"
     empty.write_text("\n\n")
     with pytest.raises(ValueError, match="contains no rows"):
-        peek_normalized_columns(str(empty))
+        validate_dataset_text_field_in_source(str(empty), "text")
 
 
 def test_collect_disk_pressure_report_uses_monitored_paths(tmp_path):
