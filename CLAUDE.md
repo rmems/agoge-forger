@@ -25,7 +25,11 @@ Single test / focused runs (CI uses the venv binaries directly, and so should yo
 
 CI quality gate (`.github/workflows/pr_quality_gate.yml`) runs exactly: `ruff check .`, `ruff format --check .`, `mypy src/agoge_forger`, `pytest tests/`. Note the Makefile's `lint` target uses `mypy src/` — CI's narrower `src/agoge_forger` is the authoritative check. Rust CI additionally runs `cargo clippy -- -D warnings` from `rust-tools/`.
 
-The whole Python test suite is CPU-only, network-free, and runs in a few seconds (~105 tests). It never downloads models: tests use hand-rolled `Dummy*` stand-ins and `tmp_path` fixtures. Keep it that way — anything requiring a GPU or the Hub belongs behind the smoke-test workflows, not `tests/`.
+**Check your local tool versions against `pyproject.toml` before trusting a green run.** CI builds a fresh venv, so it gets exactly the pinned `ruff` (and the newest `transformers`/`trl`, since `uv pip install -e ".[dev]"` ignores `uv.lock`). A long-lived `.venv` drifts: a stale ruff has passed locally on code that the pinned ruff then rejected in CI. `.venv/bin/ruff --version` should match the `ruff==` pin.
+
+The whole Python test suite is CPU-only, network-free, and runs in a few seconds (~110 tests). It never downloads models: tests use hand-rolled `Dummy*` stand-ins, `tmp_path` fixtures, and — in `test_trainer_trl_api.py` — a model built from a bare `LlamaConfig` plus an in-memory word-level tokenizer. Keep it that way; anything requiring a GPU or the Hub belongs behind the smoke-test workflows, not `tests/`.
+
+`tests/test_trainer_trl_api.py` deliberately constructs a **real** `trl.SFTTrainer` rather than mocking it. TRL/Transformers churn their kwargs between releases (`max_seq_length`→`SFTConfig.max_length`, `tokenizer`→`processing_class`, `save_safetensors` deleted outright), and that churn once broke every training run while the suite stayed green. Mocks would defeat the point — and `MagicMock` does not work anyway, since TRL type-checks `processing_class`.
 
 ## Architecture
 
