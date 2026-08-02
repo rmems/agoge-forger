@@ -1,0 +1,19 @@
+tests/test_trainer_trl_api.py
+  s_a91c3c301a5042::t_e4cf37dd87cd2d 29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e076bbca27287a3bc0d5b66e35f4a7278962ba6a",
+  "prompts": {},
+  "sessions": {
+    "s_a91c3c301a5042": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5850153-50a1-4d42-80dd-2658f6d90fa6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
