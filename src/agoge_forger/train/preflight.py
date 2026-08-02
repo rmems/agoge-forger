@@ -122,16 +122,19 @@ def warn_on_disk_pressure(config, monitored_paths=None):
     return report
 
 
-def validate_dataset_text_field(dataset, dataset_text_field):
+def validate_dataset_text_field(columns, dataset_text_field):
     """Fail fast when ``dataset_text_field`` names a column the dataset lacks.
 
     ``datasets.normalize_row`` normalizes every accepted row format to a
     ``text`` column, so any other value only survives when the source JSONL
     carries that column *alongside* ``text``. Without this check the mismatch
-    surfaces deep inside TRL's preprocessing, after the run has already paid for
+    surfaces deep inside TRL's preprocessing, long after the run has paid for
     loading the base model onto the GPU.
+
+    Takes column *names* rather than a dataset so `run_training` can check the
+    cheap first-row peek before the model load and the fully built dataset
+    after it.
     """
-    columns = dataset.column_names
     if dataset_text_field not in columns:
         raise ValueError(
             f"dataset_text_field '{dataset_text_field}' is not a column in the loaded dataset "

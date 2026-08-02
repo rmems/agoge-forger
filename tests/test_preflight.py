@@ -3,7 +3,7 @@ import json
 import pytest
 
 from agoge_forger.config import ExperimentConfig
-from agoge_forger.datasets import load_jsonl_dataset
+from agoge_forger.datasets import load_jsonl_dataset, peek_normalized_columns
 from agoge_forger.train.preflight import (
     collect_disk_pressure_report,
     validate_dataset_text_field,
@@ -14,11 +14,6 @@ from agoge_forger.train.preflight import (
 class DummyModule:
     def named_modules(self):
         return [("q_proj", self), ("v_proj", self)]
-
-
-class DummyDataset:
-    def __init__(self, column_names):
-        self.column_names = column_names
 
 
 class DummyConfig:
@@ -51,11 +46,11 @@ def test_lora_target_validation_fails_on_missing_targets():
 
 def test_dataset_text_field_validation_rejects_a_column_the_dataset_lacks():
     with pytest.raises(ValueError, match="dataset_text_field 'body' is not a column"):
-        validate_dataset_text_field(DummyDataset(["text"]), "body")
+        validate_dataset_text_field(["text"], "body")
 
 
 def test_dataset_text_field_validation_accepts_a_present_column():
-    assert validate_dataset_text_field(DummyDataset(["text", "body"]), "body") == "body"
+    assert validate_dataset_text_field(["text", "body"], "body") == "body"
 
 
 @pytest.mark.parametrize(
@@ -80,9 +75,44 @@ def test_production_loader_always_yields_the_text_column(row, tmp_path):
     dataset = load_jsonl_dataset(str(dataset_path))
 
     assert "text" in dataset.column_names
-    assert validate_dataset_text_field(dataset, "text") == "text"
+    assert validate_dataset_text_field(dataset.column_names, "text") == "text"
     with pytest.raises(ValueError, match="Row normalization always produces 'text'"):
-        validate_dataset_text_field(dataset, "body")
+        validate_dataset_text_field(dataset.column_names, "body")
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"text": "User: hi\nAssistant: hello"},
+        {"messages": [{"role": "user", "content": "hi"}]},
+        {"instruction": "Define JAX.", "output": "An autograd library."},
+    ],
+    ids=["plain_text", "messages", "instruction"],
+)
+def test_peek_agrees_with_the_loader_without_a_tokenizer(row, tmp_path):
+    """The pre-model-load peek must predict what the real loader produces.
+
+    `run_training` rejects a bad `dataset_text_field` using this peek *before*
+    `load_base_model` runs, so a peek that disagreed with the loader would
+    either abort valid runs or fail to save an invalid one from the GPU cost.
+    """
+    dataset_path = tmp_path / "rows.jsonl"
+    dataset_path.write_text(json.dumps(row) + "\n")
+
+    assert peek_normalized_columns(str(dataset_path)) == set(
+        load_jsonl_dataset(str(dataset_path)).column_names
+    )
+
+
+def test_peek_skips_blank_lines_and_rejects_an_empty_dataset(tmp_path):
+    padded = tmp_path / "padded.jsonl"
+    padded.write_text('\n\n{"text": "hello"}\n')
+    assert peek_normalized_columns(str(padded)) == {"text"}
+
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("\n\n")
+    with pytest.raises(ValueError, match="contains no rows"):
+        peek_normalized_columns(str(empty))
 
 
 def test_collect_disk_pressure_report_uses_monitored_paths(tmp_path):

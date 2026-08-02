@@ -5,7 +5,7 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
-from ..datasets import load_jsonl_dataset
+from ..datasets import load_jsonl_dataset, peek_normalized_columns
 from ..logging import logger
 from ..manifests import write_run_manifest
 from ..models.load import load_base_model
@@ -132,6 +132,13 @@ def run_training(config):
     estimate_training_risk(config, gpu_report)
     warn_on_disk_pressure(config)
 
+    # Reject a bad dataset_text_field here, while it is still cheap: the peek
+    # reads one JSONL row and needs no tokenizer, so a misconfigured run dies
+    # before `load_base_model` spends time and VRAM below.
+    validate_dataset_text_field(
+        peek_normalized_columns(config.dataset_path), config.dataset_text_field
+    )
+
     logger.info(f"Loading {config.model_id} for run {config.run_name}")
     model, tokenizer = load_base_model(
         config.model_id,
@@ -142,7 +149,9 @@ def run_training(config):
     model = _prepare_peft_model(config, model)
 
     dataset = load_jsonl_dataset(config.dataset_path, tokenizer)
-    validate_dataset_text_field(dataset, config.dataset_text_field)
+    # Authoritative re-check: the peek above only saw the first row, and a
+    # later row in a mixed-format file can normalize to different columns.
+    validate_dataset_text_field(dataset.column_names, config.dataset_text_field)
     logger.info(f"Dataset size: {len(dataset)}")
 
     out_dir = os.path.join(config.output_dir, config.run_name)
