@@ -62,6 +62,28 @@ def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
     return Dataset.from_generator(gen)
 
 
+def iter_normalized_rows(path: str):
+    """Yield ``(line_number, normalized_row)`` without needing a tokenizer.
+
+    ``normalize_row`` picks its output keys from the row *format* and never from
+    the tokenizer, so preflight can see exactly what ``load_jsonl_dataset``
+    would produce without first paying for ``load_base_model``. Only the
+    ``messages`` chat-template *text* depends on the tokenizer; the keys do not.
+    """
+    dataset_path = resolve_existing_path(path, must_be_file=True)
+
+    with dataset_path.open("r") as f:
+        for i, line in enumerate(f, 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Line {i}: Invalid JSON - {e}")
+
+            yield i, normalize_row(row, None, index=i)
+
+
 def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):
     from .models.load import load_base_model
 

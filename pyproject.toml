@@ -11,10 +11,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0.0",
-    "transformers>=4.40.0",
+    # Transformers 5 / TRL 1 are hard floors: the trainer builds `trl.SFTConfig`
+    # and reads `Trainer.processing_class`, neither of which exists earlier.
+    "transformers>=5.0.0",
     "accelerate>=0.30.0",
     "peft>=0.10.0",
-    "trl>=0.8.0",
+    "trl>=1.0.0",
     "datasets>=2.19.0",
     "bitsandbytes>=0.43.0",
     "safetensors>=0.4.0",

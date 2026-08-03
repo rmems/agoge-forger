@@ -4,6 +4,7 @@ import shutil
 
 import torch
 
+from ..datasets import iter_normalized_rows
 from ..logging import logger
 
 BYTES_PER_GB = 1024**3
@@ -120,6 +121,70 @@ def warn_on_disk_pressure(config, monitored_paths=None):
         )
 
     return report
+
+
+def validate_dataset_text_field(columns, dataset_text_field):
+    """Fail fast when ``dataset_text_field`` names a column the dataset lacks.
+
+    ``datasets.normalize_row`` normalizes every accepted row format to a
+    ``text`` column, so any other value only survives when the source JSONL
+    carries that column *alongside* ``text``. Without this check the mismatch
+    surfaces deep inside TRL's preprocessing, long after the run has paid for
+    loading the base model onto the GPU.
+
+    Takes column *names* rather than a dataset so it can serve as the
+    post-load backstop; `validate_dataset_text_field_in_source` is the stronger
+    pre-load check.
+    """
+    if dataset_text_field not in columns:
+        raise ValueError(
+            f"dataset_text_field '{dataset_text_field}' is not a column in the loaded dataset "
+            f"(columns: {sorted(columns)}). Row normalization always produces 'text', so either "
+            f'set dataset_text_field: "text" or carry that column on every row of the source '
+            f"JSONL."
+        )
+
+    logger.info(f"Validated dataset text field: {dataset_text_field}")
+    return dataset_text_field
+
+
+def validate_dataset_text_field_in_source(dataset_path, dataset_text_field):
+    """Check ``dataset_text_field`` on every source row, before the model load.
+
+    Checking column *names* alone is not enough. A file whose first row carries
+    the field but whose later rows do not fails in two different ways, both of
+    them after the model is already resident:
+
+      * key omitted (``{"text": "b"}``) -> Arrow does not pad the column, and
+        `Dataset.from_generator` raises `DatasetGenerationError`
+      * key present but null (``{"text": "b", "body": null}``) -> the column
+        exists, so a name-only check passes and TRL then tokenizes a `None`
+
+    Reading the raw JSONL needs no tokenizer, so scanning every row here costs
+    one pass over a text file and saves a wasted model download on both.
+    """
+    rows = 0
+    for index, row in iter_normalized_rows(dataset_path):
+        rows += 1
+        value = row.get(dataset_text_field)
+        if not isinstance(value, str):
+            problem = (
+                "is missing" if value is None else f"is not a string (got {type(value).__name__})"
+            )
+            # ValueError, not TypeError: this reports malformed *user data*, and
+            # every other dataset/config rejection in this module and in
+            # `datasets.normalize_row` raises ValueError.
+            raise ValueError(  # noqa: TRY004
+                f"Line {index}: dataset_text_field '{dataset_text_field}' {problem}. Row "
+                f"normalization always produces 'text', so either set dataset_text_field: "
+                f'"text" or carry that field on every row of {dataset_path}.'
+            )
+
+    if not rows:
+        raise ValueError(f"Dataset {dataset_path} contains no rows.")
+
+    logger.info(f"Validated dataset text field '{dataset_text_field}' across {rows} rows")
+    return dataset_text_field
 
 
 def _collect_model_leaf_modules(model):
