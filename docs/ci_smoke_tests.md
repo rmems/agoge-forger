@@ -29,7 +29,7 @@ docker run --rm agoge-forger:local python -c "import agoge_forger; print(agoge_f
 
 ### Runtime configuration
 
-- The image installs the package from `uv.lock` with `--no-dev --no-editable`.
+- The image installs the package from `uv.lock` with `--no-dev --no-editable --locked`.
 - `HF_TOKEN` is intentionally **not** baked into the image. Pass it at runtime if a command needs the Hugging Face Hub:
 
   ```bash
