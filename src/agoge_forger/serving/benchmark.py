@@ -1,10 +1,13 @@
+"""vLLM Python-vs-Rust frontend benchmark lane."""
+
 from __future__ import annotations
 
 import csv
+import itertools
 import json
 import os
 import statistics
-import subprocess
+import subprocess  # nosec B404
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -29,7 +32,9 @@ from .serve import _set_frontend_env, build_serve_command
 
 
 @dataclass
-class BenchmarkResult:
+class BenchmarkResult:  # pylint: disable=too-many-instance-attributes
+    """One benchmark measurement for a single prompt and frontend."""
+
     run: str
     frontend: str
     stream: bool
@@ -43,10 +48,12 @@ class BenchmarkResult:
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Return this result as a dictionary."""
         return asdict(self)
 
 
 def _mean(values: list[float]) -> float:
+    """Return the arithmetic mean, or 0.0 for an empty list."""
     return statistics.mean(values) if values else 0.0
 
 
@@ -60,7 +67,7 @@ def _wait_for_health(
             response = httpx.get(url, timeout=5.0)
             if response.status_code == 200:
                 return True
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             logger.debug("Health check not ready: %s", exc)
         time.sleep(interval_s)
     return False
@@ -75,7 +82,7 @@ def _simulate_results(
     for prompt in prompt_set.prompts:
         n = len(prompt)
         latency = base_latency + n * 0.5
-        if frontend == Frontend.rust:
+        if frontend == Frontend.RUST:
             latency *= 0.85
         if cfg.stream:
             latency *= 0.9
@@ -107,8 +114,13 @@ def _managed_server(cfg: BenchmarkConfig, frontend: Frontend):
     serving_cfg = to_serving_config(cfg, frontend)
     env = _set_frontend_env(os.environ, frontend)
     cmd = build_serve_command(serving_cfg)
-    logger.info(f"Starting server for {frontend.value} benchmark: {' '.join(cmd)}")
-    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    logger.info("Starting server for %s benchmark: %s", frontend.value, " ".join(cmd))
+    proc = subprocess.Popen(  # nosec B603
+        cmd,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,  # nosemgrep
+    )
     try:
         if not _wait_for_health(cfg.host, cfg.port):
             raise RuntimeError(f"vLLM server ({frontend.value} frontend) failed to become healthy")
@@ -167,8 +179,8 @@ def _measure_frontend_real(
     try:
         with _managed_server(cfg, frontend):
             return _run_client_requests(cfg, prompt_set, frontend, out_dir)
-    except Exception as exc:  # noqa: BLE001
-        logger.error(f"Benchmark failed for {frontend.value} frontend: {exc}")
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-except
+        logger.error("Benchmark failed for %s frontend: %s", frontend.value, exc)
         return [
             BenchmarkResult(
                 run=cfg.run_name,
@@ -191,33 +203,29 @@ def _aggregate(results: list[BenchmarkResult]) -> list[dict[str, Any]]:
     for r in results:
         groups.setdefault((r.frontend, r.stream), []).append(r)
 
-    rows: list[dict[str, Any]] = []
-    for (frontend, stream), group in sorted(groups.items()):
-        valid = [r for r in group if not r.error]
-        rows.append(
-            {
-                "frontend": frontend,
-                "stream": stream,
-                "mean_latency_ms": _mean([r.latency_ms for r in valid]),
-                "mean_ttft_ms": _mean([r.time_to_first_token_ms for r in valid]),
-                "mean_input_tokens": _mean([float(r.input_tokens) for r in valid]),
-                "mean_output_tokens": _mean([float(r.output_tokens) for r in valid]),
-                "mean_total_tokens": _mean([float(r.total_tokens) for r in valid]),
-                "mean_tokens_per_sec": _mean([r.tokens_per_sec for r in valid]),
-            }
-        )
-    return rows
+    def _row(frontend: str, stream: bool, group: list[BenchmarkResult]) -> dict[str, Any]:
+        valid = list(itertools.filterfalse(lambda r: r.error, group))
+        return {
+            "frontend": frontend,
+            "stream": stream,
+            "mean_latency_ms": _mean([r.latency_ms for r in valid]),
+            "mean_ttft_ms": _mean([r.time_to_first_token_ms for r in valid]),
+            "mean_input_tokens": _mean([float(r.input_tokens) for r in valid]),
+            "mean_output_tokens": _mean([float(r.output_tokens) for r in valid]),
+            "mean_total_tokens": _mean([float(r.total_tokens) for r in valid]),
+            "mean_tokens_per_sec": _mean([r.tokens_per_sec for r in valid]),
+        }
+
+    return [_row(frontend, stream, group) for (frontend, stream), group in sorted(groups.items())]
 
 
-def _build_summary(out_dir: Path, results: list[BenchmarkResult], cfg: BenchmarkConfig) -> str:
+def _environment_lines(out_dir: Path, cfg: BenchmarkConfig) -> list[str]:
     env = get_environment()
     vllm_version = get_vllm_version() or "not installed"
     cuda_version = get_cuda_version()
     gpu_name = get_gpu_name()
     timestamp = datetime.now(timezone.utc).isoformat()
-    aggregate = _aggregate(results)
-
-    lines = [
+    return [
         "# vLLM Frontend Benchmark Summary",
         "",
         f"**Run:** `{cfg.run_name}`",
@@ -235,10 +243,17 @@ def _build_summary(out_dir: Path, results: list[BenchmarkResult], cfg: Benchmark
         json.dumps(env, indent=2, default=str),
         "```",
         "",
+    ]
+
+
+def _per_result_table(results: list[BenchmarkResult]) -> list[str]:
+    lines = [
         "## Per-result details",
         "",
-        "| Run | Frontend | Stream | Prompt | Latency (ms) | TTFT (ms) | Input | Output | Total | tokens/sec |",
-        "|-----|----------|--------|--------|-------------:|----------:|------:|-------:|------:|-----------:|",
+        "| Run | Frontend | Stream | Prompt | Latency (ms) | TTFT (ms) | "
+        + "Input | Output | Total | tokens/sec |",
+        "|-----|----------|--------|--------|-------------:|----------:| "
+        + "------:|-------:|------:|-----------:|",
     ]
     for r in results:
         prompt = r.prompt.replace("|", "\\|")
@@ -247,29 +262,39 @@ def _build_summary(out_dir: Path, results: list[BenchmarkResult], cfg: Benchmark
             f"{r.time_to_first_token_ms:.2f} | {r.input_tokens} | {r.output_tokens} | "
             f"{r.total_tokens} | {r.tokens_per_sec:.2f} |"
         )
+    return lines
 
-    lines.extend(
-        [
-            "",
-            "## Python vs Rust comparison",
-            "",
-            "| Frontend | Mean latency (ms) | Mean TTFT (ms) | Mean input tokens | Mean output tokens | Mean total tokens | Mean tokens/sec |",
-            "|----------|------------------:|---------------:|------------------:|-------------------:|------------------:|-----------------:|",
-        ]
-    )
+
+def _comparison_table(aggregate: list[dict[str, Any]]) -> list[str]:
+    lines = [
+        "",
+        "## Python vs Rust comparison",
+        "",
+        "| Frontend | Mean latency (ms) | Mean TTFT (ms) | "
+        + "Mean input tokens | Mean output tokens | Mean total tokens | Mean tokens/sec |",
+        "|----------|------------------:|---------------:| "
+        + "------------------:|-------------------:|------------------:|-----------------:|",
+    ]
     for row in aggregate:
         lines.append(
             f"| {row['frontend']} | {row['mean_latency_ms']:.2f} | {row['mean_ttft_ms']:.2f} | "
             f"{row['mean_input_tokens']:.1f} | {row['mean_output_tokens']:.1f} | "
             f"{row['mean_total_tokens']:.1f} | {row['mean_tokens_per_sec']:.2f} |"
         )
-
     lines.append("")
+    return lines
+
+
+def _build_summary(out_dir: Path, results: list[BenchmarkResult], cfg: BenchmarkConfig) -> str:
+    aggregate = _aggregate(results)
+    lines = (
+        _environment_lines(out_dir, cfg) + _per_result_table(results) + _comparison_table(aggregate)
+    )
     return "\n".join(lines)
 
 
 def _write_artifacts(out_dir: Path, results: list[BenchmarkResult], cfg: BenchmarkConfig) -> None:
-    with open(out_dir / "results.jsonl", "w") as f:
+    with open(out_dir / "results.jsonl", "w", encoding="utf-8") as f:
         f.writelines(json.dumps(r.to_dict(), default=str) + "\n" for r in results)
 
     aggregate = _aggregate(results)
@@ -283,14 +308,42 @@ def _write_artifacts(out_dir: Path, results: list[BenchmarkResult], cfg: Benchma
         "mean_total_tokens",
         "mean_tokens_per_sec",
     ]
-    with open(out_dir / "comparison.csv", "w", newline="") as f:
+    with open(out_dir / "comparison.csv", "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in aggregate:
             writer.writerow(row)
 
-    with open(out_dir / "summary.md", "w") as f:
+    with open(out_dir / "summary.md", "w", encoding="utf-8") as f:
         f.write(_build_summary(out_dir, results, cfg))
+
+
+def _generate_out_dir(cfg: BenchmarkConfig) -> Path:
+    if not cfg.out_dir:
+        timestamp = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0, tzinfo=None)
+            .isoformat()
+            .replace(":", "-")
+        )
+        cfg.out_dir = f"runs/vllm_bench_{timestamp}"
+    return resolve_output_directory(cfg.out_dir)
+
+
+def _run_frontend(
+    cfg: BenchmarkConfig, prompt_set: PromptSet, frontend: Frontend, out_dir: Path
+) -> list[BenchmarkResult] | None:
+    if cfg.dry_run:
+        return _simulate_results(cfg, prompt_set, frontend)
+    if get_vllm_version() is None:
+        logger.error("vLLM is not installed. Install vLLM or use --dry-run.")
+        return None
+    if frontend == Frontend.RUST:
+        supported, msg = has_rust_frontend_support()
+        if not supported:
+            logger.error("Rust frontend not available: %s", msg)
+            return None
+    return _measure_frontend_real(cfg, prompt_set, frontend, out_dir)
 
 
 def benchmark_vllm_frontends(cfg: BenchmarkConfig) -> int:
@@ -301,29 +354,14 @@ def benchmark_vllm_frontends(cfg: BenchmarkConfig) -> int:
     if not cfg.prompt_set:
         raise ValueError("Prompt set path is required")
     prompt_set = load_prompt_set(cfg.prompt_set)
-
-    if not cfg.out_dir:
-        cfg.out_dir = f"runs/vllm_bench_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-    out_dir = resolve_output_directory(cfg.out_dir)
-
-    frontends = [cfg.frontend] if cfg.frontend else [Frontend.python, Frontend.rust]
+    out_dir = _generate_out_dir(cfg)
+    frontends = [cfg.frontend] if cfg.frontend else [Frontend.PYTHON, Frontend.RUST]
     all_results: list[BenchmarkResult] = []
-
     for frontend in frontends:
-        if not cfg.dry_run:
-            if get_vllm_version() is None:
-                logger.error("vLLM is not installed. Install vLLM or use --dry-run.")
-                return 1
-            if frontend == Frontend.rust:
-                supported, msg = has_rust_frontend_support()
-                if not supported:
-                    logger.error(f"Rust frontend not available: {msg}")
-                    return 1
-            results = _measure_frontend_real(cfg, prompt_set, frontend, out_dir)
-        else:
-            results = _simulate_results(cfg, prompt_set, frontend)
+        results = _run_frontend(cfg, prompt_set, frontend, out_dir)
+        if results is None:
+            return 1
         all_results.extend(results)
-
     _write_artifacts(out_dir, all_results, cfg)
-    logger.info(f"Benchmark artifacts written to {out_dir}")
+    logger.info("Benchmark artifacts written to %s", out_dir)
     return 0

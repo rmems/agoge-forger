@@ -1,7 +1,9 @@
+"""Launch vLLM servers with Python or Rust frontends."""
+
 from __future__ import annotations
 
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 from collections.abc import Mapping
 
@@ -13,7 +15,7 @@ from .diagnostics import get_vllm_version, has_rust_frontend_support
 def _set_frontend_env(env: Mapping[str, str], frontend: Frontend) -> dict[str, str]:
     """Return a copy of *env* with VLLM_USE_RUST_FRONTEND set for the chosen frontend."""
     env = dict(env)
-    env["VLLM_USE_RUST_FRONTEND"] = "1" if frontend == Frontend.rust else "0"
+    env["VLLM_USE_RUST_FRONTEND"] = "1" if frontend == Frontend.RUST else "0"
     return env
 
 
@@ -50,10 +52,10 @@ def serve_vllm(cfg: ServingConfig) -> int:
         logger.error("vLLM is not installed. Install vLLM to use serve-vllm.")
         return 1
 
-    if cfg.frontend == Frontend.rust:
+    if cfg.frontend == Frontend.RUST:
         supported, msg = has_rust_frontend_support()
         if not supported:
-            logger.error(f"Rust frontend requested but not available: {msg}")
+            logger.error("Rust frontend requested but not available: %s", msg)
             return 1
 
     env = _set_frontend_env(os.environ, cfg.frontend)
@@ -62,12 +64,12 @@ def serve_vllm(cfg: ServingConfig) -> int:
     if cfg.dry_run:
         logger.info("[dry-run] would execute:")
         logger.info(" ".join(cmd))
-        logger.info(f"[dry-run] VLLM_USE_RUST_FRONTEND={env['VLLM_USE_RUST_FRONTEND']}")
+        logger.info("[dry-run] VLLM_USE_RUST_FRONTEND=%s", env["VLLM_USE_RUST_FRONTEND"])
         return 0
 
-    logger.info(f"Starting vLLM ({cfg.frontend.value} frontend): {' '.join(cmd)}")
+    logger.info("Starting vLLM (%s frontend): %s", cfg.frontend.value, " ".join(cmd))
     try:
-        proc = subprocess.run(cmd, env=env, check=False)
+        proc = subprocess.run(cmd, env=env, check=False, shell=False)  # nosec B603  # nosemgrep
     except FileNotFoundError:
         logger.error("vLLM entry point not found. Is vLLM installed?")
         return 1

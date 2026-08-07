@@ -1,3 +1,5 @@
+"""Pydantic configuration models for vLLM serving and frontend benchmarks."""
+
 from __future__ import annotations
 
 from enum import Enum
@@ -10,14 +12,18 @@ from ..path_safety import resolve_existing_path
 
 
 class Frontend(str, Enum):
-    python = "python"
-    rust = "rust"
+    """Supported vLLM frontends."""
+
+    PYTHON = "python"
+    RUST = "rust"
 
 
 class ServingConfig(BaseModel):
+    """Configuration for `agoge serve-vllm`."""
+
     model: str = ""
-    frontend: Frontend = Frontend.python
-    host: str = "0.0.0.0"
+    frontend: Frontend = Frontend.PYTHON
+    host: str = "127.0.0.1"
     port: int = 8000
     max_model_len: int | None = None
     dtype: str | None = None
@@ -27,14 +33,18 @@ class ServingConfig(BaseModel):
 
 
 class PromptSet(BaseModel):
+    """A set of benchmark prompts and an optional system message."""
+
     system: str = ""
     prompts: list[str] = Field(default_factory=list)
 
 
 class BenchmarkConfig(BaseModel):
+    """Configuration for `agoge bench-vllm-frontend`."""
+
     model: str = ""
     frontend: Frontend | None = None  # None means benchmark both frontends.
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8000
     prompt_set: str = ""
     out_dir: str = ""
@@ -51,16 +61,18 @@ class BenchmarkConfig(BaseModel):
 
 
 def load_serving_config(path: str) -> ServingConfig:
+    """Load a YAML serving config."""
     config_path = resolve_existing_path(path, must_be_file=True)
-    data = yaml.safe_load(config_path.read_text()) or {}
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise TypeError(f"Serving config must be a YAML mapping: {path}")
     return ServingConfig.model_validate(data)
 
 
 def load_prompt_set(path: str) -> PromptSet:
+    """Load a YAML prompt set (list of strings or mapping with system/prompts)."""
     prompt_path = resolve_existing_path(path, must_be_file=True)
-    raw = yaml.safe_load(prompt_path.read_text())
+    raw = yaml.safe_load(prompt_path.read_text(encoding="utf-8"))
     if isinstance(raw, list):
         return PromptSet(prompts=raw)
     if isinstance(raw, dict):
@@ -72,8 +84,9 @@ def load_prompt_set(path: str) -> PromptSet:
 
 
 def load_benchmark_config(path: str) -> BenchmarkConfig:
+    """Load a YAML benchmark config and resolve relative prompt_set paths."""
     config_path = resolve_existing_path(path, must_be_file=True)
-    data = yaml.safe_load(config_path.read_text()) or {}
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise TypeError(f"Benchmark config must be a YAML mapping: {path}")
     cfg = BenchmarkConfig.model_validate(data)

@@ -1,5 +1,7 @@
+"""Agoge Forger Typer CLI entry point."""
+
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -116,7 +118,7 @@ def smoke_eval(
     try:
         base_model = infer_base_model_from_adapter(str(safe_adapter_path))
     except (OSError, RuntimeError, ValueError, KeyError, TypeError) as e:
-        logger.error(f"Could not infer base model: {e}")
+        logger.error("Could not infer base model: %s", e)
         raise typer.Exit(code=1)
 
     run_smoke_eval(base_model, str(safe_adapter_path), trust_remote_code=trust_remote_code)
@@ -209,42 +211,17 @@ def dataset_stats(
     _dataset_stats(safe_path, model_id, trust_remote_code=trust_remote_code)
 
 
-def _merge_serving_config(
-    config_path: str | None,
-    model: str | None,
-    frontend: Frontend | None,
-    host: str | None,
-    port: int | None,
-    max_model_len: int | None,
-    dtype: str | None,
-    gpu_memory_utilization: float | None,
-    dry_run: bool,
-    extra_args: list[str] | None,
-) -> ServingConfig:
+def _merge_serving_config(config_path: str | None, overrides: dict[str, Any]) -> ServingConfig:
     cfg = load_serving_config(config_path) if config_path else ServingConfig()
-    if model is not None:
-        cfg.model = model
-    if frontend is not None:
-        cfg.frontend = frontend
-    if host is not None:
-        cfg.host = host
-    if port is not None:
-        cfg.port = port
-    if max_model_len is not None:
-        cfg.max_model_len = max_model_len
-    if dtype is not None:
-        cfg.dtype = dtype
-    if gpu_memory_utilization is not None:
-        cfg.gpu_memory_utilization = gpu_memory_utilization
-    if dry_run:
-        cfg.dry_run = True
-    if extra_args:
-        cfg.extra_args = extra_args
+    for key, value in overrides.items():
+        if value is not None:
+            setattr(cfg, key, value)
     if not cfg.model:
         raise typer.BadParameter("Model ID is required (--model or config.model)")
     return cfg
 
 
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 @app.command()
 def serve_vllm(
     config: str | None = typer.Option(None, "--config", help="Path to YAML serving config"),
@@ -261,57 +238,37 @@ def serve_vllm(
     ] = None,
 ):
     """Serve a model with vLLM, optionally using the Rust frontend."""
-    cfg = _merge_serving_config(
-        config,
-        model,
-        frontend,
-        host,
-        port,
-        max_model_len,
-        dtype,
-        gpu_memory_utilization,
-        dry_run,
-        extra_arg,
-    )
+    overrides: dict[str, Any] = {
+        "model": model,
+        "frontend": frontend,
+        "host": host,
+        "port": port,
+        "max_model_len": max_model_len,
+        "dtype": dtype,
+        "gpu_memory_utilization": gpu_memory_utilization,
+        "dry_run": dry_run,
+    }
+    if extra_arg:
+        overrides["extra_args"] = extra_arg
+    cfg = _merge_serving_config(config, overrides)
     raise typer.Exit(_serve_vllm(cfg))
 
 
-def _merge_benchmark_config(
-    config_path: str | None,
-    model: str | None,
-    frontend: Frontend | None,
-    prompt_set: str | None,
-    out_dir: str | None,
-    stream: bool | None,
-    max_tokens: int | None,
-    temperature: float | None,
-    concurrency: int | None,
-    dry_run: bool,
-) -> BenchmarkConfig:
-    if config_path:
-        cfg = load_benchmark_config(config_path)
-        if cfg.prompt_set:
-            cfg.prompt_set = str(resolve_existing_path(cfg.prompt_set, must_be_file=True))
-    else:
-        cfg = BenchmarkConfig()
-    if model is not None:
-        cfg.model = model
-    if frontend is not None:
-        cfg.frontend = frontend
-    if prompt_set is not None:
-        cfg.prompt_set = str(resolve_existing_path(prompt_set, must_be_file=True))
-    if out_dir is not None:
-        cfg.out_dir = out_dir
-    if stream is not None:
-        cfg.stream = stream
-    if max_tokens is not None:
-        cfg.max_tokens = max_tokens
-    if temperature is not None:
-        cfg.temperature = temperature
-    if concurrency is not None:
-        cfg.concurrency = concurrency
-    if dry_run:
-        cfg.dry_run = True
+# pylint: enable=too-many-arguments,too-many-positional-arguments
+
+
+def _resolve_prompt_set_path(prompt_set: str | None) -> str:
+    if not prompt_set:
+        return ""
+    return str(resolve_existing_path(prompt_set, must_be_file=True))
+
+
+def _merge_benchmark_config(config_path: str | None, overrides: dict[str, Any]) -> BenchmarkConfig:
+    cfg = load_benchmark_config(config_path) if config_path else BenchmarkConfig()
+    for key, value in overrides.items():
+        if value is not None:
+            setattr(cfg, key, value)
+    cfg.prompt_set = _resolve_prompt_set_path(cfg.prompt_set)
     if not cfg.model:
         raise typer.BadParameter("Model ID is required (--model or config.model)")
     if not cfg.prompt_set:
@@ -319,6 +276,7 @@ def _merge_benchmark_config(
     return cfg
 
 
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 @app.command()
 def bench_vllm_frontend(
     config: str | None = typer.Option(None, "--config", help="Path to YAML benchmark config"),
@@ -335,19 +293,22 @@ def bench_vllm_frontend(
     dry_run: bool = typer.Option(False, "--dry-run", help="Simulate benchmark"),
 ):
     """Benchmark vLLM Python vs Rust frontends."""
-    cfg = _merge_benchmark_config(
-        config,
-        model,
-        frontend,
-        prompt_set,
-        out_dir,
-        stream,
-        max_tokens,
-        temperature,
-        concurrency,
-        dry_run,
-    )
+    overrides: dict[str, Any] = {
+        "model": model,
+        "frontend": frontend,
+        "prompt_set": prompt_set,
+        "out_dir": out_dir,
+        "stream": stream,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "concurrency": concurrency,
+        "dry_run": dry_run,
+    }
+    cfg = _merge_benchmark_config(config, overrides)
     raise typer.Exit(benchmark_vllm_frontends(cfg))
+
+
+# pylint: enable=too-many-arguments,too-many-positional-arguments
 
 
 if __name__ == "__main__":
