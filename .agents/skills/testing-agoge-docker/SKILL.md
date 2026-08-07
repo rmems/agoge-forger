@@ -29,14 +29,14 @@ docker run --rm agoge-forger:local /bin/sh -c 'env | grep -i hf || echo no HF en
 - `agoge --help` shows the Typer usage and full command table including `check-torch`.
 - `python -c "import agoge_forger; print(agoge_forger.__version__)"` prints `0.1.0`.
 - `agoge check-torch` on a CPU-only host prints `PyTorch Version: ...` and `WARNING ... CUDA is NOT available. PyTorch will use CPU.`, then exits `0`. No `Device Name:` or `Total VRAM:` lines should appear.
-- `docker history | grep -i HF_TOKEN` returns no lines.
+- `docker history --no-trunc agoge-forger:local | grep -i HF_TOKEN` returns no lines.
 - The `env | grep -i hf` command prints `no HF env`.
 
 ## Adversarial tips
 
-- The build can reuse Docker cache for every layer if the Dockerfile and `uv.lock` have not changed. That is a normal `docker build` outcome, but to force a true rebuild use `--no-cache`.
+- The build can reuse Docker cache whenever the inputs copied or built in earlier steps (`pyproject.toml`, `uv.lock`, `src`, `configs`, `datasets`, and the `Dockerfile` itself) have not changed. That is a normal `docker build` outcome, but to force a true rebuild use `--no-cache`.
 - `HF_TOKEN` must never be passed as a build arg or `ENV` in the `Dockerfile`. It should only be supplied at runtime with `-e HF_TOKEN=...` when a command genuinely needs the Hugging Face Hub.
-- If `agoge check-torch` fails to import `torch`, the `uv sync` step likely failed during build (network issue, lockfile drift, or missing wheel for the target architecture).
+- If `agoge check-torch` fails to import `torch`, first check that the build completed and `uv sync` installed the locked wheels. If `uv sync` succeeded, the failure is likely a runtime issue such as an incompatible wheel, a missing runtime library, or an architecture mismatch, not a build-time resolution problem.
 - `agoge-forger` is installed as a non-editable wheel inside `/app/.venv` by the `Dockerfile`; do not expect `src` changes on the host to be reflected without a rebuild.
 
 ## Devin Secrets Needed
