@@ -1,0 +1,67 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+build/
+dist/
+downloads/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / local tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+.kilo/
+
+# Dev container
+.devcontainer/
+
+# Project outputs (large / host-local)
+adapters/
+runs/
+merged/
+gguf/
+smoke_output/
+rust_output/
+julia_output/
+
+# Models and data artifacts (do not ship weights)
+*.safetensors
+*.bin
+*.pt
+*.gguf
+datasets/samples/*.jsonl
+!datasets/samples/tiny_sft.jsonl
+
+# Rust build artifacts
+rust-tools/target/
+**/*.rs.bk
+
+# Julia
+Manifest.toml
+LocalPreferences.toml
+
+# Terraform state
+infra/.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Docs / tests (not needed in runtime image)
+docs/
+tests/
+scripts/
+*.md
+
+# Keep the README for package metadata (overrides the *.md rule above)
+!README.md
