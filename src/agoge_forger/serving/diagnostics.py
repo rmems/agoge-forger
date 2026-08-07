@@ -46,17 +46,24 @@ def get_vllm_version() -> str | None:
 
 def get_cuda_version() -> str:
     """Return the PyTorch-detected CUDA version, or 'None' if not available."""
-    import torch  # pylint: disable=import-error,import-outside-toplevel
-
+    try:
+        import torch  # pylint: disable=import-error,import-outside-toplevel
+    except ImportError:
+        return "None"
     return torch.version.cuda or "None"
 
 
 def get_gpu_name() -> str:
     """Return the name of the current CUDA device, or 'None' on CPU."""
-    import torch  # pylint: disable=import-error,import-outside-toplevel
-
-    if torch.cuda.is_available():
-        return torch.cuda.get_device_name(0) or "Unknown"
+    try:
+        import torch  # pylint: disable=import-error,import-outside-toplevel
+    except ImportError:
+        return "None"
+    try:
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_name(0) or "Unknown"
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        return "Unknown"
     return "None"
 
 
@@ -111,4 +118,9 @@ def get_environment() -> dict[str, str]:
     Deliberately excludes potential secrets such as HF_TOKEN.
     """
     include_keys = {"CUDA_VISIBLE_DEVICES", "PYTORCH_CUDA_ALLOC_CONF"}
-    return {k: v for k, v in os.environ.items() if k.startswith("VLLM_") or k in include_keys}
+    excluded_vllm = {"VLLM_API_KEY"}
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if (k.startswith("VLLM_") and k not in excluded_vllm) or k in include_keys
+    }

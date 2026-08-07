@@ -9,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from agoge_forger.cli import app
+from agoge_forger.serving.diagnostics import get_environment
 
 
 @pytest.fixture
@@ -24,11 +25,12 @@ def _write_prompt_set(path: Path) -> Path:
 
 def test_serve_vllm_dry_run_python_frontend(runner: CliRunner, caplog):
     caplog.set_level("INFO")
-    with patch("agoge_forger.serving.serve.get_vllm_version", return_value="0.11.0"):
+    with patch("agoge_forger.serving.serve.get_vllm_version") as version_mock:
         result = runner.invoke(
             app, ["serve-vllm", "--model", "m", "--frontend", "python", "--dry-run"]
         )
     assert result.exit_code == 0
+    assert not version_mock.called
     assert "-m vllm serve m" in caplog.text
     assert "VLLM_USE_RUST_FRONTEND=0" in caplog.text
 
@@ -36,16 +38,18 @@ def test_serve_vllm_dry_run_python_frontend(runner: CliRunner, caplog):
 def test_serve_vllm_dry_run_rust_frontend(runner: CliRunner, caplog):
     caplog.set_level("INFO")
     with (
-        patch("agoge_forger.serving.serve.get_vllm_version", return_value="0.11.0"),
+        patch("agoge_forger.serving.serve.get_vllm_version") as version_mock,
         patch(
             "agoge_forger.serving.serve.has_rust_frontend_support",
             return_value=(True, "/fake/vllm-rs"),
-        ),
+        ) as rust_mock,
     ):
         result = runner.invoke(
             app, ["serve-vllm", "--model", "m", "--frontend", "rust", "--dry-run"]
         )
     assert result.exit_code == 0
+    assert not version_mock.called
+    assert not rust_mock.called
     assert "-m vllm serve m" in caplog.text
     assert "VLLM_USE_RUST_FRONTEND=1" in caplog.text
 
@@ -141,7 +145,18 @@ def test_bench_vllm_frontend_requires_prompt_set(runner: CliRunner, caplog):
 
 
 def test_serve_vllm_requires_model(runner: CliRunner, caplog):
-    with patch("agoge_forger.serving.serve.get_vllm_version", return_value="0.11.0"):
-        result = runner.invoke(app, ["serve-vllm", "--frontend", "python", "--dry-run"])
+    result = runner.invoke(app, ["serve-vllm", "--frontend", "python", "--dry-run"])
     assert result.exit_code != 0
     assert "Model ID is required" in result.output or "Model ID is required" in caplog.text
+
+
+def test_get_environment_excludes_vllm_api_key(monkeypatch):
+    monkeypatch.setenv("VLLM_USE_RUST_FRONTEND", "1")
+    monkeypatch.setenv("VLLM_API_KEY", "secret-token")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    monkeypatch.setenv("HF_TOKEN", "hf-token")
+    env = get_environment()
+    assert env["VLLM_USE_RUST_FRONTEND"] == "1"
+    assert env["CUDA_VISIBLE_DEVICES"] == "0"
+    assert "VLLM_API_KEY" not in env
+    assert "HF_TOKEN" not in env

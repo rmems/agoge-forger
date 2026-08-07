@@ -47,6 +47,15 @@ def serve_vllm(cfg: ServingConfig) -> int:
 
     Returns an exit code: 0 for success/dry-run, 1 for a hard failure.
     """
+    env = _set_frontend_env(os.environ, cfg.frontend)
+    cmd = build_serve_command(cfg)
+
+    if cfg.dry_run:
+        logger.info("[dry-run] would execute:")
+        logger.info(" ".join(cmd))
+        logger.info("[dry-run] VLLM_USE_RUST_FRONTEND=%s", env["VLLM_USE_RUST_FRONTEND"])
+        return 0
+
     version = get_vllm_version()
     if version is None:
         logger.error("vLLM is not installed. Install vLLM to use serve-vllm.")
@@ -57,15 +66,6 @@ def serve_vllm(cfg: ServingConfig) -> int:
         if not supported:
             logger.error("Rust frontend requested but not available: %s", msg)
             return 1
-
-    env = _set_frontend_env(os.environ, cfg.frontend)
-    cmd = build_serve_command(cfg)
-
-    if cfg.dry_run:
-        logger.info("[dry-run] would execute:")
-        logger.info(" ".join(cmd))
-        logger.info("[dry-run] VLLM_USE_RUST_FRONTEND=%s", env["VLLM_USE_RUST_FRONTEND"])
-        return 0
 
     logger.info("Starting vLLM (%s frontend): %s", cfg.frontend.value, " ".join(cmd))
     try:

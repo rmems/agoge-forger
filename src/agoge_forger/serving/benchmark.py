@@ -9,6 +9,7 @@ import os
 import statistics
 import subprocess  # nosec B404
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -58,11 +59,18 @@ def _mean(values: list[float]) -> float:
 
 
 def _wait_for_health(
-    host: str, port: int, timeout_s: float = 120.0, interval_s: float = 1.0
+    host: str,
+    port: int,
+    timeout_s: float = 120.0,
+    interval_s: float = 1.0,
+    proc: subprocess.Popen | None = None,
 ) -> bool:
     url = f"http://{host}:{port}/health"
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
+        if proc is not None and proc.poll() is not None:
+            logger.error("vLLM server exited early (code %s)", proc.returncode)
+            return False
         try:
             response = httpx.get(url, timeout=5.0)
             if response.status_code == 200:
@@ -109,76 +117,89 @@ def _simulate_results(
 
 
 @contextmanager
-def _managed_server(cfg: BenchmarkConfig, frontend: Frontend):
+def _managed_server(cfg: BenchmarkConfig, frontend: Frontend, out_dir: Path):
     """Start a vLLM server for the duration of the context manager."""
     serving_cfg = to_serving_config(cfg, frontend)
     env = _set_frontend_env(os.environ, frontend)
     cmd = build_serve_command(serving_cfg)
     logger.info("Starting server for %s benchmark: %s", frontend.value, " ".join(cmd))
-    proc = subprocess.Popen(  # nosec B603  # nosemgrep
-        cmd,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        if not _wait_for_health(cfg.host, cfg.port):
-            raise RuntimeError(f"vLLM server ({frontend.value} frontend) failed to become healthy")
-        yield proc
-    finally:
-        proc.terminate()
+    log_path = out_dir / f"vllm_{frontend.value}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w", encoding="utf-8") as log:
+        proc = subprocess.Popen(  # nosec B603  # nosemgrep
+            cmd,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
         try:
-            proc.wait(timeout=10.0)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            if not _wait_for_health(cfg.host, cfg.port, proc=proc):
+                raise RuntimeError(
+                    f"vLLM server ({frontend.value} frontend) failed to become healthy; "
+                    f"see {log_path}"
+                )
+            yield proc
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
 
 
 def _run_client_requests(
     cfg: BenchmarkConfig, prompt_set: PromptSet, frontend: Frontend, out_dir: Path
 ) -> list[BenchmarkResult]:
     base_url = f"http://{cfg.host}:{cfg.port}/v1"
-    client = ChatCompletionsClient(
-        ChatCompletionsConfig(
-            base_url=base_url,
-            model=cfg.model,
-            stream=cfg.stream,
-            max_tokens=cfg.max_tokens,
-            temperature=cfg.temperature,
-            timeout_s=120.0,
-        ),
-        run_name=str(out_dir / f"client_{frontend.value}"),
-    )
 
-    results: list[BenchmarkResult] = []
-    for prompt in prompt_set.prompts:
+    def _request_one(idx_prompt: tuple[int, str]) -> BenchmarkResult:
+        idx, prompt = idx_prompt
+        client = ChatCompletionsClient(
+            ChatCompletionsConfig(
+                base_url=base_url,
+                model=cfg.model,
+                stream=cfg.stream,
+                max_tokens=cfg.max_tokens,
+                temperature=cfg.temperature,
+                timeout_s=120.0,
+            ),
+            run_name=str(out_dir / f"client_{frontend.value}_{idx}"),
+        )
         result = client.chat_simple(prompt, system=prompt_set.system, stream=cfg.stream)
         latency = result.latency_ms
         tokens_per_sec = result.output_tokens / (latency / 1000.0) if latency > 0 else 0.0
-        results.append(
-            BenchmarkResult(
-                run=cfg.run_name,
-                frontend=frontend.value,
-                stream=cfg.stream,
-                prompt=prompt,
-                latency_ms=latency,
-                time_to_first_token_ms=result.time_to_first_token_ms,
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                total_tokens=result.total_tokens,
-                tokens_per_sec=tokens_per_sec,
-                error=result.error,
-            )
+        return BenchmarkResult(
+            run=cfg.run_name,
+            frontend=frontend.value,
+            stream=cfg.stream,
+            prompt=prompt,
+            latency_ms=latency,
+            time_to_first_token_ms=result.time_to_first_token_ms,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            total_tokens=result.total_tokens,
+            tokens_per_sec=tokens_per_sec,
+            error=result.error,
         )
-    return results
+
+    if not prompt_set.prompts:
+        return []
+    concurrency = max(1, cfg.concurrency)
+    workers = min(concurrency, len(prompt_set.prompts))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return list(executor.map(_request_one, enumerate(prompt_set.prompts)))
 
 
 def _measure_frontend_real(
     cfg: BenchmarkConfig, prompt_set: PromptSet, frontend: Frontend, out_dir: Path
 ) -> list[BenchmarkResult]:
     try:
-        with _managed_server(cfg, frontend):
-            return _run_client_requests(cfg, prompt_set, frontend, out_dir)
+        with _managed_server(cfg, frontend, out_dir):
+            results = _run_client_requests(cfg, prompt_set, frontend, out_dir)
+        time.sleep(2.0)
+        return results
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-except
         logger.error("Benchmark failed for %s frontend: %s", frontend.value, exc)
         return [
@@ -251,16 +272,17 @@ def _per_result_table(results: list[BenchmarkResult]) -> list[str]:
         "## Per-result details",
         "",
         "| Run | Frontend | Stream | Prompt | Latency (ms) | TTFT (ms) | "
-        + "Input | Output | Total | tokens/sec |",
+        + "Input | Output | Total | tokens/sec | Error |",
         "|-----|----------|--------|--------|-------------:|----------:| "
-        + "------:|-------:|------:|-----------:|",
+        + "------:|-------:|------:|-----------:|-------|",
     ]
     for r in results:
         prompt = r.prompt.replace("|", "\\|")
+        error = r.error.replace("|", "\\|") if r.error else ""
         lines.append(
             f"| {r.run} | {r.frontend} | {r.stream} | {prompt} | {r.latency_ms:.2f} | "
             f"{r.time_to_first_token_ms:.2f} | {r.input_tokens} | {r.output_tokens} | "
-            f"{r.total_tokens} | {r.tokens_per_sec:.2f} |"
+            f"{r.total_tokens} | {r.tokens_per_sec:.2f} | {error} |"
         )
     return lines
 
@@ -357,11 +379,13 @@ def benchmark_vllm_frontends(cfg: BenchmarkConfig) -> int:
     out_dir = _generate_out_dir(cfg)
     frontends = [cfg.frontend] if cfg.frontend else [Frontend.PYTHON, Frontend.RUST]
     all_results: list[BenchmarkResult] = []
-    for frontend in frontends:
+    for i, frontend in enumerate(frontends):
         results = _run_frontend(cfg, prompt_set, frontend, out_dir)
         if results is None:
             return 1
         all_results.extend(results)
+        if not cfg.dry_run and i < len(frontends) - 1:
+            time.sleep(2.0)
     _write_artifacts(out_dir, all_results, cfg)
     logger.info("Benchmark artifacts written to %s", out_dir)
     return 0
