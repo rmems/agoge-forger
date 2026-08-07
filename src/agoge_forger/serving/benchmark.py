@@ -115,11 +115,11 @@ def _managed_server(cfg: BenchmarkConfig, frontend: Frontend):
     env = _set_frontend_env(os.environ, frontend)
     cmd = build_serve_command(serving_cfg)
     logger.info("Starting server for %s benchmark: %s", frontend.value, " ".join(cmd))
-    proc = subprocess.Popen(  # nosec B603
+    proc = subprocess.Popen(  # nosec B603  # nosemgrep
         cmd,
         env=env,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,  # nosemgrep
+        stderr=subprocess.DEVNULL,
     )
     try:
         if not _wait_for_health(cfg.host, cfg.port):
