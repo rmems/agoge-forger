@@ -168,20 +168,29 @@ def _to_benchmark_event(idx: int, smoke: SmokeResult, cfg: ChatCompletionsConfig
     }
 
 
-def _build_summary(run_dir: Path, results: list[SmokeResult], cfg: ChatCompletionsConfig) -> str:
-    total = len(results)
-    ok = sum(1 for r in results if r.status == "ok")
-    errors = sum(1 for r in results if r.status == "error")
-    dry = sum(1 for r in results if r.status == "dry_run")
-    latencies = [r.result.latency_ms for r in results if r.status == "ok"]
-    ttfts = [r.result.time_to_first_token_ms for r in results if r.status == "ok"]
-    prompt_tokens = sum(r.result.input_tokens for r in results)
-    completion_tokens = sum(r.result.output_tokens for r in results)
+def _result_metrics(results: list[SmokeResult]) -> dict[str, Any]:
+    """Aggregate per-status counts and token totals from smoke results."""
+    ok = [r for r in results if r.status == "ok"]
+    return {
+        "total": len(results),
+        "ok": len(ok),
+        "errors": sum(1 for r in results if r.status == "error"),
+        "dry": sum(1 for r in results if r.status == "dry_run"),
+        "mean_latency_ms": _mean([r.result.latency_ms for r in ok]),
+        "mean_ttft_ms": _mean([r.result.time_to_first_token_ms for r in ok]),
+        "prompt_tokens": sum(r.result.input_tokens for r in results),
+        "completion_tokens": sum(r.result.output_tokens for r in results),
+    }
 
-    lines = [
+
+def _summary_header(
+    run_name: str, cfg: ChatCompletionsConfig, metrics: dict[str, Any]
+) -> list[str]:
+    """Return the markdown header and result overview lines."""
+    return [
         "# vLLM Compatibility Smoke Summary",
         "",
-        f"- **Run:** `{run_dir.name}`",
+        f"- **Run:** `{run_name}`",
         f"- **Model:** `{cfg.model}`",
         f"- **Base URL:** `{cfg.base_url}`",
         f"- **Stream:** `{cfg.stream}`",
@@ -189,27 +198,39 @@ def _build_summary(run_dir: Path, results: list[SmokeResult], cfg: ChatCompletio
         "",
         "## Results",
         "",
-        f"- **Total prompts:** {total}",
-        f"- **OK:** {ok}",
-        f"- **Errors:** {errors}",
-        f"- **Dry-run:** {dry}",
-        f"- **Mean latency (ms):** {_mean(latencies):.2f}",
-        f"- **Mean TTFT (ms):** {_mean(ttfts):.2f}",
-        f"- **Prompt tokens:** {prompt_tokens}",
-        f"- **Completion tokens:** {completion_tokens}",
+        f"- **Total prompts:** {metrics['total']}",
+        f"- **OK:** {metrics['ok']}",
+        f"- **Errors:** {metrics['errors']}",
+        f"- **Dry-run:** {metrics['dry']}",
+        f"- **Mean latency (ms):** {metrics['mean_latency_ms']:.2f}",
+        f"- **Mean TTFT (ms):** {metrics['mean_ttft_ms']:.2f}",
+        f"- **Prompt tokens:** {metrics['prompt_tokens']}",
+        f"- **Completion tokens:** {metrics['completion_tokens']}",
         "",
         "## Per-prompt details",
         "",
         "| Prompt | Status | Response text | Latency (ms) | TTFT (ms) | Error |",
         "|--------|--------|---------------|-------------:|----------:|-------|",
     ]
+
+
+def _per_prompt_rows(results: list[SmokeResult]) -> list[str]:
+    """Return markdown table rows for each prompt result."""
+    rows: list[str] = []
     for r in results:
         text = (r.result.response_text or "").replace("|", "\\|")[:60]
         error = (r.result.error or "").replace("|", "\\|")
         prompt = (r.prompt or "").replace("|", "\\|")
-        lines.append(
+        rows.append(
             f"| {prompt} | {r.status} | {text} | {r.result.latency_ms:.2f} | "
             f"{r.result.time_to_first_token_ms:.2f} | {error} |"
         )
+    return rows
+
+
+def _build_summary(run_dir: Path, results: list[SmokeResult], cfg: ChatCompletionsConfig) -> str:
+    """Render a human-readable markdown summary of the smoke run."""
+    metrics = _result_metrics(results)
+    lines = _summary_header(run_dir.name, cfg, metrics) + _per_prompt_rows(results)
     lines.append("")
     return "\n".join(lines)

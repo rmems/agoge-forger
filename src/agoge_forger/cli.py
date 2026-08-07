@@ -315,6 +315,37 @@ def bench_vllm_frontend(
 # pylint: enable=too-many-arguments,too-many-positional-arguments
 
 
+def _first_non_empty(value: str | None, *env_names: str) -> str | None:
+    """Return ``value`` if set, otherwise the first non-empty environment variable."""
+    if value:
+        return value
+    for name in env_names:
+        env_value = os.environ.get(name)
+        if env_value:
+            return env_value
+    return None
+
+
+def _smoke_env_defaults(
+    base_url: str | None,
+    model: str | None,
+    api_key: str | None,
+    prompt: str | None,
+    system: str | None,
+    stream: bool | None,
+    config_path: str | None,
+) -> tuple[str | None, str | None, str | None, str | None, str | None, bool | None]:
+    """Apply environment fallbacks and determine the effective streaming flag."""
+    return (
+        _first_non_empty(base_url, "AGOGE_SMOKE_BASE_URL"),
+        _first_non_empty(model, "AGOGE_SMOKE_MODEL"),
+        _first_non_empty(api_key, "OPENAI_API_KEY", "VLLM_API_KEY"),
+        _first_non_empty(prompt, "AGOGE_SMOKE_PROMPT"),
+        _first_non_empty(system, "AGOGE_SMOKE_SYSTEM"),
+        stream if stream is not None else (False if config_path is None else None),
+    )
+
+
 def _merge_smoke_chat_config(
     config_path: str | None, overrides: dict[str, Any]
 ) -> ChatCompletionsConfig:
@@ -358,15 +389,9 @@ def smoke_vllm(
     dry_run: bool = typer.Option(False, "--dry-run", help="Skip the HTTP call"),
 ):
     """Run a vLLM/OpenAI-compatible chat-completion smoke test."""
-    base_url = base_url or os.environ.get("AGOGE_SMOKE_BASE_URL")
-    model = model or os.environ.get("AGOGE_SMOKE_MODEL")
-    api_key = api_key or os.environ.get("OPENAI_API_KEY") or os.environ.get("VLLM_API_KEY")
-    prompt = prompt or os.environ.get("AGOGE_SMOKE_PROMPT")
-    system = system or os.environ.get("AGOGE_SMOKE_SYSTEM")
-
-    # Default to non-streaming for a minimal smoke unless a config or flag says otherwise.
-    if stream is None and config is None:
-        stream = False
+    base_url, model, api_key, prompt, system, stream = _smoke_env_defaults(
+        base_url, model, api_key, prompt, system, stream, config
+    )
 
     overrides: dict[str, Any] = {
         "base_url": base_url,
