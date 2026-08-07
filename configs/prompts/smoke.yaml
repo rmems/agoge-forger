@@ -1,0 +1,5 @@
+system: You are a helpful assistant.
+prompts:
+  - What is the capital of France?
+  - Explain the concept of overfitting in one sentence.
+  - Write a short haiku about GPUs.

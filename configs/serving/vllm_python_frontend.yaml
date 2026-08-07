@@ -1,0 +1,7 @@
+model: HuggingFaceTB/SmolLM2-135M-Instruct
+frontend: python
+host: 127.0.0.1
+port: 8000
+# max_model_len: 4096
+# dtype: bfloat16
+# gpu_memory_utilization: 0.9
