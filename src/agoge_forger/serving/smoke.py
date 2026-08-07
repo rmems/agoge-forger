@@ -168,14 +168,24 @@ def _to_benchmark_event(idx: int, smoke: SmokeResult, cfg: ChatCompletionsConfig
     }
 
 
+def _ok_results(results: list[SmokeResult]) -> list[SmokeResult]:
+    """Return only results with status ``ok``."""
+    return [r for r in results if r.status == "ok"]
+
+
+def _count_status(results: list[SmokeResult], status: str) -> int:
+    """Count how many results have the given status."""
+    return sum(1 for r in results if r.status == status)
+
+
 def _result_metrics(results: list[SmokeResult]) -> dict[str, Any]:
     """Aggregate per-status counts and token totals from smoke results."""
-    ok = [r for r in results if r.status == "ok"]
+    ok = _ok_results(results)
     return {
         "total": len(results),
         "ok": len(ok),
-        "errors": sum(1 for r in results if r.status == "error"),
-        "dry": sum(1 for r in results if r.status == "dry_run"),
+        "errors": _count_status(results, "error"),
+        "dry": _count_status(results, "dry_run"),
         "mean_latency_ms": _mean([r.result.latency_ms for r in ok]),
         "mean_ttft_ms": _mean([r.result.time_to_first_token_ms for r in ok]),
         "prompt_tokens": sum(r.result.input_tokens for r in results),
