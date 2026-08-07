@@ -69,6 +69,18 @@ agoge export-final-model --run-dir adapters/<run_name> --out-dir merged/<run_nam
 
 `checkpoint-*` directories are trainer recovery snapshots. The adapter saved at `adapters/<run_name>` is the LoRA output for continued PEFT work. The merged model under `merged/<run_name>` is the single final artifact to ship or evaluate as a standalone model.
 
+## Docker
+
+A CPU/smoke Docker image is available at the repository root:
+
+```bash
+docker build -t agoge-forger:local .
+docker run --rm agoge-forger:local agoge --help
+docker run --rm agoge-forger:local python -c "import agoge_forger; print(agoge_forger.__version__)"
+```
+
+The image installs the package from `uv.lock` with `--no-dev --no-editable`, runs as a non-root `app` user, and does **not** bake in `HF_TOKEN` or other secrets. Pass `HF_TOKEN` at runtime if a command needs the Hugging Face Hub.
+
 ## Cloud Infrastructure
 The `infra/` folder contains Terraform scaffolds for AWS, Azure, DigitalOcean, and IBM Cloud. They are stubs for future cloud-scale training using HCL.
 

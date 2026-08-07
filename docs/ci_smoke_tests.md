@@ -10,6 +10,45 @@ This project includes three manual GitHub Actions workflows for smoke testing ac
 | Rust Smoke Test | `.github/workflows/rust_smoke_test.yml` | Rust |
 | Julia Smoke Test | `.github/workflows/julia_smoke_test.yml` | Julia |
 
+## Docker Smoke Image
+
+A CPU/smoke Docker image is defined at the repository root:
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | CPU/smoke runtime image (Python 3.12 + uv + locked deps) |
+| `.dockerignore` | Excludes local artifacts, caches, and large model/data files |
+
+### Building and running locally
+
+```bash
+docker build -t agoge-forger:local .
+docker run --rm agoge-forger:local agoge --help
+docker run --rm agoge-forger:local python -c "import agoge_forger; print(agoge_forger.__version__)"
+```
+
+### Runtime configuration
+
+- The image installs the package from `uv.lock` with `--no-dev --no-editable`.
+- `HF_TOKEN` is intentionally **not** baked into the image. Pass it at runtime if a command needs the Hugging Face Hub:
+
+  ```bash
+  docker run --rm -e HF_TOKEN="$HF_TOKEN" agoge-forger:local agoge model-metadata --model-id <model>
+  ```
+
+- `trust_remote_code` defaults to `false` in the forge; opt in explicitly via CLI flag or config.
+
+### Container security scanning
+
+- The [Aikido PR Checks GitHub App](https://help.aikido.dev/pr-and-release-gating/github-ci-pr-gating-via-aikido-dashboard) gates source changes; it does not scan container images.
+- In-repo Snyk CI has been removed. The root `.snyk` file remains for optional local CLI use. If you have `SNYK_TOKEN`, you can scan the image locally:
+
+  ```bash
+  snyk container test agoge-forger:local --severity-threshold=medium
+  ```
+
+  Snyk container findings on the base image or unpatchable upstream ML dependencies should be treated as a non-blocking baseline risk and documented in `.snyk` with an expiry.
+
 ## Launching a Workflow
 
 1. Go to the **Actions** tab in the GitHub repository.

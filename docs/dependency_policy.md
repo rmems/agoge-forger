@@ -28,6 +28,21 @@ find crates -name sbom.json -exec snyk sbom test --file={} --severity-threshold=
 
 Generated `sbom.json` files under `rust-tools/crates/` are build artifacts — do not commit them.
 
+## Docker image dependency policy
+
+The CPU/smoke `Dockerfile` builds the runtime image using the locked `uv.lock` file:
+
+```dockerfile
+RUN uv venv /app/.venv \
+    && uv sync --no-dev --no-editable --frozen
+```
+
+- `--no-dev` keeps test/lint tools out of the runtime image.
+- `--no-editable` installs `agoge_forger` as a wheel so the image does not depend on the source tree at runtime.
+- `--frozen` guarantees the lockfile is not modified during the build.
+
+This matches the host CI install behavior (`uv venv` + locked project install) while producing a standalone, reproducible container. Container images are not rebuilt to chase latest upstream releases; fixes are brought in by updating `pyproject.toml` and regenerating `uv.lock`.
+
 ## Snyk baseline policy (`.snyk`)
 The root `.snyk` file remains for optional local CLI use. It documents accepted-risk ignores for upstream advisories that have no fix yet (notably `transformers` and `accelerate`). Fixable transitive issues are pinned in `pyproject.toml` and `uv.lock` instead of being ignored.
 
