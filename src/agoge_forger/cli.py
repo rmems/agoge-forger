@@ -316,8 +316,8 @@ def bench_vllm_frontend(
 
 
 def _first_non_empty(value: str | None, *env_names: str) -> str | None:
-    """Return ``value`` if set, otherwise the first non-empty environment variable."""
-    if value:
+    """Return ``value`` if provided, otherwise the first non-empty environment variable."""
+    if value is not None:
         return value
     for name in env_names:
         env_value = os.environ.get(name)
@@ -349,24 +349,29 @@ def _smoke_env_defaults(
 def _merge_smoke_chat_config(
     config_path: str | None, overrides: dict[str, Any]
 ) -> ChatCompletionsConfig:
-    """Load a ChatCompletionsConfig from YAML and apply CLI overrides."""
+    """Load a ChatCompletionsConfig from YAML and apply CLI overrides.
+
+    Overrides are merged into a dict and then re-validated so that Pydantic
+    field validators (e.g. stripping trailing slashes from ``base_url``) run.
+    """
     if config_path:
         path = resolve_existing_path(config_path, must_be_file=True)
-        cfg = ChatCompletionsConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     else:
-        cfg = ChatCompletionsConfig()
+        data = ChatCompletionsConfig().model_dump()
 
     for key, value in overrides.items():
         if value is not None:
-            setattr(cfg, key, value)
+            data[key] = value
 
-    if not cfg.base_url:
-        cfg.base_url = "http://localhost:8000/v1"
-    if not cfg.model:
+    if not data.get("base_url"):
+        data["base_url"] = "http://localhost:8000/v1"
+    if not data.get("model"):
         raise typer.BadParameter("Model is required (--model or config.model)")
-    if cfg.api_key is None:
-        cfg.api_key = ""
-    return cfg
+    if data.get("api_key") is None:
+        data["api_key"] = ""
+
+    return ChatCompletionsConfig.model_validate(data)
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments
