@@ -1,4 +1,5 @@
 import json
+from typing import Annotated
 
 import typer
 
@@ -15,6 +16,15 @@ from .models.inspect import inspect_model as _inspect_model
 from .models.lora_targets import inspect_lora_targets as _inspect_lora_targets
 from .models.metadata import get_model_config_metadata
 from .path_safety import resolve_existing_path, resolve_output_directory
+from .serving.benchmark import benchmark_vllm_frontends
+from .serving.config import (
+    BenchmarkConfig,
+    Frontend,
+    ServingConfig,
+    load_benchmark_config,
+    load_serving_config,
+)
+from .serving.serve import serve_vllm as _serve_vllm
 from .train.checkpoints import infer_base_model_from_adapter, is_adapter_artifact
 from .train.lora import train_lora as _train_lora
 from .train.qlora import train_qlora as _train_qlora
@@ -197,6 +207,147 @@ def dataset_stats(
     """Get dataset token statistics."""
     safe_path = str(resolve_existing_path(path, must_be_file=True))
     _dataset_stats(safe_path, model_id, trust_remote_code=trust_remote_code)
+
+
+def _merge_serving_config(
+    config_path: str | None,
+    model: str | None,
+    frontend: Frontend | None,
+    host: str | None,
+    port: int | None,
+    max_model_len: int | None,
+    dtype: str | None,
+    gpu_memory_utilization: float | None,
+    dry_run: bool,
+    extra_args: list[str] | None,
+) -> ServingConfig:
+    cfg = load_serving_config(config_path) if config_path else ServingConfig()
+    if model is not None:
+        cfg.model = model
+    if frontend is not None:
+        cfg.frontend = frontend
+    if host is not None:
+        cfg.host = host
+    if port is not None:
+        cfg.port = port
+    if max_model_len is not None:
+        cfg.max_model_len = max_model_len
+    if dtype is not None:
+        cfg.dtype = dtype
+    if gpu_memory_utilization is not None:
+        cfg.gpu_memory_utilization = gpu_memory_utilization
+    if dry_run:
+        cfg.dry_run = True
+    if extra_args:
+        cfg.extra_args = extra_args
+    if not cfg.model:
+        raise typer.BadParameter("Model ID is required (--model or config.model)")
+    return cfg
+
+
+@app.command()
+def serve_vllm(
+    config: str | None = typer.Option(None, "--config", help="Path to YAML serving config"),
+    model: str | None = typer.Option(None, help="Model ID"),
+    frontend: Annotated[Frontend | None, typer.Option(help="python or rust")] = None,
+    host: str | None = typer.Option(None, help="Host to bind"),
+    port: int | None = typer.Option(None, help="Port"),
+    max_model_len: int | None = typer.Option(None, help="Maximum model context length"),
+    dtype: str | None = typer.Option(None, help="Model dtype"),
+    gpu_memory_utilization: float | None = typer.Option(None, help="GPU memory utilization"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print command and exit"),
+    extra_arg: Annotated[
+        list[str] | None, typer.Option("--extra-arg", help="Extra vllm serve argument")
+    ] = None,
+):
+    """Serve a model with vLLM, optionally using the Rust frontend."""
+    cfg = _merge_serving_config(
+        config,
+        model,
+        frontend,
+        host,
+        port,
+        max_model_len,
+        dtype,
+        gpu_memory_utilization,
+        dry_run,
+        extra_arg,
+    )
+    raise typer.Exit(_serve_vllm(cfg))
+
+
+def _merge_benchmark_config(
+    config_path: str | None,
+    model: str | None,
+    frontend: Frontend | None,
+    prompt_set: str | None,
+    out_dir: str | None,
+    stream: bool | None,
+    max_tokens: int | None,
+    temperature: float | None,
+    concurrency: int | None,
+    dry_run: bool,
+) -> BenchmarkConfig:
+    if config_path:
+        cfg = load_benchmark_config(config_path)
+        if cfg.prompt_set:
+            cfg.prompt_set = str(resolve_existing_path(cfg.prompt_set, must_be_file=True))
+    else:
+        cfg = BenchmarkConfig()
+    if model is not None:
+        cfg.model = model
+    if frontend is not None:
+        cfg.frontend = frontend
+    if prompt_set is not None:
+        cfg.prompt_set = str(resolve_existing_path(prompt_set, must_be_file=True))
+    if out_dir is not None:
+        cfg.out_dir = out_dir
+    if stream is not None:
+        cfg.stream = stream
+    if max_tokens is not None:
+        cfg.max_tokens = max_tokens
+    if temperature is not None:
+        cfg.temperature = temperature
+    if concurrency is not None:
+        cfg.concurrency = concurrency
+    if dry_run:
+        cfg.dry_run = True
+    if not cfg.model:
+        raise typer.BadParameter("Model ID is required (--model or config.model)")
+    if not cfg.prompt_set:
+        raise typer.BadParameter("Prompt set is required (--prompt-set or config.prompt_set)")
+    return cfg
+
+
+@app.command()
+def bench_vllm_frontend(
+    config: str | None = typer.Option(None, "--config", help="Path to YAML benchmark config"),
+    model: str | None = typer.Option(None, help="Model ID"),
+    frontend: Annotated[
+        Frontend | None, typer.Option(help="python, rust, or omit for both")
+    ] = None,
+    prompt_set: str | None = typer.Option(None, "--prompt-set", help="Path to prompt set YAML"),
+    out_dir: str | None = typer.Option(None, help="Output directory"),
+    stream: bool | None = typer.Option(None, "--stream/--no-stream", help="Use streaming requests"),
+    max_tokens: int | None = typer.Option(None, help="Max tokens per request"),
+    temperature: float | None = typer.Option(None, help="Sampling temperature"),
+    concurrency: int | None = typer.Option(None, help="Request concurrency"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Simulate benchmark"),
+):
+    """Benchmark vLLM Python vs Rust frontends."""
+    cfg = _merge_benchmark_config(
+        config,
+        model,
+        frontend,
+        prompt_set,
+        out_dir,
+        stream,
+        max_tokens,
+        temperature,
+        concurrency,
+        dry_run,
+    )
+    raise typer.Exit(benchmark_vllm_frontends(cfg))
 
 
 if __name__ == "__main__":
