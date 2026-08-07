@@ -34,7 +34,7 @@ docker run --rm agoge-forger:local /bin/sh -c 'env | grep -i hf || echo no HF en
 
 ## Adversarial tips
 
-- The build can reuse Docker cache whenever the inputs copied or built in earlier steps (`pyproject.toml`, `uv.lock`, `src`, `configs`, `datasets`, and the `Dockerfile` itself) have not changed. That is a normal `docker build` outcome, but to force a true rebuild use `--no-cache`.
+- The build can reuse Docker cache whenever the inputs copied or built in earlier steps (`pyproject.toml`, `uv.lock`, `README.md`, `LICENSE`, `src`, `configs`, `datasets`, and the `Dockerfile` itself) have not changed. That is a normal `docker build` outcome, but to force a true rebuild use `--no-cache`.
 - `HF_TOKEN` must never be passed as a build arg or `ENV` in the `Dockerfile`. It should only be supplied at runtime with `-e HF_TOKEN=...` when a command genuinely needs the Hugging Face Hub.
 - If `agoge check-torch` fails to import `torch`, first check that the build completed and `uv sync` installed the locked wheels. If `uv sync` succeeded, the failure is likely a runtime issue such as an incompatible wheel, a missing runtime library, or an architecture mismatch, not a build-time resolution problem.
 - `agoge-forger` is installed as a non-editable wheel inside `/app/.venv` by the `Dockerfile`; do not expect `src` changes on the host to be reflected without a rebuild.
