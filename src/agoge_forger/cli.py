@@ -1,9 +1,11 @@
 """Agoge Forger Typer CLI entry point."""
 
 import json
+import os
 from typing import Annotated, Any
 
 import typer
+import yaml
 
 from .artifacts.safetensors_io import assert_no_unsafe_weight_bins, inspect_safetensors_file
 from .backends.jax_backend import check_jax_env
@@ -18,6 +20,7 @@ from .models.inspect import inspect_model as _inspect_model
 from .models.lora_targets import inspect_lora_targets as _inspect_lora_targets
 from .models.metadata import get_model_config_metadata
 from .path_safety import resolve_existing_path, resolve_output_directory
+from .providers.chat_completions import ChatCompletionsConfig
 from .serving.benchmark import benchmark_vllm_frontends
 from .serving.config import (
     BenchmarkConfig,
@@ -27,6 +30,7 @@ from .serving.config import (
     load_serving_config,
 )
 from .serving.serve import serve_vllm as _serve_vllm
+from .serving.smoke import run_vllm_smoke
 from .train.checkpoints import infer_base_model_from_adapter, is_adapter_artifact
 from .train.lora import train_lora as _train_lora
 from .train.qlora import train_qlora as _train_qlora
@@ -306,6 +310,85 @@ def bench_vllm_frontend(
     }
     cfg = _merge_benchmark_config(config, overrides)
     raise typer.Exit(benchmark_vllm_frontends(cfg))
+
+
+# pylint: enable=too-many-arguments,too-many-positional-arguments
+
+
+def _merge_smoke_chat_config(
+    config_path: str | None, overrides: dict[str, Any]
+) -> ChatCompletionsConfig:
+    """Load a ChatCompletionsConfig from YAML and apply CLI overrides."""
+    if config_path:
+        path = resolve_existing_path(config_path, must_be_file=True)
+        cfg = ChatCompletionsConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    else:
+        cfg = ChatCompletionsConfig()
+
+    for key, value in overrides.items():
+        if value is not None:
+            setattr(cfg, key, value)
+
+    if not cfg.base_url:
+        cfg.base_url = "http://localhost:8000/v1"
+    if not cfg.model:
+        raise typer.BadParameter("Model is required (--model or config.model)")
+    if cfg.api_key is None:
+        cfg.api_key = ""
+    return cfg
+
+
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+@app.command()
+def smoke_vllm(
+    config: str | None = typer.Option(
+        None, "--config", help="Path to YAML chat-completions config"
+    ),
+    base_url: str | None = typer.Option(None, help="vLLM endpoint base URL"),
+    model: str | None = typer.Option(None, help="Model name or path"),
+    api_key: str | None = typer.Option(None, help="API key"),
+    stream: bool | None = typer.Option(None, "--stream/--no-stream", help="Use streaming"),
+    max_tokens: int | None = typer.Option(None, help="Maximum tokens in the response"),
+    temperature: float | None = typer.Option(None, help="Sampling temperature"),
+    timeout_s: float | None = typer.Option(None, help="HTTP timeout in seconds"),
+    prompt: str | None = typer.Option(None, help="Single prompt"),
+    system: str | None = typer.Option(None, help="System message"),
+    prompt_set: str | None = typer.Option(None, "--prompt-set", help="YAML prompt set"),
+    run_name: str | None = typer.Option(None, help="Run name for output directory"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip the HTTP call"),
+):
+    """Run a vLLM/OpenAI-compatible chat-completion smoke test."""
+    base_url = base_url or os.environ.get("AGOGE_SMOKE_BASE_URL")
+    model = model or os.environ.get("AGOGE_SMOKE_MODEL")
+    api_key = api_key or os.environ.get("OPENAI_API_KEY") or os.environ.get("VLLM_API_KEY")
+    prompt = prompt or os.environ.get("AGOGE_SMOKE_PROMPT")
+    system = system or os.environ.get("AGOGE_SMOKE_SYSTEM")
+
+    # Default to non-streaming for a minimal smoke unless a config or flag says otherwise.
+    if stream is None and config is None:
+        stream = False
+
+    overrides: dict[str, Any] = {
+        "base_url": base_url,
+        "model": model,
+        "api_key": api_key,
+        "stream": stream,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "timeout_s": timeout_s,
+    }
+    cfg = _merge_smoke_chat_config(config, overrides)
+
+    _, results = run_vllm_smoke(
+        cfg,
+        run_name=run_name or "vllm_smoke",
+        prompt_set=prompt_set,
+        prompt=prompt,
+        system=system,
+        dry_run=dry_run,
+    )
+    errors = sum(1 for r in results if r.status == "error")
+    raise typer.Exit(code=1 if errors else 0)
 
 
 # pylint: enable=too-many-arguments,too-many-positional-arguments
