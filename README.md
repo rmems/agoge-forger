@@ -69,6 +69,18 @@ agoge export-final-model --run-dir adapters/<run_name> --out-dir merged/<run_nam
 
 `checkpoint-*` directories are trainer recovery snapshots. The adapter saved at `adapters/<run_name>` is the LoRA output for continued PEFT work. The merged model under `merged/<run_name>` is the single final artifact to ship or evaluate as a standalone model.
 
+### 8. Serve and Smoke with vLLM
+
+Serve the merged model with vLLM, then run a compatibility smoke test:
+
+```bash
+agoge serve-vllm --model merged/<run_name>
+agoge smoke-vllm --model merged/<run_name> --run-name smoke_<run_name>
+```
+
+See `docs/vllm_model_compatibility.md` for the full compatibility matrix and
+`docs/chat_completions_providers.md` for `agoge smoke-vllm` options.
+
 ## Docker
 
 A CPU/smoke Docker image is available at the repository root:
