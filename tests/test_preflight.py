@@ -2,10 +2,13 @@ import json
 
 import pytest
 
-from agoge_forger.config import ExperimentConfig
+from agoge_forger.config import ExperimentConfig, QuantizationConfig, TrainingConfig
 from agoge_forger.datasets import load_jsonl_dataset
 from agoge_forger.train.preflight import (
+    BYTES_PER_GB,
     collect_disk_pressure_report,
+    estimate_training_risk,
+    get_gpu_report,
     validate_dataset_text_field,
     validate_dataset_text_field_in_source,
     validate_lora_targets_exist,
@@ -173,3 +176,68 @@ def test_collect_disk_pressure_report_handles_fresh_output_dir(tmp_path):
 
     assert report["output_dir"] == str(fresh_output)
     assert report["free_gb"] > 0
+
+
+def test_get_gpu_report_uses_binary_gib_not_decimal_gb(monkeypatch):
+    """16 GiB cards must report ~16.0 so the <=16.5 risk gate can fire.
+
+    Dividing by 1e9 (decimal) would inflate the same card to ~17.18 and skip
+    all local OOM warnings on the RTX 5080 path.
+    """
+    import torch
+
+    sixteen_gib = 16 * BYTES_PER_GB
+
+    class _Props:
+        total_memory = sixteen_gib
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda _idx: "Fake RTX 5080")
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda _idx: (12, 0))
+    monkeypatch.setattr(torch.cuda, "get_device_properties", lambda _idx: _Props())
+    monkeypatch.setattr(torch.cuda, "memory_allocated", lambda _idx: 0)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: True)
+
+    report = get_gpu_report()
+
+    assert report["total_vram_gb"] == pytest.approx(16.0)
+    assert report["allocated_vram_gb"] == pytest.approx(0.0)
+    # Regression lock: decimal SI would be ~17.18
+    assert report["total_vram_gb"] != pytest.approx(sixteen_gib / 1e9, abs=0.01)
+
+
+def test_estimate_training_risk_warns_on_16gib_risky_config(caplog):
+    import logging
+
+    config = ExperimentConfig(
+        model_id="test-model",
+        dataset_path="dataset.jsonl",
+        quantization=QuantizationConfig(load_in_4bit=False),
+        training=TrainingConfig(batch_size=2, max_seq_length=4096),
+    )
+    gpu_report = {"total_vram_gb": 16.0}
+
+    with caplog.at_level(logging.WARNING):
+        estimate_training_risk(config, gpu_report)
+
+    text = "\n".join(caplog.messages)
+    assert "without load_in_4bit" in text
+    assert "Batch size > 1" in text
+    assert "max_seq_length > 2048" in text
+
+
+def test_estimate_training_risk_skips_when_vram_above_gate(caplog):
+    import logging
+
+    config = ExperimentConfig(
+        model_id="test-model",
+        dataset_path="dataset.jsonl",
+        quantization=QuantizationConfig(load_in_4bit=False),
+        training=TrainingConfig(batch_size=2, max_seq_length=4096),
+    )
+    # Decimal-bug fake reading (~17.18) would skip the gate; binary 24 GiB
+    # correctly stays silent.
+    with caplog.at_level(logging.WARNING):
+        estimate_training_risk(config, {"total_vram_gb": 24.0})
+
+    assert not any("RISK:" in m for m in caplog.messages)

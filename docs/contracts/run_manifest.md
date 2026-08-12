@@ -60,7 +60,7 @@ runs/<run_name>/manifest.json
 | `git.dirty`       | bool   | No       | Whether uncommitted changes were present                  |
 | `config`          | object | Yes      | Full `ExperimentConfig` or smoke-test config snapshot     |
 | `metrics`         | object | No       | Present for training runs; omitted for inference smoke tests |
-| `metrics.max_vram_gb` | float | No   | Peak VRAM usage in GB (training only)                     |
+| `metrics.max_vram_gb` | float | No   | Peak VRAM usage in binary GiB (`1024**3`; training only)  |
 | `metrics.gpu_report`  | object | No   | GPU hardware report (training only)                     |
 | `metrics.artifact_index` | str | No | Path to `artifact_index.json` (training only)           |
 | `environment`     | object | No       | Present for training manifests; omitted for inference smoke tests |
@@ -82,8 +82,8 @@ runs/<run_name>/manifest.json
 |--------------------------|--------------|----------------------------------|
 | `device_name`            | str          | GPU device name                  |
 | `compute_capability`     | list[int]    | Major, minor compute capability  |
-| `total_vram_gb`          | float        | Total VRAM in GB                 |
-| `allocated_vram_gb`      | float        | Allocated VRAM in GB             |
+| `total_vram_gb`          | float        | Total VRAM in binary GiB (`1024**3`) |
+| `allocated_vram_gb`      | float        | Allocated VRAM in binary GiB         |
 | `bf16_supported`         | bool         | Whether BF16 is supported        |
 
 ## Owner
