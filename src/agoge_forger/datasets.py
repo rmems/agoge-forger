@@ -16,11 +16,20 @@ def normalize_row(row, tokenizer=None, index=0):
     elif "messages" in row:
         if not isinstance(row["messages"], list):
             raise ValueError(f"Line {index}: 'messages' must be a list.")
-        for m in row["messages"]:
+        for msg_i, m in enumerate(row["messages"], 1):
+            if not isinstance(m, dict):
+                # Schema errors stay ValueError (1-indexed line) like other normalize_row paths.
+                raise ValueError(  # noqa: TRY004
+                    f"Line {index}: messages[{msg_i}] must be an object."
+                )
             if "role" not in m or "content" not in m:
                 raise ValueError(f"Line {index}: messages must contain 'role' and 'content'.")
             if m["role"] not in ["user", "assistant", "system", "tool"]:
                 raise ValueError(f"Line {index}: invalid role '{m['role']}'.")
+            if not isinstance(m["content"], str):
+                raise ValueError(  # noqa: TRY004
+                    f"Line {index}: messages[{msg_i}].content must be a string."
+                )
 
         if tokenizer and hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
             text = tokenizer.apply_chat_template(
@@ -46,20 +55,25 @@ def normalize_row(row, tokenizer=None, index=0):
 
 def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
     dataset_path = resolve_existing_path(path, must_be_file=True)
+    rows: list[dict] = []
 
-    def gen():
-        with dataset_path.open("r") as f:
-            for i, line in enumerate(f, 1):
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"Line {i}: Invalid JSON - {e}")
+    with dataset_path.open("r") as f:
+        for i, line in enumerate(f, 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Line {i}: Invalid JSON - {e}") from e
 
-                yield normalize_row(row, tokenizer, index=i)
+            rows.append(normalize_row(row, tokenizer, index=i))
 
-    return Dataset.from_generator(gen)
+    if not rows:
+        raise ValueError(
+            f"Dataset is empty (no valid JSONL rows after skipping blanks): {dataset_path}"
+        )
+
+    return Dataset.from_list(rows)
 
 
 def iter_normalized_rows(path: str):
@@ -96,6 +110,9 @@ def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):
     for row in dataset:
         tokens = tokenizer(row["text"])["input_ids"]
         lengths.append(len(tokens))
+
+    if not lengths:
+        raise ValueError(f"Dataset is empty (no tokenizable rows after load): {path}")
 
     arr = np.asarray(lengths, dtype=np.int64)
     logger.info(f"Dataset Rows: {len(arr)}")
