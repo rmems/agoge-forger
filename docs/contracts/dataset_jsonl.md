@@ -64,7 +64,8 @@ All formats are normalized to `{"text": "..."}` before training:
 
 - Rows missing all three keys (`text`, `messages`, `instruction`) raise `ValueError`
 - `text` must be a string
-- `messages` must be a list of objects with valid `role` values
+- `messages` must be a list of objects with valid `role` values and **string** `content`
+- A file with no valid rows (empty or only blank lines) raises `ValueError` on load/stats
 - Error messages are 1-indexed by line number
 
 ## Owner
