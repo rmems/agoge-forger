@@ -38,6 +38,22 @@ def test_message_element_must_be_object():
         normalize_row({"messages": ["not-an-object"]}, index=1)
 
 
+def test_non_object_jsonl_row_fails():
+    with pytest.raises(ValueError, match="Line 1: JSONL row must be an object."):
+        normalize_row(None, index=1)
+    with pytest.raises(ValueError, match="Line 2: JSONL row must be an object."):
+        normalize_row(1, index=2)
+    with pytest.raises(ValueError, match="Line 3: JSONL row must be an object."):
+        normalize_row(["not", "an", "object"], index=3)
+
+
+def test_load_jsonl_scalar_row_raises(tmp_path):
+    path = tmp_path / "scalar.jsonl"
+    path.write_text("null\n")
+    with pytest.raises(ValueError, match="Line 1: JSONL row must be an object."):
+        load_jsonl_dataset(str(path))
+
+
 def test_load_jsonl_empty_file_raises(tmp_path):
     path = tmp_path / "empty.jsonl"
     path.write_text("")
