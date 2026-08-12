@@ -11,6 +11,7 @@ from ..manifests import write_run_manifest
 from ..models.load import load_base_model
 from .checkpoints import resolve_resume_checkpoint
 from .preflight import (
+    BYTES_PER_GB,
     check_cuda_available,
     estimate_training_risk,
     get_gpu_report,
@@ -107,8 +108,8 @@ def _finalize_training_run(config, trainer, out_dir, gpu_report):
     index_path = write_artifact_index(out_dir)
     logger.info(f"Artifact index written to {index_path}")
 
-    vram_used = torch.cuda.max_memory_allocated() / 1e9
-    logger.info(f"Max VRAM used: {vram_used:.2f} GB")
+    vram_used = torch.cuda.max_memory_allocated() / BYTES_PER_GB
+    logger.info(f"Max VRAM used: {vram_used:.2f} GiB")
 
     metrics = {
         "max_vram_gb": vram_used,

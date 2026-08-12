@@ -25,11 +25,13 @@ def get_gpu_report():
     if not torch.cuda.is_available():
         return {}
 
+    # Field names stay *_vram_gb for manifest compatibility; values are binary GiB
+    # (1024**3), matching disk preflight — not decimal SI GB (/1e9).
     report = {
         "device_name": torch.cuda.get_device_name(0),
         "compute_capability": torch.cuda.get_device_capability(0),
-        "total_vram_gb": torch.cuda.get_device_properties(0).total_memory / 1e9,
-        "allocated_vram_gb": torch.cuda.memory_allocated(0) / 1e9,
+        "total_vram_gb": torch.cuda.get_device_properties(0).total_memory / BYTES_PER_GB,
+        "allocated_vram_gb": torch.cuda.memory_allocated(0) / BYTES_PER_GB,
         "bf16_supported": torch.cuda.is_bf16_supported(),
     }
     return report

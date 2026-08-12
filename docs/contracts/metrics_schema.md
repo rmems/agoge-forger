@@ -24,12 +24,12 @@ Metrics are currently embedded within `manifest.json` under the `metrics` key. T
 
 | Field                     | Type   | Description                             |
 |---------------------------|--------|-----------------------------------------|
-| `max_vram_gb`             | float  | Peak VRAM usage in GB                   |
+| `max_vram_gb`             | float  | Peak VRAM usage in **binary GiB** (`1024**3`; key keeps `_gb`) |
 | `gpu_report`              | object | GPU hardware and capability details     |
 | `gpu_report.device_name`  | str    | GPU device name                         |
 | `gpu_report.compute_capability` | list[int] | Compute capability (major, minor) |
-| `gpu_report.total_vram_gb` | float | Total VRAM available in GB             |
-| `gpu_report.allocated_vram_gb` | float | VRAM allocated at measurement time |
+| `gpu_report.total_vram_gb` | float | Total VRAM in **binary GiB**           |
+| `gpu_report.allocated_vram_gb` | float | Allocated VRAM in **binary GiB**   |
 | `gpu_report.bf16_supported` | bool  | Whether BF16 is supported             |
 | `artifact_index`          | str    | Path to artifact_index.json             |
 
