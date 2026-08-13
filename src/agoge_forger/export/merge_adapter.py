@@ -11,6 +11,15 @@ from ..train.checkpoints import (
 )
 
 
+def merged_model_save_kwargs(*, max_shard_size: str = "4GB") -> dict[str, str]:
+    """Kwargs for ``PreTrainedModel.save_pretrained`` after ``merge_and_unload``.
+
+    Transformers 5 removed ``safe_serialization`` from the public signature (it is
+    absorbed by ``**kwargs`` and ignored). Only pass keys that still bind cleanly.
+    """
+    return {"max_shard_size": max_shard_size}
+
+
 def merge_adapter(
     base_model_id: str,
     adapter_path: str,
@@ -46,8 +55,13 @@ def merge_adapter(
     # resolver also creates the directory via mkdir(parents=True, exist_ok=True).
     safe_out_dir = resolve_output_directory(out_dir)
     logger.info(f"Saving merged model to {safe_out_dir}")
+    # Transformers 5 dropped ``safe_serialization`` on ``PreTrainedModel.save_pretrained``
+    # (safetensors is unconditional for plain merged models). That flag is still valid
+    # on ``PeftModel.save_pretrained`` (adapter path in ``train/trainer.py``). Keep the
+    # ``save_safetensors`` parameter here for the post-save assert gate only.
     merged_model.save_pretrained(
-        str(safe_out_dir), safe_serialization=save_safetensors, max_shard_size=max_shard_size
+        str(safe_out_dir),
+        **merged_model_save_kwargs(max_shard_size=max_shard_size),
     )
     tokenizer.save_pretrained(str(safe_out_dir))
 
