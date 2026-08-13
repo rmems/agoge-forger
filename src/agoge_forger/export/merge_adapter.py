@@ -29,7 +29,23 @@ def merge_adapter(
     max_shard_size: str = "4GB",
     trust_remote_code: bool = False,
 ):
+    """Merge a LoRA adapter into the base model and write a shippable checkpoint.
+
+    Under Transformers 5, merged ``PreTrainedModel`` weights are always written as
+    safetensors (``safe_serialization`` was removed from ``save_pretrained``).
+    ``save_safetensors=False`` is therefore rejected here rather than silently
+    ignored. Pass ``allow_unsafe=True`` only to accept unsafe *input* adapters or
+    skip the post-save ``.bin`` assert — not to request pickle weight files.
+    """
     logger.info(f"Merging {adapter_path} into {base_model_id}")
+
+    if not save_safetensors:
+        raise ValueError(
+            "save_safetensors=False is not supported for merged-model export under "
+            "Transformers 5: PreTrainedModel.save_pretrained always writes safetensors. "
+            "Leave save_safetensors=True. allow_unsafe=True only relaxes adapter-input "
+            "and post-save .bin checks — it does not restore legacy .bin output."
+        )
 
     # Library-callers safety net: reject `.bin` adapters (incl. mixed
     # `.safetensors`+`.bin`) before PeftModel.from_pretrained is invoked.
@@ -55,17 +71,15 @@ def merge_adapter(
     # resolver also creates the directory via mkdir(parents=True, exist_ok=True).
     safe_out_dir = resolve_output_directory(out_dir)
     logger.info(f"Saving merged model to {safe_out_dir}")
-    # Transformers 5 dropped ``safe_serialization`` on ``PreTrainedModel.save_pretrained``
-    # (safetensors is unconditional for plain merged models). That flag is still valid
-    # on ``PeftModel.save_pretrained`` (adapter path in ``train/trainer.py``). Keep the
-    # ``save_safetensors`` parameter here for the post-save assert gate only.
+    # Transformers 5: no safe_serialization kwarg on PreTrainedModel (always safetensors).
+    # PeftModel.save_pretrained (adapter path in train/trainer.py) still accepts it.
     merged_model.save_pretrained(
         str(safe_out_dir),
         **merged_model_save_kwargs(max_shard_size=max_shard_size),
     )
     tokenizer.save_pretrained(str(safe_out_dir))
 
-    if save_safetensors and not allow_unsafe:
+    if not allow_unsafe:
         assert_no_unsafe_weight_bins(str(safe_out_dir))
 
     index_path = write_artifact_index(str(safe_out_dir))
