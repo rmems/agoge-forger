@@ -173,8 +173,16 @@ def export_final_model(
         None, help="Specific adapter or checkpoint directory to export"
     ),
     base_model: str | None = typer.Option(None, help="Base model ID override"),
-    save_safetensors: bool = typer.Option(True, help="Save using safetensors"),
-    allow_unsafe_serialization: bool = typer.Option(False, help="Allow .bin weight files"),
+    save_safetensors: bool = typer.Option(
+        True,
+        help=(
+            "Require safetensors export (Transformers 5 always writes safetensors for "
+            "merged models; False is rejected)"
+        ),
+    ),
+    allow_unsafe_serialization: bool = typer.Option(
+        False, help="Allow unsafe .bin input adapters / skip post-save .bin assert"
+    ),
     max_shard_size: str = typer.Option("4GB", help="Maximum shard size for merged weights"),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
 ):
