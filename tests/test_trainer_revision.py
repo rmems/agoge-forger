@@ -25,7 +25,9 @@ def _patch_preflight(monkeypatch) -> None:
     monkeypatch.setattr(
         "agoge_forger.train.trainer.check_cuda_available", lambda required=True: None
     )
-    monkeypatch.setattr("agoge_forger.train.trainer.get_gpu_report", lambda: {"device_name": "mock"})
+    monkeypatch.setattr(
+        "agoge_forger.train.trainer.get_gpu_report", lambda: {"device_name": "mock"}
+    )
     monkeypatch.setattr("agoge_forger.train.trainer.estimate_training_risk", lambda *a, **k: None)
     monkeypatch.setattr("agoge_forger.train.trainer.warn_on_disk_pressure", lambda *a, **k: None)
     monkeypatch.setattr(
