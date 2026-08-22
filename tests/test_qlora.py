@@ -27,3 +27,4 @@ def test_train_qlora_honors_5080_yaml_load_in_4bit_true():
     mock_run.assert_called_once()
     passed = mock_run.call_args.args[0]
     assert passed.quantization.load_in_4bit is True
+    assert config.quantization.load_in_4bit is True
