@@ -47,6 +47,26 @@ def test_load_config_parses_explicit_revision(tmp_path):
     assert config.revision == "abcdef0123456789abcdef0123456789abcdef01"
 
 
+def test_load_config_coerces_unquoted_numeric_revision(tmp_path):
+    (tmp_path / "data.jsonl").write_text("{}\n")
+    config_path = tmp_path / "numeric_revision.yaml"
+    config_path.write_text('model_id: "org/model"\ndataset_path: data.jsonl\nrevision: 123456\n')
+
+    config = load_config(str(config_path))
+    assert config.revision == "123456"
+
+
+def test_load_config_normalizes_empty_revision_to_none(tmp_path):
+    (tmp_path / "data.jsonl").write_text("{}\n")
+    empty = tmp_path / "empty_revision.yaml"
+    empty.write_text('model_id: "org/model"\ndataset_path: data.jsonl\nrevision: ""\n')
+    assert load_config(str(empty)).revision is None
+
+    whitespace = tmp_path / "whitespace_revision.yaml"
+    whitespace.write_text('model_id: "org/model"\ndataset_path: data.jsonl\nrevision: "   "\n')
+    assert load_config(str(whitespace)).revision is None
+
+
 def test_config_loads_safetensors_fields():
     config = load_config("configs/smoke_test.yaml")
     assert config.runtime.save_safetensors is True

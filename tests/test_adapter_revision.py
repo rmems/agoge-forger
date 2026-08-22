@@ -95,3 +95,25 @@ def test_export_final_model_forwards_adapter_revision_to_load_base_model(monkeyp
         export_final_model(out_dir=str(tmp_path / "merged"), adapter_path=str(adapter))
 
     assert captured["revision"] == PINNED_REVISION
+
+
+def test_export_final_model_skips_adapter_revision_when_base_is_overridden(monkeypatch, tmp_path):
+    adapter = _write_adapter(tmp_path / "adapter")
+    captured: dict[str, object] = {}
+
+    def fake_load_base_model(*args, **kwargs):
+        captured["model_id"] = args[0] if args else None
+        captured["revision"] = kwargs.get("revision")
+        raise RuntimeError("stop-before-export")
+
+    monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", fake_load_base_model)
+
+    with pytest.raises(RuntimeError, match="stop-before-export"):
+        export_final_model(
+            out_dir=str(tmp_path / "merged"),
+            adapter_path=str(adapter),
+            base_model_id="replacement/model",
+        )
+
+    assert captured["model_id"] == "replacement/model"
+    assert captured["revision"] is None

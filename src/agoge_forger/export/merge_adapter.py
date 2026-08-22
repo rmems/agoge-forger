@@ -30,6 +30,7 @@ def merge_adapter(
     max_shard_size: str = "4GB",
     trust_remote_code: bool = False,
     revision: str | None = None,
+    infer_revision: bool = True,
 ):
     """Merge a LoRA adapter into the base model and write a shippable checkpoint.
 
@@ -60,7 +61,7 @@ def merge_adapter(
             f"rejected; pass allow_unsafe=True to override."
         )
 
-    if revision is None:
+    if revision is None and infer_revision:
         revision = infer_base_revision_from_adapter(adapter_path)
 
     model, tokenizer = load_base_model(
@@ -110,8 +111,13 @@ def export_final_model(
         adapter_path=adapter_path,
         allow_unsafe=allow_unsafe,
     )
-    resolved_base_model = base_model_id or infer_base_model_from_adapter(source_adapter)
-    revision = infer_base_revision_from_adapter(source_adapter)
+    if base_model_id is None:
+        resolved_base_model = infer_base_model_from_adapter(source_adapter)
+        revision = infer_base_revision_from_adapter(source_adapter)
+    else:
+        # A caller-supplied base may not contain the adapter's commit SHA.
+        resolved_base_model = base_model_id
+        revision = None
     logger.info(f"Exporting final merged model from {source_adapter}")
     merge_adapter(
         resolved_base_model,
@@ -122,4 +128,5 @@ def export_final_model(
         max_shard_size=max_shard_size,
         trust_remote_code=trust_remote_code,
         revision=revision,
+        infer_revision=False,
     )

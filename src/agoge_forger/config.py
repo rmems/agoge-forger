@@ -1,7 +1,27 @@
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .path_safety import resolve_existing_path
+
+
+def normalize_revision(value: object) -> str | None:
+    """Coerce a YAML/config revision into ``str | None``.
+
+    PyYAML parses unquoted numeric-looking refs (``revision: 123456``) as
+    ``int``, and Pydantic 2 will not coerce that into ``str | None``. Empty
+    or whitespace-only strings become ``None`` so loaders do not pass ``""``
+    to ``from_pretrained``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise TypeError("revision must be a Hub commit, tag, or branch name, not a boolean")
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    raise TypeError(f"revision must be a string or integer Hub ref, got {type(value).__name__}")
 
 
 class TrainingConfig(BaseModel):
@@ -55,6 +75,11 @@ class ExperimentConfig(BaseModel):
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     lora: LoraConfigModel = Field(default_factory=LoraConfigModel)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+
+    @field_validator("revision", mode="before")
+    @classmethod
+    def _normalize_revision(cls, value: object) -> str | None:
+        return normalize_revision(value)
 
 
 def load_config(yaml_path: str) -> ExperimentConfig:
