@@ -6,6 +6,7 @@ from ..models.load import load_base_model
 from ..path_safety import resolve_output_directory
 from ..train.checkpoints import (
     infer_base_model_from_adapter,
+    infer_base_revision_from_adapter,
     is_adapter_artifact,
     resolve_export_source,
 )
@@ -28,6 +29,7 @@ def merge_adapter(
     allow_unsafe: bool = False,
     max_shard_size: str = "4GB",
     trust_remote_code: bool = False,
+    revision: str | None = None,
 ):
     """Merge a LoRA adapter into the base model and write a shippable checkpoint.
 
@@ -58,8 +60,15 @@ def merge_adapter(
             f"rejected; pass allow_unsafe=True to override."
         )
 
+    if revision is None:
+        revision = infer_base_revision_from_adapter(adapter_path)
+
     model, tokenizer = load_base_model(
-        base_model_id, trust_remote_code=trust_remote_code, quant_config=None, bf16=True
+        base_model_id,
+        trust_remote_code=trust_remote_code,
+        quant_config=None,
+        bf16=True,
+        revision=revision,
     )
     model = PeftModel.from_pretrained(model, adapter_path)
 
@@ -102,6 +111,7 @@ def export_final_model(
         allow_unsafe=allow_unsafe,
     )
     resolved_base_model = base_model_id or infer_base_model_from_adapter(source_adapter)
+    revision = infer_base_revision_from_adapter(source_adapter)
     logger.info(f"Exporting final merged model from {source_adapter}")
     merge_adapter(
         resolved_base_model,
@@ -111,4 +121,5 @@ def export_final_model(
         allow_unsafe=allow_unsafe,
         max_shard_size=max_shard_size,
         trust_remote_code=trust_remote_code,
+        revision=revision,
     )

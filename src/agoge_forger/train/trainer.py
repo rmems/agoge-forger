@@ -88,6 +88,7 @@ def _prepare_peft_model(config, model):
         lora_dropout=config.lora.lora_dropout,
         target_modules=target_modules,
         task_type="CAUSAL_LM",
+        revision=config.revision,
     )
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
