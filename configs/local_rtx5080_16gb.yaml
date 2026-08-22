@@ -1,5 +1,7 @@
 # Conservative defaults for an RTX 5080 16GB
 model_id: "Qwen/Qwen2.5-1.5B-Instruct" # Change this as needed
+# Hub commit pin so tokenizer + weights cannot drift under the floating tag.
+revision: "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
 trust_remote_code: true
 dataset_path: "../datasets/samples/tiny_sft.jsonl"
 dataset_text_field: "text"

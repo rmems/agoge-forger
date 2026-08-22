@@ -44,6 +44,7 @@ class RuntimeConfig(BaseModel):
 
 class ExperimentConfig(BaseModel):
     model_id: str
+    revision: str | None = None
     trust_remote_code: bool = False
     dataset_path: str
     dataset_text_field: str = "text"
@@ -84,6 +85,7 @@ def load_config(yaml_path: str) -> ExperimentConfig:
     # Flattened parsing to match yaml structure
     return ExperimentConfig(
         model_id=data["model_id"],
+        revision=data.get("revision"),
         trust_remote_code=data.get("trust_remote_code", False),
         dataset_path=dataset_path,
         dataset_text_field=data.get("dataset_text_field", "text"),

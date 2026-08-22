@@ -1,12 +1,50 @@
 from agoge_forger.config import ExperimentConfig, load_config
 
+SMOKE_REVISION = "d3040b7c81a0a810fa13c6f392f3e304a0e121d5"
+RTX5080_REVISION = "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
+
 
 def test_load_smoke_config():
     config = load_config("configs/smoke_test.yaml")
     assert isinstance(config, ExperimentConfig)
     assert config.model_id == "HuggingFaceM4/tiny-random-LlamaForCausalLM"
+    assert config.revision == SMOKE_REVISION
     assert config.training.batch_size == 1
     assert config.quantization.load_in_4bit is False
+
+
+def test_load_5080_config_pins_hub_revision():
+    config = load_config("configs/local_rtx5080_16gb.yaml")
+    assert isinstance(config, ExperimentConfig)
+    assert config.model_id == "Qwen/Qwen2.5-1.5B-Instruct"
+    assert config.revision == RTX5080_REVISION
+
+
+def test_revision_is_optional_and_defaults_to_none(tmp_path):
+    (tmp_path / "data.jsonl").write_text("{}\n")
+    config_path = tmp_path / "no_revision.yaml"
+    config_path.write_text('model_id: "test-model"\ndataset_path: "data.jsonl"\n')
+
+    config = load_config(str(config_path))
+    assert config.revision is None
+
+
+def test_existing_configs_without_revision_still_load():
+    config = load_config("configs/nemotron_3_nano_4b_qlora.yaml")
+    assert config.revision is None
+
+
+def test_load_config_parses_explicit_revision(tmp_path):
+    (tmp_path / "data.jsonl").write_text("{}\n")
+    config_path = tmp_path / "pinned.yaml"
+    config_path.write_text(
+        'model_id: "org/model"\n'
+        "dataset_path: data.jsonl\n"
+        "revision: abcdef0123456789abcdef0123456789abcdef01\n"
+    )
+
+    config = load_config(str(config_path))
+    assert config.revision == "abcdef0123456789abcdef0123456789abcdef01"
 
 
 def test_config_loads_safetensors_fields():

@@ -145,6 +145,7 @@ def run_training(config):
         config.trust_remote_code,
         config.quantization,
         config.training.bf16,
+        revision=config.revision,
     )
     model = _prepare_peft_model(config, model)
 
