@@ -60,6 +60,15 @@ pub const WORKLOAD_MANIFEST_FILE_NAME: &str = "workload_manifest.json";
 /// needs more.
 pub const MAX_REQUEST_COUNT: usize = 1_000_000;
 
+/// Upper bound on [`WorkloadSpec::workload`], in bytes.
+///
+/// The label is cloned into every generated row, so bounding
+/// [`MAX_REQUEST_COUNT`] alone does not bound memory: a 100 KB label at the
+/// maximum count would allocate over 100 GB of labels before the JSONL
+/// buffer is even built, OOM-ing the process instead of failing fast. A
+/// label is a short name like `inference`, so 256 bytes is already generous.
+pub const MAX_WORKLOAD_LABEL_LEN: usize = 256;
+
 /// Name recorded in the manifest as the producer of these files.
 pub const GENERATOR_NAME: &str = "agoge-benchgen";
 
@@ -212,6 +221,12 @@ impl WorkloadSpec {
     pub fn validate(&self) -> Result<()> {
         if self.workload.trim().is_empty() {
             bail!("workload label must not be empty");
+        }
+        if self.workload.len() > MAX_WORKLOAD_LABEL_LEN {
+            bail!(
+                "workload label of {} bytes exceeds the maximum of {MAX_WORKLOAD_LABEL_LEN}",
+                self.workload.len()
+            );
         }
         if self.count == 0 {
             bail!("count must be greater than 0");
@@ -483,6 +498,27 @@ mod tests {
     fn validate_rejects_a_zero_count() {
         let error = spec_with("inference", 0, 1).validate().unwrap_err();
         assert!(error.to_string().contains("greater than 0"));
+    }
+
+    #[test]
+    fn validate_accepts_both_label_length_boundaries() {
+        let longest = "x".repeat(MAX_WORKLOAD_LABEL_LEN);
+        assert!(spec_with(&longest, 1, 1).validate().is_ok());
+        assert!(spec_with("x", 1, 1).validate().is_ok());
+    }
+
+    /// The label is cloned per row, so an unbounded label defeats the
+    /// count-based OOM guard rather than being caught by it.
+    #[test]
+    fn validate_rejects_a_label_above_the_maximum() {
+        let too_long = "x".repeat(MAX_WORKLOAD_LABEL_LEN + 1);
+        let error = spec_with(&too_long, MAX_REQUEST_COUNT, 1)
+            .validate()
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("workload label"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
