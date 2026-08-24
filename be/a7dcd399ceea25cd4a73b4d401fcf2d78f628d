@@ -1,0 +1,19 @@
+.github/workflows/config_contract_gate.yml
+  s_12fe995be171b7::t_d27d66610e091a 14-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "bea7dcd399ceea25cd4a73b4d401fcf2d78f628d",
+  "prompts": {},
+  "sessions": {
+    "s_12fe995be171b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88c1746a-4c42-43ca-b1d4-3f544aaa63d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
