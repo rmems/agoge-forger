@@ -11,6 +11,11 @@ on:
       # Without this entry a README-only PR reaching main runs neither gate,
       # so the artifact-contract wording could be reworded unchecked.
       - "README.md"
+      # Every top-level config points dataset_path at datasets/samples/, and
+      # load_config resolves it through resolve_existing_path(must_be_file=True)
+      # — so deleting or renaming a sample makes all four configs unloadable.
+      # No other pull-request workflow watches this directory.
+      - "datasets/samples/**"
       - ".github/workflows/config_contract_gate.yml"
 
 # One run per pull request. Superseded commits cancel their in-flight run:
