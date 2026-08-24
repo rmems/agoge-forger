@@ -1,0 +1,57 @@
+rust-tools/crates/agoge-jsonl/src/lib.rs
+  s_12fe995be171b7::t_25104bbb708628 12-15
+rust-tools/crates/agoge-benchgen/Cargo.toml
+  s_12fe995be171b7::t_f16f9a2a98fb80 1-9
+rust-tools/crates/agoge-benchgen/tests/output_contract.rs
+  s_12fe995be171b7::t_139b8f53a97a15 120-122
+  s_12fe995be171b7::t_ce2a54a5d98487 1-119,123-206
+rust-tools/crates/agoge-jsonl/tests/validate_file.rs
+  s_12fe995be171b7::t_db7bf287097f4f 1-125
+rust-tools/README.md
+  s_12fe995be171b7::t_f27c238659219a 144,146-151,153,155,157
+  s_12fe995be171b7::t_2cbaf03b5faf08 90
+  s_12fe995be171b7::t_a8d3f8e1226105 112
+  s_12fe995be171b7::t_daac92935786cf 7-10
+  s_12fe995be171b7::t_d1e00687df89cf 6,11-21,23-89,91-111,113-143,145,152,154,156,158-165
+  s_12fe995be171b7::t_fc25d61cddcaf4 3
+  s_12fe995be171b7::t_6d2a876b731abc 22
+rust-tools/crates/agoge-benchgen/tests/determinism.rs
+  s_12fe995be171b7::t_a3a4c837faad7e 1-67,72-85,90-224,229-231
+  s_12fe995be171b7::t_139b8f53a97a15 68-71,86-89,225-228
+rust-tools/crates/agoge-cli/Cargo.toml
+  s_12fe995be171b7::t_a03a389107c26e 9
+rust-tools/crates/agoge-benchgen/tests/path_safety.rs
+  s_12fe995be171b7::t_67ae0b5fd329aa 1-52,58-120,123-145
+  s_12fe995be171b7::t_281c9b2c5463cb 53-57
+  s_12fe995be171b7::t_0fa41fe161dba0 121-122
+rust-tools/crates/agoge-cli/src/main.rs
+  s_12fe995be171b7::t_170354bee49998 1-3,16-43,57-82
+rust-tools/Cargo.lock
+  ai_agent 6-13,18
+rust-tools/Cargo.toml
+  s_12fe995be171b7::t_bd83ab0aee7a91 5-6
+rust-tools/crates/agoge-benchgen/src/lib.rs
+  s_12fe995be171b7::t_238e4058289fde 296-299,301-305
+  s_12fe995be171b7::t_f6bb733da1e46a 324-325
+  s_12fe995be171b7::t_6ca5629ee28e08 407-439,443-566,572-574,581-604
+  s_12fe995be171b7::t_53e9b7179ffc49 575-580
+  s_12fe995be171b7::t_139b8f53a97a15 440-442
+  s_12fe995be171b7::t_f0853c54b4fa2c 1-295,300,306-323,326-406
+  s_12fe995be171b7::t_280455718e562a 567-571
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "09568ac28453c2a912b45032aae1250b69cbab1c",
+  "prompts": {},
+  "sessions": {
+    "s_12fe995be171b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88c1746a-4c42-43ca-b1d4-3f544aaa63d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
