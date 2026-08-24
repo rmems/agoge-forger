@@ -539,6 +539,27 @@ def test_cli_reports_inspection_failure_as_exit_one(runner, tmp_path, monkeypatc
     _assert_clean_exit(result, 1)
 
 
+@pytest.mark.parametrize("flag", [None, "--merged-dir"])
+def test_cli_unresolvable_home_directory_exits_one(runner, tmp_path, flag):
+    """`~user` for an account with no home is a controlled error, not a crash.
+
+    `Path.expanduser()` raises `RuntimeError` there, which is neither an
+    `OSError` nor a `ValueError`, so it needs naming explicitly.
+    """
+    bad = "~no-such-account-for-agoge-tests/adapters/run"
+
+    if flag is None:
+        args = ["run-status", bad]
+    else:
+        run_dir = _make_run_dir(tmp_path)
+        _write_final_adapter(run_dir)
+        args = ["run-status", str(run_dir), flag, bad]
+
+    result = runner.invoke(app, args)
+
+    _assert_clean_exit(result, 1)
+
+
 # --------------------------------------------------------------------------
 # 10. CLI output contract
 # --------------------------------------------------------------------------

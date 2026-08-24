@@ -223,9 +223,12 @@ def run_status(
     ),
 ):
     """Report resume/export readiness for a training run directory."""
+    # RuntimeError: `Path.expanduser()` raises it for a `~user` prefix naming an
+    # account with no resolvable home directory, and it is neither an OSError
+    # nor a ValueError.
     try:
         safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True))
-    except (FileNotFoundError, ValueError, NotADirectoryError, OSError) as e:
+    except (FileNotFoundError, ValueError, NotADirectoryError, OSError, RuntimeError) as e:
         logger.error(str(e))
         raise typer.Exit(code=1)
 
@@ -237,7 +240,7 @@ def run_status(
             # A merged model that has not been exported yet is a legitimate
             # "not ready" answer, so report it as absent instead of failing.
             safe_merged_dir = merged_dir
-        except (ValueError, NotADirectoryError, OSError) as e:
+        except (ValueError, NotADirectoryError, OSError, RuntimeError) as e:
             logger.error(str(e))
             raise typer.Exit(code=1)
 
