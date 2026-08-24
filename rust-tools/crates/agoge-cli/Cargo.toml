@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 agoge-jsonl = { path = "../agoge-jsonl" }
 agoge-gguf = { path = "../agoge-gguf" }
+agoge-benchgen = { path = "../agoge-benchgen" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

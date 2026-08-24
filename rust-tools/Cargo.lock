@@ -3,9 +3,19 @@
 version = 4
 
 [[package]]
+name = "agoge-benchgen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "agoge-cli"
 version = "0.1.0"
 dependencies = [
+ "agoge-benchgen",
  "agoge-gguf",
  "agoge-jsonl",
  "anyhow",

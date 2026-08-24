@@ -2,7 +2,8 @@
 members = [
     "crates/agoge-cli",
     "crates/agoge-jsonl",
-    "crates/agoge-gguf"
+    "crates/agoge-gguf",
+    "crates/agoge-benchgen"
 ]
 resolver = "2"
 
