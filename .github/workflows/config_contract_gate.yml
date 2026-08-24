@@ -6,7 +6,18 @@ on:
       - "configs/**"
       - "src/agoge_forger/config.py"
       - "docs/contracts/**"
+      # tests/test_docs_workflow.py asserts on exact README sentences, and
+      # pr_quality_gate.yml does not list README.md in its own paths filter.
+      # Without this entry a README-only PR reaching main runs neither gate,
+      # so the artifact-contract wording could be reworded unchecked.
+      - "README.md"
       - ".github/workflows/config_contract_gate.yml"
+
+# One run per pull request. Superseded commits cancel their in-flight run:
+# this job only parses configs and runs CPU tests, so nothing is lost.
+concurrency:
+  group: config-contract-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
