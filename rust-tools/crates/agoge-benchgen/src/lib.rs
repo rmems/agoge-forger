@@ -379,11 +379,35 @@ pub fn write_workload(spec: &WorkloadSpec, runs_root: &Path) -> Result<PathBuf> 
     fs::create_dir_all(&run_dir)
         .with_context(|| format!("Failed to create run directory {}", run_dir.display()))?;
 
+    let workload_path = write_workload_file(spec, &run_dir)?;
+    write_manifest_file(spec, &run_dir)?;
+
+    Ok(workload_path)
+}
+
+/// Generates the rows and writes [`WORKLOAD_FILE_NAME`] into `run_dir`.
+///
+/// Returns the path to the workload JSONL file.
+///
+/// # Errors
+///
+/// Returns an error when the spec is invalid, when a row fails to serialize,
+/// or when the write fails.
+fn write_workload_file(spec: &WorkloadSpec, run_dir: &Path) -> Result<PathBuf> {
     let rows = generate_workload(spec)?;
     let workload_path = run_dir.join(WORKLOAD_FILE_NAME);
     fs::write(&workload_path, render_jsonl(&rows)?)
         .with_context(|| format!("Failed to write {}", workload_path.display()))?;
+    Ok(workload_path)
+}
 
+/// Writes [`WORKLOAD_MANIFEST_FILE_NAME`] into `run_dir` as pretty-printed
+/// JSON (indent 2, trailing newline), matching the repo-wide JSON convention.
+///
+/// # Errors
+///
+/// Returns an error when the manifest fails to serialize or the write fails.
+fn write_manifest_file(spec: &WorkloadSpec, run_dir: &Path) -> Result<()> {
     let manifest = WorkloadManifest {
         run_name: &spec.run_name,
         workload: &spec.workload,
@@ -400,9 +424,7 @@ pub fn write_workload(spec: &WorkloadSpec, runs_root: &Path) -> Result<PathBuf> 
         serde_json::to_string_pretty(&manifest).context("Failed to serialize workload manifest")?;
     manifest_json.push('\n');
     fs::write(&manifest_path, manifest_json)
-        .with_context(|| format!("Failed to write {}", manifest_path.display()))?;
-
-    Ok(workload_path)
+        .with_context(|| format!("Failed to write {}", manifest_path.display()))
 }
 
 #[cfg(test)]
