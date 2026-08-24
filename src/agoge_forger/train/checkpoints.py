@@ -84,16 +84,29 @@ def find_latest_valid_checkpoint(run_dir: PathLike, *, allow_unsafe: bool = Fals
     return checkpoints[-1]
 
 
-def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
+def _load_adapter_config(adapter_path: PathLike) -> dict:
     adapter_dir = Path(adapter_path)
     config_path = adapter_dir / "adapter_config.json"
     with config_path.open() as handle:
-        adapter_config = json.load(handle)
+        return json.load(handle)
 
+
+def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
+    adapter_config = _load_adapter_config(adapter_path)
     base_model = adapter_config.get("base_model_name_or_path")
     if not base_model:
-        raise ValueError(f"base_model_name_or_path not found in {config_path}")
+        raise ValueError(
+            f"base_model_name_or_path not found in {Path(adapter_path) / 'adapter_config.json'}"
+        )
     return base_model
+
+
+def infer_base_revision_from_adapter(adapter_path: PathLike) -> str | None:
+    """Return the Hub revision persisted on a PEFT adapter, if any."""
+    revision = _load_adapter_config(adapter_path).get("revision")
+    if revision is None or revision == "":
+        return None
+    return str(revision)
 
 
 def resolve_resume_checkpoint(run_dir: str, config) -> str | None:
