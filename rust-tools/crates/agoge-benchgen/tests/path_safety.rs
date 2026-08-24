@@ -178,3 +178,42 @@ fn a_symlinked_run_directory_is_rejected() {
 
     fs::remove_dir_all(&scratch).expect("cleanup");
 }
+
+/// One level below the directory case: the run directory is genuine, but an
+/// artifact *inside* it is a symlink. `fs::write` follows a symlinked file and
+/// truncates whatever it points at, so checking only `run_dir` is not enough.
+///
+/// Runs once per artifact, since the two are written by different functions.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_artifact_file_is_rejected() {
+    for (label, artifact) in [
+        ("workload", agoge_benchgen::WORKLOAD_FILE_NAME),
+        ("manifest", agoge_benchgen::WORKLOAD_MANIFEST_FILE_NAME),
+    ] {
+        let scratch = scratch_dir(&format!("bench-path-symlink-{label}"));
+        let runs_root = scratch.join("runs");
+        let run_dir = runs_root.join("planted");
+        fs::create_dir_all(&run_dir).expect("create run dir");
+
+        // The file the attacker wants truncated, well outside the runs root.
+        let victim = scratch.join("victim.txt");
+        fs::write(&victim, b"precious").expect("create victim");
+        std::os::unix::fs::symlink(&victim, run_dir.join(artifact)).expect("create symlink");
+
+        let error = write_workload(&spec_named("planted"), &runs_root)
+            .expect_err("symlinked {label} must be rejected");
+
+        assert!(
+            format!("{error:#}").contains("symlink"),
+            "unexpected error for {label}: {error:#}"
+        );
+        assert_eq!(
+            fs::read(&victim).expect("victim readable"),
+            b"precious",
+            "a symlinked {label} let the write truncate its target"
+        );
+
+        fs::remove_dir_all(&scratch).expect("cleanup");
+    }
+}

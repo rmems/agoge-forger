@@ -17,8 +17,11 @@ enum Commands {
     /// Generates a deterministic, seeded benchmark workload as JSONL
     ///
     /// Writes <runs-root>/<run-name>/workload.jsonl plus a companion
-    /// workload_manifest.json. The same --seed, --count and --workload always
-    /// produce byte-identical output.
+    /// workload_manifest.json. The same --seed, --count, --workload,
+    /// --max-tokens and --stream always produce byte-identical output;
+    /// --max-tokens and --stream count because both are recorded on every
+    /// row. Only --run-name is excluded: it names the directory and appears
+    /// in the manifest, never in a row.
     Benchgen {
         /// Run name; becomes the <runs-root>/<run-name>/ output directory
         #[arg(long)]
@@ -26,7 +29,7 @@ enum Commands {
         /// Number of requests to generate
         #[arg(long, default_value_t = 32)]
         count: usize,
-        /// PRNG seed; identical seeds produce byte-identical output
+        /// PRNG seed; drives prompt text, and is recorded on every row
         #[arg(long, default_value_t = agoge_benchgen::DEFAULT_SEED)]
         seed: u64,
         /// Workload label recorded on every row (e.g. inference, eval)

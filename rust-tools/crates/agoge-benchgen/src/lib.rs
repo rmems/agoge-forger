@@ -375,6 +375,27 @@ fn validate_run_name(run_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Rejects `path` when it already exists as a symlink.
+///
+/// `validate_run_name` only clears the run_name *string*; it cannot see what
+/// is already on disk at the destination. Every path this crate creates or
+/// replaces is therefore checked here first, because both write primitives
+/// follow links: `create_dir_all` accepts a symlink-to-directory, and
+/// `fs::write` follows a symlinked file and truncates whatever it points at.
+/// A pre-populated or shared runs directory is enough to plant either one.
+///
+/// `symlink_metadata` is the load-bearing detail — it stats the link itself,
+/// where `metadata` would silently follow it and report the target.
+fn reject_existing_symlink(path: &Path, label: &str) -> Result<()> {
+    if fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        bail!(
+            "{label} must be a real path, not a symlink: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Generates the workload and writes it under `<runs_root>/<run_name>/`.
 ///
 /// Writes two files:
@@ -395,17 +416,7 @@ pub fn write_workload(spec: &WorkloadSpec, runs_root: &Path) -> Result<PathBuf> 
     validate_run_name(&spec.run_name)?;
 
     let run_dir = runs_root.join(&spec.run_name);
-    // `validate_run_name` clears the *string*, but a pre-existing symlink at
-    // the destination would still redirect both writes outside `runs_root`:
-    // `create_dir_all` accepts a symlink-to-directory and `fs::write` follows
-    // it. Reject that here, using `symlink_metadata` so the link itself is
-    // stat-ed rather than its target.
-    if fs::symlink_metadata(&run_dir).is_ok_and(|meta| meta.file_type().is_symlink()) {
-        bail!(
-            "run directory must be a real directory, not a symlink: {}",
-            run_dir.display()
-        );
-    }
+    reject_existing_symlink(&run_dir, "run directory")?;
     fs::create_dir_all(&run_dir)
         .with_context(|| format!("Failed to create run directory {}", run_dir.display()))?;
 
@@ -426,6 +437,7 @@ pub fn write_workload(spec: &WorkloadSpec, runs_root: &Path) -> Result<PathBuf> 
 fn write_workload_file(spec: &WorkloadSpec, run_dir: &Path) -> Result<PathBuf> {
     let rows = generate_workload(spec)?;
     let workload_path = run_dir.join(WORKLOAD_FILE_NAME);
+    reject_existing_symlink(&workload_path, WORKLOAD_FILE_NAME)?;
     fs::write(&workload_path, render_jsonl(&rows)?)
         .with_context(|| format!("Failed to write {}", workload_path.display()))?;
     Ok(workload_path)
@@ -450,6 +462,7 @@ fn write_manifest_file(spec: &WorkloadSpec, run_dir: &Path) -> Result<()> {
         generator_version: env!("CARGO_PKG_VERSION"),
     };
     let manifest_path = run_dir.join(WORKLOAD_MANIFEST_FILE_NAME);
+    reject_existing_symlink(&manifest_path, WORKLOAD_MANIFEST_FILE_NAME)?;
     let mut manifest_json =
         serde_json::to_string_pretty(&manifest).context("Failed to serialize workload manifest")?;
     manifest_json.push('\n');
