@@ -1,0 +1,21 @@
+src/agoge_forger/cli.py
+  s_12fe995be171b7::t_659541e6fab679 226-228,231,243
+tests/test_run_status.py
+  s_12fe995be171b7::t_659541e6fab679 542-562
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e0b0dde74cfedc0ac47d4c40771033d47060b017",
+  "prompts": {},
+  "sessions": {
+    "s_12fe995be171b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88c1746a-4c42-43ca-b1d4-3f544aaa63d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
