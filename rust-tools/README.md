@@ -124,7 +124,7 @@ Wrote ../runs/serving-seed7/workload_manifest.json.
 
 ### Determinism
 
-The same `(seed, count, workload)` triple produces a **byte-for-byte identical** `workload.jsonl` — on any machine, any OS, any rustc version. A benchmark you cannot replay is not a benchmark. `run_name` is not part of that triple: it names the directory and appears in the manifest, never in a row.
+The same `(seed, count, workload, max_tokens, stream)` spec produces a **byte-for-byte identical** `workload.jsonl` — on any machine, any OS, any rustc version. A benchmark you cannot replay is not a benchmark. `max_tokens` and `stream` are part of that key because both are copied verbatim into every row; the prompt *text* alone depends on just `(seed, count, workload)`. `run_name` is not part of it either way: it names the directory and appears in the manifest, never in a row.
 
 ```bash
 cargo run -q -p agoge-cli -- benchgen --run-name replay-a --seed 7 --count 8 --runs-root ../runs

@@ -143,3 +143,38 @@ fn a_blank_workload_label_is_rejected_before_any_directory_is_created() {
 
     fs::remove_dir_all(&scratch).expect("cleanup");
 }
+
+/// The case the `run_name` string check cannot see: the name is a single,
+/// perfectly legal component, but the destination already exists as a symlink
+/// pointing out of the root. `create_dir_all` accepts a symlink-to-directory
+/// and `fs::write` follows it, so without an explicit check both artifacts
+/// land outside `runs_root`.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_run_directory_is_rejected() {
+    let scratch = scratch_dir("bench-path-symlink");
+    let runs_root = scratch.join("runs");
+    let outside = scratch.join("outside");
+    fs::create_dir_all(&runs_root).expect("create runs root");
+    fs::create_dir_all(&outside).expect("create outside dir");
+    std::os::unix::fs::symlink(&outside, runs_root.join("escape")).expect("create symlink");
+
+    let error =
+        write_workload(&spec_named("escape"), &runs_root).expect_err("symlink must be rejected");
+
+    assert!(
+        format!("{error:#}").contains("symlink"),
+        "unexpected error: {error:#}"
+    );
+    for artifact in [
+        agoge_benchgen::WORKLOAD_FILE_NAME,
+        agoge_benchgen::WORKLOAD_MANIFEST_FILE_NAME,
+    ] {
+        assert!(
+            !outside.join(artifact).exists(),
+            "{artifact} escaped the runs root through a symlinked run directory"
+        );
+    }
+
+    fs::remove_dir_all(&scratch).expect("cleanup");
+}
