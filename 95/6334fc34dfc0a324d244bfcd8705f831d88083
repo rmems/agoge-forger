@@ -1,0 +1,24 @@
+rust-tools/crates/agoge-benchgen/tests/path_safety.rs
+  s_12fe995be171b7::t_263881be5175d0 146-180
+rust-tools/README.md
+  s_12fe995be171b7::t_0217d613feb67e 127
+rust-tools/crates/agoge-benchgen/src/lib.rs
+  s_12fe995be171b7::t_d0d4c617792075 12-19
+  s_12fe995be171b7::t_6ab234c6fb63f4 383-393
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "956334fc34dfc0a324d244bfcd8705f831d88083",
+  "prompts": {},
+  "sessions": {
+    "s_12fe995be171b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88c1746a-4c42-43ca-b1d4-3f544aaa63d0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
