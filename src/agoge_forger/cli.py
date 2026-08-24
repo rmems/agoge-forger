@@ -21,6 +21,11 @@ from .models.lora_targets import inspect_lora_targets as _inspect_lora_targets
 from .models.metadata import get_model_config_metadata
 from .path_safety import resolve_existing_path, resolve_output_directory
 from .providers.chat_completions import ChatCompletionsConfig
+from .run_status import (
+    RunStatusFormat,
+    build_run_status,
+    format_run_status_table,
+)
 from .serving.benchmark import benchmark_vllm_frontends
 from .serving.config import (
     BenchmarkConfig,
@@ -202,6 +207,50 @@ def export_final_model(
         max_shard_size=max_shard_size,
         trust_remote_code=trust_remote_code,
     )
+
+
+@app.command()
+def run_status(
+    run_dir: str = typer.Argument(..., help="Run directory to inspect (adapters/<run_name>)"),
+    merged_dir: str | None = typer.Option(
+        None, "--merged-dir", help="Merged model directory (defaults to merged/<run_name>)"
+    ),
+    output_format: Annotated[
+        RunStatusFormat, typer.Option("--format", help="Report format")
+    ] = RunStatusFormat.json,
+    allow_unsafe_serialization: bool = typer.Option(
+        False, help="Accept legacy .bin adapter artifacts"
+    ),
+):
+    """Report resume/export readiness for a training run directory."""
+    try:
+        safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True))
+    except (FileNotFoundError, ValueError, NotADirectoryError, OSError) as e:
+        logger.error(str(e))
+        raise typer.Exit(code=1)
+
+    safe_merged_dir: str | None = None
+    if merged_dir is not None:
+        try:
+            safe_merged_dir = str(resolve_existing_path(merged_dir, must_be_dir=True))
+        except FileNotFoundError:
+            # A merged model that has not been exported yet is a legitimate
+            # "not ready" answer, so report it as absent instead of failing.
+            safe_merged_dir = merged_dir
+        except (ValueError, NotADirectoryError, OSError) as e:
+            logger.error(str(e))
+            raise typer.Exit(code=1)
+
+    report = build_run_status(
+        safe_run_dir,
+        merged_dir=safe_merged_dir,
+        allow_unsafe=allow_unsafe_serialization,
+    )
+    # stdout, not the logger: the JSON report is meant to be piped into jq.
+    if output_format == RunStatusFormat.table:
+        typer.echo(format_run_status_table(report))
+    else:
+        typer.echo(json.dumps(report, indent=2))
 
 
 @app.command()
