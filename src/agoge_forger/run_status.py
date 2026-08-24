@@ -18,11 +18,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from .artifacts.safetensors_io import find_safetensors_files
 from .path_safety import resolve_existing_path
 from .train.checkpoints import (
     _checkpoint_step,
-    find_latest_valid_checkpoint,
     infer_base_model_from_adapter,
     infer_base_revision_from_adapter,
     is_adapter_artifact,
@@ -36,8 +34,17 @@ PathLike = str | Path
 
 # A malformed or unreadable adapter_config.json must degrade to "unknown base
 # model", never crash a status report. json.JSONDecodeError is a ValueError
-# subclass; it is named here for the reader's benefit.
-_ADAPTER_CONFIG_ERRORS = (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError)
+# subclass; it is named here for the reader's benefit. AttributeError covers a
+# file that parses as valid JSON but is not an object (`[]`, `"text"`, `3`), on
+# which the checkpoint helpers' `.get(...)` call would otherwise raise.
+_ADAPTER_CONFIG_ERRORS = (
+    OSError,
+    ValueError,
+    KeyError,
+    TypeError,
+    AttributeError,
+    json.JSONDecodeError,
+)
 
 
 class RunStatusFormat(str, Enum):
@@ -51,15 +58,19 @@ def is_merged_model_dir(path: PathLike) -> bool:
     """Return True when `path` looks like an exported merged model directory.
 
     A merged model is a full `save_pretrained` tree: a `config.json` plus at
-    least one safetensors file. Weight discovery is delegated to
-    `find_safetensors_files` so sharded exports are recognised too.
+    least one safetensors weight file *directly in the directory*. The root-level
+    requirement is what distinguishes a real merge from a tree that merely
+    contains adapters further down (`checkpoint-10/adapter_model.safetensors`),
+    which a recursive search would misreport as an already-merged model. Sharded
+    exports still match, since `save_pretrained` writes every
+    `model-0000N-of-0000M.safetensors` shard at the root alongside its index.
     """
     candidate = Path(path)
     if not candidate.is_dir():
         return False
     if not (candidate / "config.json").is_file():
         return False
-    return bool(find_safetensors_files(str(candidate)))
+    return any(entry.is_file() for entry in candidate.glob("*.safetensors"))
 
 
 def find_merged_model_dir(run_dir: Path, merged_dir: str | None = None) -> Path | None:
@@ -132,8 +143,13 @@ def build_run_status(
 
     checkpoints = list_valid_checkpoints(resolved_run_dir, allow_unsafe=allow_unsafe)
     # Exactly the selection `resolve_resume_checkpoint` makes when
-    # `resume_from_latest_checkpoint` is set — no second implementation.
-    latest_checkpoint = find_latest_valid_checkpoint(resolved_run_dir, allow_unsafe=allow_unsafe)
+    # `resume_from_latest_checkpoint` is set: `find_latest_valid_checkpoint` is
+    # the last element of this very list. Taking it from the list already in
+    # hand — rather than rescanning — keeps `steps`, `valid_count`,
+    # `latest_step` and `latest_path` describing one single observation of the
+    # directory, so a checkpoint written mid-report cannot produce a report
+    # whose `latest_step` is missing from its own `steps`.
+    latest_checkpoint = checkpoints[-1] if checkpoints else None
     latest_step = None if latest_checkpoint is None else _checkpoint_step(latest_checkpoint)
 
     final_adapter_present = is_adapter_artifact(resolved_run_dir, allow_unsafe=allow_unsafe)

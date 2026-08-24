@@ -198,6 +198,25 @@ def test_checkpoints_only_run_is_resume_ready(tmp_path):
     assert report["base_model"] == "Qwen/Qwen3.5-0.5B"
 
 
+def test_latest_checkpoint_is_always_drawn_from_the_reported_steps(tmp_path):
+    """`latest_step`/`latest_path` must describe a checkpoint the report lists.
+
+    They are derived from the same single scan as `steps` and `valid_count`, so
+    a checkpoint appearing or disappearing between two scans cannot yield a
+    report whose latest checkpoint is missing from its own list.
+    """
+    run_dir = _make_run_dir(tmp_path)
+    for step in (25, 50, 100):
+        _write_checkpoint(run_dir, step)
+
+    checkpoints = build_run_status(str(run_dir))["checkpoints"]
+
+    assert checkpoints["latest_step"] in checkpoints["steps"]
+    assert checkpoints["latest_step"] == checkpoints["steps"][-1]
+    assert checkpoints["valid_count"] == len(checkpoints["steps"])
+    assert checkpoints["latest_path"].endswith(f"checkpoint-{checkpoints['latest_step']}")
+
+
 # --------------------------------------------------------------------------
 # 4. Final adapter at the run root
 # --------------------------------------------------------------------------
@@ -311,6 +330,41 @@ def test_merged_dir_without_safetensors_is_not_a_merged_model(tmp_path):
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
 
 
+def test_merged_dir_with_only_nested_safetensors_is_not_a_merged_model(tmp_path):
+    """A tree holding adapters further down is not an exported merged model.
+
+    A merged model keeps its weights at the directory root; a run tree that only
+    contains `checkpoint-N/adapter_model.safetensors` must not read as already
+    merged, or an operator would skip an export that never happened.
+    """
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = tmp_path / "merged" / run_dir.name
+    _write_checkpoint(merged, 10)
+    (merged / "config.json").write_text('{"model_type": "llama"}')
+
+    assert is_merged_model_dir(merged) is False
+    assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
+
+
+def test_sharded_merged_model_is_recognised(tmp_path):
+    """`save_pretrained` shards keep every weight file at the root."""
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = tmp_path / "merged" / run_dir.name
+    merged.mkdir(parents=True)
+    (merged / "config.json").write_text('{"model_type": "llama"}')
+    (merged / "model.safetensors.index.json").write_text("{}")
+    (merged / "model-00001-of-00002.safetensors").write_text("shard-1")
+    (merged / "model-00002-of-00002.safetensors").write_text("shard-2")
+
+    assert is_merged_model_dir(merged) is True
+    assert build_run_status(str(run_dir))["merged_model"] == {
+        "present": True,
+        "path": str(merged.resolve()),
+    }
+
+
 def test_explicit_merged_dir_is_honored(runner, tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
@@ -409,6 +463,27 @@ def test_adapter_config_without_base_model_key_yields_null_base_model(runner, tm
     assert result.exit_code == 0
 
 
+@pytest.mark.parametrize("payload", ["[]", '["a", "b"]', '"a string"', "3", "null"])
+def test_non_object_adapter_config_yields_null_base_model(runner, tmp_path, payload):
+    """Valid JSON that is not an object must degrade, not crash.
+
+    The checkpoint helpers call `.get(...)` on whatever `json.load` returns, so a
+    list or scalar config raises `AttributeError` rather than a decode error.
+    """
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_text("final-weights")
+    (run_dir / "adapter_config.json").write_text(payload)
+
+    report = build_run_status(str(run_dir))
+
+    assert report["base_model"] is None
+    assert report["base_revision"] is None
+    assert report["final_adapter"]["present"] is True
+
+    result = runner.invoke(app, ["run-status", str(run_dir)])
+    assert result.exit_code == 0
+
+
 # --------------------------------------------------------------------------
 # 9. CLI exit codes
 # --------------------------------------------------------------------------
@@ -443,6 +518,25 @@ def test_cli_file_instead_of_directory_exits_nonzero(runner, tmp_path):
 
     assert result.exit_code != 0
     assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_cli_reports_inspection_failure_as_exit_one(runner, tmp_path, monkeypatch):
+    """A permission/IO failure while walking the run dir is a controlled exit.
+
+    Path resolution succeeds, so the failure surfaces from report construction;
+    it must still be a logged error and exit 1 rather than a raw traceback.
+    """
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+
+    def _boom(*args, **kwargs):
+        raise PermissionError(f"Permission denied: {run_dir}")
+
+    monkeypatch.setattr("agoge_forger.cli.build_run_status", _boom)
+
+    result = runner.invoke(app, ["run-status", str(run_dir)])
+
+    _assert_clean_exit(result, 1)
 
 
 # --------------------------------------------------------------------------

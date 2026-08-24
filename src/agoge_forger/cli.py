@@ -241,11 +241,19 @@ def run_status(
             logger.error(str(e))
             raise typer.Exit(code=1)
 
-    report = build_run_status(
-        safe_run_dir,
-        merged_dir=safe_merged_dir,
-        allow_unsafe=allow_unsafe_serialization,
-    )
+    try:
+        report = build_run_status(
+            safe_run_dir,
+            merged_dir=safe_merged_dir,
+            allow_unsafe=allow_unsafe_serialization,
+        )
+    except (ValueError, OSError) as e:
+        # Inspection walks the run directory, so a permission or I/O failure can
+        # surface here rather than at path resolution. Report it the same way as
+        # a bad path — a logged error and exit 1 — instead of a raw traceback.
+        logger.error(str(e))
+        raise typer.Exit(code=1)
+
     # stdout, not the logger: the JSON report is meant to be piped into jq.
     if output_format == RunStatusFormat.table:
         typer.echo(format_run_status_table(report))
