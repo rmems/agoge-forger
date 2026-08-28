@@ -1,0 +1,108 @@
+name: Config Contract Gate
+
+on:
+  pull_request:
+    paths:
+      - "configs/**"
+      - "src/agoge_forger/config.py"
+      - "docs/contracts/**"
+      # tests/test_docs_workflow.py asserts on exact README sentences, and
+      # pr_quality_gate.yml does not list README.md in its own paths filter.
+      # Without this entry a README-only PR reaching main runs neither gate,
+      # so the artifact-contract wording could be reworded unchecked.
+      - "README.md"
+      # Every top-level config points dataset_path at datasets/samples/, and
+      # load_config resolves it through resolve_existing_path(must_be_file=True)
+      # — so deleting or renaming a sample makes all four configs unloadable.
+      # No other pull-request workflow watches this directory.
+      - "datasets/samples/**"
+      - ".github/workflows/config_contract_gate.yml"
+
+# One run per pull request. Superseded commits cancel their in-flight run:
+# this job only parses configs and runs CPU tests, so nothing is lost.
+concurrency:
+  group: config-contract-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  config-contracts:
+    runs-on: ubuntu-latest
+    # CPU-only: parses YAML and runs three fast test modules. No GPU, no model
+    # download. Target is well under 2 minutes; this is a stuck-job guard only.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Install dev dependencies
+        # Match pr_quality_gate.yml: editable install into .venv so the
+        # interpreter and pytest are invoked directly, without `uv run`.
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
+
+      - name: Validate training configs
+        # Must run from the repo root: `load_config` resolves a relative
+        # `dataset_path` against the config file's own directory and requires
+        # the dataset to exist on disk, so never chdir into configs/.
+        # Only top-level configs/*.yaml are ExperimentConfig files —
+        # configs/serving/ and configs/prompts/ have different schemas.
+        run: |
+          .venv/bin/python - <<'PY'
+          import sys
+          import traceback
+          from pathlib import Path
+
+          from agoge_forger.config import load_config
+
+          config_paths = sorted(Path("configs").glob("*.yaml"))
+
+          if not config_paths:
+              print("FAIL: no configs/*.yaml files found.")
+              print(
+                  "This gate must never pass silently. Either a config was moved "
+                  "out of configs/, or the glob in this workflow is stale."
+              )
+              sys.exit(1)
+
+          failed: list[Path] = []
+          for config_path in config_paths:
+              try:
+                  config = load_config(str(config_path))
+              except Exception as exc:
+                  failed.append(config_path)
+                  print(f"FAIL {config_path}: {type(exc).__name__}: {exc}")
+                  # stdout so each traceback stays adjacent to its FAIL line;
+                  # stderr would interleave out of order in the Actions log.
+                  traceback.print_exc(file=sys.stdout)
+              else:
+                  print(f"OK   {config_path} (model_id={config.model_id}, run_name={config.run_name})")
+
+          total = len(config_paths)
+          print(f"\n{total - len(failed)}/{total} config(s) parsed through load_config.")
+
+          if failed:
+              print("\nThe following config file(s) failed to load:")
+              for config_path in failed:
+                  print(f"  - {config_path}")
+              print(
+                  "\nFix: check the traceback above. Common causes are a YAML key that "
+                  "load_config does not map into ExperimentConfig, a value of the wrong "
+                  "type, or a dataset_path that does not exist relative to the config "
+                  "file's own directory. Reproduce locally with:\n"
+                  "  .venv/bin/python -c \"from agoge_forger.config import load_config; "
+                  "load_config('<path>')\""
+              )
+              sys.exit(1)
+          PY
+
+      - name: Contract and config tests
+        run: .venv/bin/pytest tests/test_config.py tests/test_docs_workflow.py tests/test_manifest.py
