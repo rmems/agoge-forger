@@ -458,9 +458,7 @@ def test_non_string_base_model_field_yields_null_base_model(tmp_path, payload):
     """A truthy non-string base_model_name_or_path must not leak into the report."""
     run_dir = _make_run_dir(tmp_path)
     (run_dir / "adapter_model.safetensors").write_text("final-weights")
-    (run_dir / "adapter_config.json").write_text(
-        json.dumps({"base_model_name_or_path": payload})
-    )
+    (run_dir / "adapter_config.json").write_text(json.dumps({"base_model_name_or_path": payload}))
 
     report = build_run_status(str(run_dir))
 
