@@ -84,10 +84,17 @@ def find_merged_model_dir(run_dir: Path, merged_dir: str | None = None) -> Path 
     if merged_dir is not None:
         try:
             candidate = resolve_existing_path(merged_dir, must_be_dir=True)
-        except FileNotFoundError:
+        except (FileNotFoundError, ValueError):
+            # Missing, not-a-dir, empty, or '..' traversal: no merge, not a crash.
+            # Library callers get the same "absent" answer the CLI treats as
+            # non-fatal for an explicit --merged-dir that does not resolve.
             return None
         return candidate if is_merged_model_dir(candidate) else None
 
+    # Use the caller-supplied path, not a symlink-resolved one. If
+    # adapters/<run> points at external storage, resolve() would probe
+    # <target-grandparent>/merged/<target-basename> and miss the documented
+    # sibling merged/<run_name>.
     conventional = run_dir.parent.parent / "merged" / run_dir.name
     return conventional if is_merged_model_dir(conventional) else None
 
@@ -125,6 +132,24 @@ def _infer_base(adapter_path: PathLike | None) -> tuple[str | None, str | None]:
     return base_model, base_revision
 
 
+def _adapter_config_usable(adapter_path: PathLike | None) -> bool:
+    """True when adapter_config.json is a JSON object export can parse.
+
+    A valid object that simply omits `base_model_name_or_path` is still
+    exportable. A missing, unreadable, or non-object file is not:
+    `export-final-model` will fail on that same file, so `export.ready`
+    must be false.
+    """
+    if adapter_path is None:
+        return False
+    config_path = Path(adapter_path) / "adapter_config.json"
+    try:
+        payload = json.loads(config_path.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict)
+
+
 def build_run_status(
     run_dir: str,
     *,
@@ -155,7 +180,10 @@ def build_run_status(
     final_adapter_present = is_adapter_artifact(resolved_run_dir, allow_unsafe=allow_unsafe)
     export_source, export_kind = _resolve_export(resolved_run_dir, allow_unsafe=allow_unsafe)
     base_model, base_revision = _infer_base(export_source or latest_checkpoint)
-    merged_model = find_merged_model_dir(resolved_run_dir, merged_dir)
+    # Conventional merged/<run_name> is relative to the logical adapters/
+    # parent, which resolve() would lose if the run dir is a symlink.
+    logical_run_dir = Path(run_dir).expanduser()
+    merged_model = find_merged_model_dir(logical_run_dir, merged_dir)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -183,7 +211,7 @@ def build_run_status(
             "checkpoint_path": _as_str(latest_checkpoint),
         },
         "export": {
-            "ready": export_source is not None,
+            "ready": export_source is not None and _adapter_config_usable(export_source),
             "source_path": export_source,
             "source_kind": export_kind,
         },

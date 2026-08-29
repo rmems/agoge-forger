@@ -444,6 +444,10 @@ def test_malformed_adapter_config_yields_null_base_model(runner, tmp_path):
     assert report["base_model"] is None
     assert report["base_revision"] is None
     assert report["final_adapter"]["present"] is True
+    # Source exists, but export-final-model will fail parsing this file.
+    assert report["export"]["ready"] is False
+    assert report["export"]["source_kind"] == "final_adapter"
+    assert report["export"]["source_path"] == str(run_dir.resolve())
 
     result = runner.invoke(app, ["run-status", str(run_dir)])
     assert result.exit_code == 0
@@ -458,6 +462,8 @@ def test_adapter_config_without_base_model_key_yields_null_base_model(runner, tm
     assert report["base_model"] is None
     assert report["base_revision"] is None
     assert report["final_adapter"]["present"] is True
+    # A valid object that omits the key is still an exportable PEFT config.
+    assert report["export"]["ready"] is True
 
     result = runner.invoke(app, ["run-status", str(run_dir)])
     assert result.exit_code == 0
@@ -479,9 +485,40 @@ def test_non_object_adapter_config_yields_null_base_model(runner, tmp_path, payl
     assert report["base_model"] is None
     assert report["base_revision"] is None
     assert report["final_adapter"]["present"] is True
+    assert report["export"]["ready"] is False
+    assert report["export"]["source_kind"] == "final_adapter"
 
     result = runner.invoke(app, ["run-status", str(run_dir)])
     assert result.exit_code == 0
+
+
+def test_find_merged_model_dir_valueerror_is_absent(tmp_path):
+    """A '..' or not-a-dir merged_dir must return None, not raise."""
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    not_a_dir = tmp_path / "a_file.txt"
+    not_a_dir.write_text("hello")
+
+    assert find_merged_model_dir(run_dir, merged_dir=f"{tmp_path}/safe/../escape") is None
+    assert find_merged_model_dir(run_dir, merged_dir=str(not_a_dir)) is None
+
+
+def test_symlinked_adapter_run_finds_logical_merged_sibling(tmp_path):
+    """A run dir that is a symlink must still find merged/<run_name>."""
+    store = tmp_path / "store"
+    (store / "adapters").mkdir(parents=True)
+    real_run = tmp_path / "external" / "demo_run"
+    real_run.mkdir(parents=True)
+    _write_final_adapter(real_run)
+    logical_run = store / "adapters" / "demo_run"
+    logical_run.symlink_to(real_run)
+    merged = _write_merged_model(store / "merged" / "demo_run")
+
+    report = build_run_status(str(logical_run))
+
+    assert report["merged_model"] == {"present": True, "path": str(merged.resolve())}
+    # The resolved external tree has no sibling merged/ — that was the bug.
+    assert not (tmp_path / "merged" / "demo_run").exists()
 
 
 # --------------------------------------------------------------------------
