@@ -655,7 +655,6 @@ def test_cli_table_format_is_aligned_text_not_json(runner, tmp_path):
         json.loads(result.stdout)
 
 
-
 def test_table_escapes_ansi_controls_in_base_model(tmp_path):
     """Table cells must not emit raw ANSI / Cc controls from adapter metadata."""
     run_dir = _make_run_dir(tmp_path)

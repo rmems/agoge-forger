@@ -235,9 +235,7 @@ def _escape_controls(text: str) -> str:
     `format_run_status_table`. Render those as backslash-uXXXX escapes
     instead of emitting them raw (CWE-150 / CodeRabbit on #96).
     """
-    return "".join(
-        f"\\u{ord(ch):04x}" if unicodedata.category(ch) == "Cc" else ch for ch in text
-    )
+    return "".join(f"\\u{ord(ch):04x}" if unicodedata.category(ch) == "Cc" else ch for ch in text)
 
 
 def _or_dash(value: Any) -> str:
