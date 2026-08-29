@@ -2,7 +2,7 @@
 
 import json
 import os
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import typer
 import yaml
@@ -209,6 +209,47 @@ def export_final_model(
     )
 
 
+_RUN_STATUS_PATH_ERRORS = (FileNotFoundError, ValueError, NotADirectoryError, OSError, RuntimeError)
+
+
+def _exit_on_path_error(exc: BaseException) -> NoReturn:
+    """Log a path/inspection failure and stop the CLI with exit 1."""
+    logger.error(str(exc))
+    raise typer.Exit(code=1)
+
+
+def _resolve_run_status_run_dir(run_dir: str) -> str:
+    # RuntimeError: `Path.expanduser()` raises it for a `~user` prefix naming an
+    # account with no resolvable home directory, and it is neither an OSError
+    # nor a ValueError.
+    try:
+        return str(resolve_existing_path(run_dir, must_be_dir=True))
+    except _RUN_STATUS_PATH_ERRORS as e:
+        _exit_on_path_error(e)
+
+
+def _resolve_optional_merged_dir(merged_dir: str | None) -> str | None:
+    """Resolve --merged-dir, or keep the raw path when it is not exported yet."""
+    if merged_dir is None:
+        return None
+    try:
+        return str(resolve_existing_path(merged_dir, must_be_dir=True))
+    except FileNotFoundError:
+        # A merged model that has not been exported yet is a legitimate
+        # "not ready" answer, so report it as absent instead of failing.
+        return merged_dir
+    except _RUN_STATUS_PATH_ERRORS as e:
+        _exit_on_path_error(e)
+
+
+def _emit_run_status(report: dict[str, Any], output_format: RunStatusFormat) -> None:
+    # stdout, not the logger: the JSON report is meant to be piped into jq.
+    if output_format == RunStatusFormat.table:
+        typer.echo(format_run_status_table(report))
+        return
+    typer.echo(json.dumps(report, indent=2))
+
+
 @app.command()
 def run_status(
     run_dir: str = typer.Argument(..., help="Run directory to inspect (adapters/<run_name>)"),
@@ -223,27 +264,8 @@ def run_status(
     ),
 ):
     """Report resume/export readiness for a training run directory."""
-    # RuntimeError: `Path.expanduser()` raises it for a `~user` prefix naming an
-    # account with no resolvable home directory, and it is neither an OSError
-    # nor a ValueError.
-    try:
-        safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True))
-    except (FileNotFoundError, ValueError, NotADirectoryError, OSError, RuntimeError) as e:
-        logger.error(str(e))
-        raise typer.Exit(code=1)
-
-    safe_merged_dir: str | None = None
-    if merged_dir is not None:
-        try:
-            safe_merged_dir = str(resolve_existing_path(merged_dir, must_be_dir=True))
-        except FileNotFoundError:
-            # A merged model that has not been exported yet is a legitimate
-            # "not ready" answer, so report it as absent instead of failing.
-            safe_merged_dir = merged_dir
-        except (ValueError, NotADirectoryError, OSError, RuntimeError) as e:
-            logger.error(str(e))
-            raise typer.Exit(code=1)
-
+    safe_run_dir = _resolve_run_status_run_dir(run_dir)
+    safe_merged_dir = _resolve_optional_merged_dir(merged_dir)
     try:
         report = build_run_status(
             safe_run_dir,
@@ -254,14 +276,8 @@ def run_status(
         # Inspection walks the run directory, so a permission or I/O failure can
         # surface here rather than at path resolution. Report it the same way as
         # a bad path — a logged error and exit 1 — instead of a raw traceback.
-        logger.error(str(e))
-        raise typer.Exit(code=1)
-
-    # stdout, not the logger: the JSON report is meant to be piped into jq.
-    if output_format == RunStatusFormat.table:
-        typer.echo(format_run_status_table(report))
-    else:
-        typer.echo(json.dumps(report, indent=2))
+        _exit_on_path_error(e)
+    _emit_run_status(report, output_format)
 
 
 @app.command()
