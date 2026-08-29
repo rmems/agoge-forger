@@ -48,6 +48,13 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+def _minimal_safetensors() -> bytes:
+    """Tiny valid safetensors container (empty JSON header, 8-byte aligned)."""
+    header = b"{}"
+    header += b" " * ((8 - len(header) % 8) % 8)
+    return len(header).to_bytes(8, "little") + header
+
+
 def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=None):
     payload = {}
     if base_model is not None:
@@ -61,13 +68,13 @@ def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B", revision=None)
     checkpoint_dir = root / f"checkpoint-{step}"
     checkpoint_dir.mkdir(parents=True)
     (checkpoint_dir / "trainer_state.json").write_text("{}")
-    (checkpoint_dir / "adapter_model.safetensors").write_text("weights")
+    (checkpoint_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
     _write_adapter_config(checkpoint_dir, base_model=base_model, revision=revision)
     return checkpoint_dir
 
 
 def _write_final_adapter(root, base_model="Qwen/Qwen3.5-0.5B", revision=None):
-    (root / "adapter_model.safetensors").write_text("final-weights")
+    (root / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
     _write_adapter_config(root, base_model=base_model, revision=revision)
     return root
 
@@ -281,6 +288,53 @@ def test_invalid_checkpoints_are_not_counted(tmp_path):
     assert report["checkpoints"]["steps"] == [50, 100]
     assert report["checkpoints"]["latest_step"] == 100
     assert report["resume"]["checkpoint_path"] == str(latest.resolve())
+
+
+@pytest.mark.parametrize("payload", ["{not json", "", "[]", '"text"', "3", "null"])
+def test_malformed_trainer_state_is_not_resume_ready(tmp_path, payload):
+    """A present-but-unparseable trainer_state.json is not resume-ready.
+
+    list_valid_checkpoints only checks that the file exists, so train-qlora
+    would still select this snapshot; Trainer.train then fails to deserialize it.
+    """
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = run_dir / "checkpoint-50"
+    checkpoint_dir.mkdir(parents=True)
+    (checkpoint_dir / "trainer_state.json").write_text(payload)
+    (checkpoint_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
+    _write_adapter_config(checkpoint_dir)
+
+    report = build_run_status(str(run_dir))
+
+    assert report["checkpoints"]["valid_count"] == 1
+    assert report["resume"]["ready"] is False
+    assert report["resume"]["checkpoint_path"] == str(checkpoint_dir.resolve())
+
+
+def test_empty_adapter_weights_are_not_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(b"")
+    _write_adapter_config(run_dir)
+
+    report = build_run_status(str(run_dir))
+
+    assert report["final_adapter"]["present"] is True
+    assert report["export"]["ready"] is False
+    assert report["export"]["source_kind"] == "final_adapter"
+    assert report["export"]["source_path"] == str(run_dir.resolve())
+
+
+def test_truncated_adapter_weights_are_not_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    # Short junk, and an 8-byte length that claims more header than exists.
+    (run_dir / "adapter_model.safetensors").write_bytes(b"trunc")
+    _write_adapter_config(run_dir)
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+    (run_dir / "adapter_model.safetensors").write_bytes((64).to_bytes(8, "little") + b"{")
+    report = build_run_status(str(run_dir))
+    assert report["final_adapter"]["present"] is True
+    assert report["export"]["ready"] is False
 
 
 # --------------------------------------------------------------------------

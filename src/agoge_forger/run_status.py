@@ -205,6 +205,65 @@ def _adapter_config_usable(adapter_path: PathLike | None) -> bool:
     return isinstance(base, str) and bool(base)
 
 
+def _trainer_state_usable(checkpoint: PathLike | None) -> bool:
+    """True when trainer_state.json parses as a JSON object.
+
+    `list_valid_checkpoints` only requires the file to exist. Trainer.train
+    deserializes it, so a truncated or non-object state is not resume-ready.
+    """
+    if checkpoint is None:
+        return False
+    state_path = Path(checkpoint) / "trainer_state.json"
+    try:
+        payload = json.loads(state_path.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict)
+
+
+_SAFETENSORS_HEADER_MAX = 100 * 1024 * 1024
+
+
+def _safetensors_header_usable(path: Path) -> bool:
+    """True when `path` has a parseable, 8-byte-aligned safetensors JSON header."""
+    try:
+        with path.open("rb") as handle:
+            size_bytes = handle.read(8)
+            if len(size_bytes) != 8:
+                return False
+            header_len = int.from_bytes(size_bytes, "little")
+            if header_len < 8 or header_len % 8 != 0 or header_len > _SAFETENSORS_HEADER_MAX:
+                return False
+            header = handle.read(header_len)
+            if len(header) != header_len:
+                return False
+            payload = json.loads(header)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict)
+
+
+def _adapter_weights_usable(adapter_path: PathLike | None, *, allow_unsafe: bool = False) -> bool:
+    """True when adapter weight files pass a lightweight validity check.
+
+    `is_adapter_artifact` only checks the filename. export-final-model then
+    fails when PEFT/safetensors opens an empty or truncated file.
+    """
+    if adapter_path is None:
+        return False
+    adapter_dir = Path(adapter_path)
+    safetensors_path = adapter_dir / "adapter_model.safetensors"
+    if safetensors_path.is_file() and _safetensors_header_usable(safetensors_path):
+        return True
+    if allow_unsafe:
+        legacy = adapter_dir / "adapter_model.bin"
+        try:
+            return legacy.is_file() and legacy.stat().st_size > 0
+        except OSError:
+            return False
+    return False
+
+
 def build_run_status(
     run_dir: str,
     *,
@@ -262,11 +321,15 @@ def build_run_status(
         "base_model": base_model,
         "base_revision": base_revision,
         "resume": {
-            "ready": latest_checkpoint is not None,
+            "ready": latest_checkpoint is not None and _trainer_state_usable(latest_checkpoint),
             "checkpoint_path": _as_str(latest_checkpoint),
         },
         "export": {
-            "ready": export_source is not None and _adapter_config_usable(export_source),
+            "ready": (
+                export_source is not None
+                and _adapter_config_usable(export_source)
+                and _adapter_weights_usable(export_source, allow_unsafe=allow_unsafe)
+            ),
             "source_path": export_source,
             "source_kind": export_kind,
         },
