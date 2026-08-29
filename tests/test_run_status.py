@@ -374,6 +374,32 @@ def test_sharded_merged_model_is_recognised(tmp_path):
     }
 
 
+def test_shared_shard_filenames_are_recognised(tmp_path):
+    """Transformers weight_map has one entry per tensor; many share a shard."""
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = tmp_path / "merged" / run_dir.name
+    merged.mkdir(parents=True)
+    (merged / "config.json").write_text('{"model_type": "llama"}')
+    (merged / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "model.embed_tokens.weight": "model-00001-of-00001.safetensors",
+                    "model.norm.weight": "model-00001-of-00001.safetensors",
+                }
+            }
+        )
+    )
+    (merged / "model-00001-of-00001.safetensors").write_text("shared-shard")
+
+    assert is_merged_model_dir(merged) is True
+    assert build_run_status(str(run_dir))["merged_model"] == {
+        "present": True,
+        "path": str(merged.resolve()),
+    }
+
+
 def test_truncated_merged_config_is_not_a_merged_model(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)

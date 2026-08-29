@@ -67,10 +67,18 @@ def _merged_config_is_object(candidate: Path) -> bool:
     return isinstance(payload, dict)
 
 
-def _has_complete_merged_weights(candidate: Path) -> bool:
-    """True for unsharded model.safetensors or a complete shard index set."""
-    if (candidate / "model.safetensors").is_file():
-        return True
+def _shard_filenames(weight_map: dict[str, Any]) -> set[str] | None:
+    """Unique shard filenames, or None if any mapping is not a string."""
+    shards: set[str] = set()
+    for name in weight_map.values():
+        if not isinstance(name, str):
+            return None
+        shards.add(name)
+    return shards or None
+
+
+def _has_complete_sharded_weights(candidate: Path) -> bool:
+    """True when every shard named in model.safetensors.index.json exists."""
     index_path = candidate / "model.safetensors.index.json"
     if not index_path.is_file():
         return False
@@ -81,10 +89,17 @@ def _has_complete_merged_weights(candidate: Path) -> bool:
     weight_map = index.get("weight_map") if isinstance(index, dict) else None
     if not isinstance(weight_map, dict) or not weight_map:
         return False
-    shards = {name for name in weight_map.values() if isinstance(name, str)}
-    if not shards or len(shards) != len(weight_map):
+    shards = _shard_filenames(weight_map)
+    if shards is None:
         return False
     return all((candidate / name).is_file() for name in shards)
+
+
+def _has_complete_merged_weights(candidate: Path) -> bool:
+    """True for unsharded model.safetensors or a complete shard index set."""
+    if (candidate / "model.safetensors").is_file():
+        return True
+    return _has_complete_sharded_weights(candidate)
 
 
 def is_merged_model_dir(path: PathLike) -> bool:
