@@ -102,7 +102,9 @@ def _has_complete_sharded_weights(candidate: Path) -> bool:
     if shards is None:
         return False
     return all(
-        _is_root_model_shard_name(name) and _safetensors_header_usable(candidate / name)
+        _is_root_model_shard_name(name)
+        and (candidate / name).is_file()
+        and _safetensors_header_usable(candidate / name)
         for name in shards
     )
 
