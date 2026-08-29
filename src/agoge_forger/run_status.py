@@ -123,6 +123,11 @@ def _infer_base(adapter_path: PathLike | None) -> tuple[str | None, str | None]:
         base_model: str | None = infer_base_model_from_adapter(adapter_path)
     except _ADAPTER_CONFIG_ERRORS:
         base_model = None
+    # infer_base_model_from_adapter returns the raw truthy field. A list, dict,
+    # bool, or int would leak into the JSON report; only a real string is a
+    # usable model id. Sibling infer_base_revision_from_adapter already str().
+    if not isinstance(base_model, str):
+        base_model = None
 
     try:
         base_revision = infer_base_revision_from_adapter(adapter_path)

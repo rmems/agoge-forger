@@ -453,6 +453,24 @@ def test_malformed_adapter_config_yields_null_base_model(runner, tmp_path):
     assert result.exit_code == 0
 
 
+@pytest.mark.parametrize("payload", [["org/model"], {"id": "org/model"}, True, 1])
+def test_non_string_base_model_field_yields_null_base_model(tmp_path, payload):
+    """A truthy non-string base_model_name_or_path must not leak into the report."""
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_text("final-weights")
+    (run_dir / "adapter_config.json").write_text(
+        json.dumps({"base_model_name_or_path": payload})
+    )
+
+    report = build_run_status(str(run_dir))
+
+    assert report["base_model"] is None
+    assert report["base_revision"] is None
+    assert report["final_adapter"]["present"] is True
+    dumped = json.loads(json.dumps(report))
+    assert dumped["base_model"] is None
+
+
 def test_adapter_config_without_base_model_key_yields_null_base_model(runner, tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir, base_model=None)
