@@ -655,6 +655,20 @@ def test_cli_table_format_is_aligned_text_not_json(runner, tmp_path):
         json.loads(result.stdout)
 
 
+
+def test_table_escapes_ansi_controls_in_base_model(tmp_path):
+    """Table cells must not emit raw ANSI / Cc controls from adapter metadata."""
+    run_dir = _make_run_dir(tmp_path)
+    ansi_model = "\x1b[31mevil-model\x1b[0m"
+    _write_final_adapter(run_dir, base_model=ansi_model)
+
+    table = format_run_status_table(build_run_status(str(run_dir)))
+
+    assert "\x1b" not in table
+    assert "\\u001b[31mevil-model\\u001b[0m" in table
+    assert "evil-model" in table
+
+
 def test_table_renderer_covers_every_report_row(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_checkpoint(run_dir, 30)

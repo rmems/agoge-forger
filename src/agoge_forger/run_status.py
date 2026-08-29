@@ -14,6 +14,7 @@ never disagree with what training and export actually do.
 from __future__ import annotations
 
 import json
+import unicodedata
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -227,8 +228,20 @@ def _yes_no(value: bool) -> str:
     return "yes" if value else "no"
 
 
+def _escape_controls(text: str) -> str:
+    """Escape Unicode Cc controls so table cells cannot drive the terminal.
+
+    Adapter metadata and paths can carry ANSI or other control bytes into
+    `format_run_status_table`. Render those as backslash-uXXXX escapes
+    instead of emitting them raw (CWE-150 / CodeRabbit on #96).
+    """
+    return "".join(
+        f"\\u{ord(ch):04x}" if unicodedata.category(ch) == "Cc" else ch for ch in text
+    )
+
+
 def _or_dash(value: Any) -> str:
-    return "-" if value is None else str(value)
+    return "-" if value is None else _escape_controls(str(value))
 
 
 def format_run_status_table(report: dict[str, Any]) -> str:
