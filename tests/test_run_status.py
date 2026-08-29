@@ -668,6 +668,20 @@ def test_table_escapes_ansi_controls_in_base_model(tmp_path):
     assert "evil-model" in table
 
 
+def test_table_escapes_ansi_controls_in_run_name_and_run_dir(tmp_path):
+    """run_name / run_dir are not _or_dash fields and must still be escaped."""
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    report = build_run_status(str(run_dir))
+    report["run_name"] = "\x1b[31mevil\x1b[0m"
+    report["run_dir"] = "/tmp/\x1b[31mevil\x1b[0m"
+
+    table = format_run_status_table(report)
+
+    assert "\x1b" not in table
+    assert "\\u001b[31mevil\\u001b[0m" in table
+
+
 def test_table_renderer_covers_every_report_row(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_checkpoint(run_dir, 30)

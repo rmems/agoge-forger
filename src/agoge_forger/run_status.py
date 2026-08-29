@@ -248,8 +248,8 @@ def format_run_status_table(report: dict[str, Any]) -> str:
     steps = checkpoints["steps"]
     rows: list[tuple[str, str]] = [
         ("schema_version", str(report["schema_version"])),
-        ("run_name", report["run_name"]),
-        ("run_dir", report["run_dir"]),
+        ("run_name", _escape_controls(str(report["run_name"]))),
+        ("run_dir", _escape_controls(str(report["run_dir"]))),
         ("allow_unsafe_serialization", _yes_no(report["allow_unsafe_serialization"])),
         ("valid_checkpoints", str(checkpoints["valid_count"])),
         ("checkpoint_steps", ", ".join(str(step) for step in steps) if steps else "-"),
