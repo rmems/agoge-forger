@@ -862,6 +862,38 @@ def test_adapter_config_permission_error_exits_one(runner, tmp_path):
     assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
+def test_trainer_state_permission_error_exits_one(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    state_path = checkpoint_dir / "trainer_state.json"
+    os.chmod(state_path, 0)
+    try:
+        result = runner.invoke(app, ["run-status", str(run_dir)])
+        with pytest.raises(OSError):
+            build_run_status(str(run_dir))
+    finally:
+        os.chmod(state_path, 0o644)
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_safetensors_permission_error_exits_one(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    weights = run_dir / "adapter_model.safetensors"
+    os.chmod(weights, 0)
+    try:
+        result = runner.invoke(app, ["run-status", str(run_dir)])
+        with pytest.raises(OSError):
+            build_run_status(str(run_dir))
+    finally:
+        os.chmod(weights, 0o644)
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
 # --------------------------------------------------------------------------
 # 9. CLI exit codes
 # --------------------------------------------------------------------------

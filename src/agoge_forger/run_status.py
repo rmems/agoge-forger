@@ -232,7 +232,7 @@ def _trainer_state_usable(checkpoint: PathLike | None) -> bool:
     state_path = Path(checkpoint) / "trainer_state.json"
     try:
         payload = json.loads(state_path.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError):
         return False
     return isinstance(payload, dict)
 
@@ -305,7 +305,7 @@ def _safetensors_header_usable(path: Path) -> bool:
             payload = json.loads(header)
             handle.seek(0, 2)
             file_size = handle.tell()
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError):
         return False
     if not isinstance(payload, dict):
         return False
