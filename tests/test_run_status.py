@@ -298,6 +298,20 @@ def test_merged_model_found_in_conventional_sibling_layout(tmp_path):
     assert find_merged_model_dir(run_dir.resolve()) == merged.resolve()
 
 
+def test_conventional_merged_path_is_absolute_from_relative_run_dir(tmp_path, monkeypatch):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    monkeypatch.chdir(tmp_path)
+
+    report = build_run_status(f"adapters/{run_dir.name}")
+
+    path = report["merged_model"]["path"]
+    assert report["merged_model"]["present"] is True
+    assert Path(path).is_absolute()
+    assert path == str(merged.resolve())
+
+
 def test_merged_model_absent_when_never_exported(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)

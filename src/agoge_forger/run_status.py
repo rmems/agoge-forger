@@ -139,7 +139,11 @@ def find_merged_model_dir(run_dir: Path, merged_dir: str | None = None) -> Path 
     # <target-grandparent>/merged/<target-basename> and miss the documented
     # sibling merged/<run_name>.
     conventional = run_dir.parent.parent / "merged" / run_dir.name
-    return conventional if is_merged_model_dir(conventional) else None
+    if not is_merged_model_dir(conventional):
+        return None
+    # Discovery used the logical path; emit an absolute one so
+    # merged_model.path does not depend on the caller's cwd.
+    return conventional.resolve()
 
 
 def _as_str(value: PathLike | None) -> str | None:
