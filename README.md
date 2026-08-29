@@ -127,7 +127,7 @@ How to read it:
 - `checkpoints.valid_count` counts only checkpoints that pass the validity rules — a `checkpoint-N` directory holding both `trainer_state.json` and a safetensors adapter. A half-written snapshot is not counted.
 - `merged_model` probes the conventional `merged/<run_name>` sibling of `adapters/<run_name>`, or exactly `--merged-dir` when you pass it. `"present": false` means "not exported yet", not an error.
 - Legacy `.bin` adapters read as absent and not ready under the safetensors-only policy, until `--allow-unsafe-serialization` is passed.
-- The exit code is `0` for any inspectable directory, including one where nothing is ready yet. It is non-zero only for a missing path, a non-directory path, or a path containing `..`.
+- The exit code is `0` for any inspectable directory, including one where nothing is ready yet. It is non-zero when the path is missing, is not a directory, contains `..`, cannot resolve a `~user` home, or inspection hits a permission/I/O failure while building the report.
 
 The report loads no model weights, so it needs no GPU and no network.
 
