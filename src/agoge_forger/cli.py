@@ -264,11 +264,14 @@ def run_status(
     ),
 ):
     """Report resume/export readiness for a training run directory."""
-    safe_run_dir = _resolve_run_status_run_dir(run_dir)
+    # Validate first so bad paths still exit 1, then pass the original
+    # argument so build_run_status can keep the logical adapters/<run>
+    # path for conventional merged/<run_name> discovery.
+    _resolve_run_status_run_dir(run_dir)
     safe_merged_dir = _resolve_optional_merged_dir(merged_dir)
     try:
         report = build_run_status(
-            safe_run_dir,
+            run_dir,
             merged_dir=safe_merged_dir,
             allow_unsafe=allow_unsafe_serialization,
         )

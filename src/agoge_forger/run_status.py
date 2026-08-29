@@ -55,23 +55,50 @@ class RunStatusFormat(str, Enum):
     table = "table"
 
 
+def _merged_config_is_object(candidate: Path) -> bool:
+    """True when config.json exists and parses as a JSON object."""
+    config_path = candidate / "config.json"
+    if not config_path.is_file():
+        return False
+    try:
+        payload = json.loads(config_path.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict)
+
+
+def _has_complete_merged_weights(candidate: Path) -> bool:
+    """True for unsharded model.safetensors or a complete shard index set."""
+    if (candidate / "model.safetensors").is_file():
+        return True
+    index_path = candidate / "model.safetensors.index.json"
+    if not index_path.is_file():
+        return False
+    try:
+        index = json.loads(index_path.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    weight_map = index.get("weight_map") if isinstance(index, dict) else None
+    if not isinstance(weight_map, dict) or not weight_map:
+        return False
+    shards = {name for name in weight_map.values() if isinstance(name, str)}
+    if not shards or len(shards) != len(weight_map):
+        return False
+    return all((candidate / name).is_file() for name in shards)
+
+
 def is_merged_model_dir(path: PathLike) -> bool:
     """Return True when `path` looks like an exported merged model directory.
 
-    A merged model is a full `save_pretrained` tree: a `config.json` plus at
-    least one safetensors weight file *directly in the directory*. The root-level
-    requirement is what distinguishes a real merge from a tree that merely
-    contains adapters further down (`checkpoint-10/adapter_model.safetensors`),
-    which a recursive search would misreport as an already-merged model. Sharded
-    exports still match, since `save_pretrained` writes every
-    `model-0000N-of-0000M.safetensors` shard at the root alongside its index.
+    A merged model is a full `save_pretrained` tree: a parseable object
+    `config.json` plus either `model.safetensors` or every shard named in
+    `model.safetensors.index.json`, all at the directory root. Nested
+    adapter weights or a leftover `adapter_model.safetensors` do not count.
     """
     candidate = Path(path)
     if not candidate.is_dir():
         return False
-    if not (candidate / "config.json").is_file():
-        return False
-    return any(entry.is_file() for entry in candidate.glob("*.safetensors"))
+    return _merged_config_is_object(candidate) and _has_complete_merged_weights(candidate)
 
 
 def find_merged_model_dir(run_dir: Path, merged_dir: str | None = None) -> Path | None:
@@ -141,10 +168,10 @@ def _infer_base(adapter_path: PathLike | None) -> tuple[str | None, str | None]:
 def _adapter_config_usable(adapter_path: PathLike | None) -> bool:
     """True when adapter_config.json is a JSON object export can parse.
 
-    A valid object that simply omits `base_model_name_or_path` is still
-    exportable. A missing, unreadable, or non-object file is not:
-    `export-final-model` will fail on that same file, so `export.ready`
-    must be false.
+    A valid object is not enough: the default `export-final-model --run-dir`
+    path calls `infer_base_model_from_adapter` and raises unless
+    `base_model_name_or_path` is a non-empty string. `run-status` has no
+    `--base-model` override, so that field must be present for ready.
     """
     if adapter_path is None:
         return False
@@ -153,7 +180,10 @@ def _adapter_config_usable(adapter_path: PathLike | None) -> bool:
         payload = json.loads(config_path.read_text())
     except (OSError, ValueError, json.JSONDecodeError):
         return False
-    return isinstance(payload, dict)
+    if not isinstance(payload, dict):
+        return False
+    base = payload.get("base_model_name_or_path")
+    return isinstance(base, str) and bool(base)
 
 
 def build_run_status(

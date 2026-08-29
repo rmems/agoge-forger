@@ -354,7 +354,16 @@ def test_sharded_merged_model_is_recognised(tmp_path):
     merged = tmp_path / "merged" / run_dir.name
     merged.mkdir(parents=True)
     (merged / "config.json").write_text('{"model_type": "llama"}')
-    (merged / "model.safetensors.index.json").write_text("{}")
+    (merged / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "a": "model-00001-of-00002.safetensors",
+                    "b": "model-00002-of-00002.safetensors",
+                }
+            }
+        )
+    )
     (merged / "model-00001-of-00002.safetensors").write_text("shard-1")
     (merged / "model-00002-of-00002.safetensors").write_text("shard-2")
 
@@ -363,6 +372,52 @@ def test_sharded_merged_model_is_recognised(tmp_path):
         "present": True,
         "path": str(merged.resolve()),
     }
+
+
+def test_truncated_merged_config_is_not_a_merged_model(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = tmp_path / "merged" / run_dir.name
+    merged.mkdir(parents=True)
+    (merged / "config.json").write_text("{not json")
+    (merged / "model.safetensors").write_text("merged-weights")
+
+    assert is_merged_model_dir(merged) is False
+    assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
+
+
+def test_root_adapter_safetensors_is_not_a_merged_model(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = tmp_path / "merged" / run_dir.name
+    merged.mkdir(parents=True)
+    (merged / "config.json").write_text('{"model_type": "llama"}')
+    (merged / "adapter_model.safetensors").write_text("adapter-weights")
+
+    assert is_merged_model_dir(merged) is False
+    assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
+
+
+def test_incomplete_shard_set_is_not_a_merged_model(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = tmp_path / "merged" / run_dir.name
+    merged.mkdir(parents=True)
+    (merged / "config.json").write_text('{"model_type": "llama"}')
+    (merged / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "a": "model-00001-of-00002.safetensors",
+                    "b": "model-00002-of-00002.safetensors",
+                }
+            }
+        )
+    )
+    (merged / "model-00001-of-00002.safetensors").write_text("shard-1")
+
+    assert is_merged_model_dir(merged) is False
+    assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
 
 
 def test_explicit_merged_dir_is_honored(runner, tmp_path):
@@ -478,8 +533,8 @@ def test_adapter_config_without_base_model_key_yields_null_base_model(runner, tm
     assert report["base_model"] is None
     assert report["base_revision"] is None
     assert report["final_adapter"]["present"] is True
-    # A valid object that omits the key is still an exportable PEFT config.
-    assert report["export"]["ready"] is True
+    # Default export-final-model --run-dir requires a string base model.
+    assert report["export"]["ready"] is False
 
     result = runner.invoke(app, ["run-status", str(run_dir)])
     assert result.exit_code == 0
@@ -535,6 +590,25 @@ def test_symlinked_adapter_run_finds_logical_merged_sibling(tmp_path):
     assert report["merged_model"] == {"present": True, "path": str(merged.resolve())}
     # The resolved external tree has no sibling merged/ — that was the bug.
     assert not (tmp_path / "merged" / "demo_run").exists()
+
+
+def test_cli_symlinked_run_dir_finds_logical_merged_sibling(runner, tmp_path):
+    store = tmp_path / "store"
+    (store / "adapters").mkdir(parents=True)
+    real_run = tmp_path / "external" / "demo_run"
+    real_run.mkdir(parents=True)
+    _write_final_adapter(real_run)
+    logical_run = store / "adapters" / "demo_run"
+    logical_run.symlink_to(real_run)
+    merged = _write_merged_model(store / "merged" / "demo_run")
+
+    result = runner.invoke(app, ["run-status", str(logical_run)])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["merged_model"] == {
+        "present": True,
+        "path": str(merged.resolve()),
+    }
 
 
 # --------------------------------------------------------------------------
