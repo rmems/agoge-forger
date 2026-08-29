@@ -224,6 +224,15 @@ def _trainer_state_usable(checkpoint: PathLike | None) -> bool:
 _SAFETENSORS_HEADER_MAX = 100 * 1024 * 1024
 
 
+def _safetensors_header_len_ok(header_len: int) -> bool:
+    """True when header length is aligned and within the read budget."""
+    if header_len < 8:
+        return False
+    if header_len % 8 != 0:
+        return False
+    return header_len <= _SAFETENSORS_HEADER_MAX
+
+
 def _safetensors_header_usable(path: Path) -> bool:
     """True when `path` has a parseable, 8-byte-aligned safetensors JSON header."""
     try:
@@ -232,7 +241,7 @@ def _safetensors_header_usable(path: Path) -> bool:
             if len(size_bytes) != 8:
                 return False
             header_len = int.from_bytes(size_bytes, "little")
-            if header_len < 8 or header_len % 8 != 0 or header_len > _SAFETENSORS_HEADER_MAX:
+            if not _safetensors_header_len_ok(header_len):
                 return False
             header = handle.read(header_len)
             if len(header) != header_len:
