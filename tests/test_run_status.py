@@ -9,6 +9,7 @@ change what downstream consumers see.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,14 @@ def _minimal_safetensors() -> bytes:
     return len(header).to_bytes(8, "little") + header
 
 
+def _header_without_data_region() -> bytes:
+    """Parseable header that declares a 4-byte tensor with no data bytes."""
+    payload = {"t": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}
+    header = json.dumps(payload, separators=(",", ":")).encode()
+    header += b" " * ((8 - len(header) % 8) % 8)
+    return len(header).to_bytes(8, "little") + header
+
+
 def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=None):
     payload = {}
     if base_model is not None:
@@ -88,7 +97,7 @@ def _write_legacy_bin_adapter(root, base_model="Qwen/Qwen3.5-0.5B"):
 def _write_merged_model(path):
     path.mkdir(parents=True)
     (path / "config.json").write_text('{"model_type": "llama"}')
-    (path / "model.safetensors").write_text("merged-weights")
+    (path / "model.safetensors").write_bytes(_minimal_safetensors())
     return path
 
 
@@ -337,6 +346,47 @@ def test_truncated_adapter_weights_are_not_export_ready(tmp_path):
     assert report["export"]["ready"] is False
 
 
+def test_header_without_data_region_is_not_export_ready(tmp_path):
+    """A padded JSON header that claims tensor bytes the file does not have."""
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(_header_without_data_region())
+    _write_adapter_config(run_dir)
+
+    report = build_run_status(str(run_dir))
+
+    assert report["final_adapter"]["present"] is True
+    assert report["export"]["ready"] is False
+
+
+def test_empty_checkpoint_weights_are_not_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = run_dir / "checkpoint-50"
+    checkpoint_dir.mkdir(parents=True)
+    (checkpoint_dir / "trainer_state.json").write_text("{}")
+    (checkpoint_dir / "adapter_model.safetensors").write_bytes(b"")
+    _write_adapter_config(checkpoint_dir)
+
+    report = build_run_status(str(run_dir))
+
+    assert report["checkpoints"]["valid_count"] == 1
+    assert report["resume"]["ready"] is False
+    assert report["resume"]["checkpoint_path"] == str(checkpoint_dir.resolve())
+
+
+def test_header_without_data_region_is_not_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = run_dir / "checkpoint-50"
+    checkpoint_dir.mkdir(parents=True)
+    (checkpoint_dir / "trainer_state.json").write_text("{}")
+    (checkpoint_dir / "adapter_model.safetensors").write_bytes(_header_without_data_region())
+    _write_adapter_config(checkpoint_dir)
+
+    report = build_run_status(str(run_dir))
+
+    assert report["checkpoints"]["valid_count"] == 1
+    assert report["resume"]["ready"] is False
+
+
 # --------------------------------------------------------------------------
 # 6. Merged model discovery
 # --------------------------------------------------------------------------
@@ -433,8 +483,8 @@ def test_sharded_merged_model_is_recognised(tmp_path):
             }
         )
     )
-    (merged / "model-00001-of-00002.safetensors").write_text("shard-1")
-    (merged / "model-00002-of-00002.safetensors").write_text("shard-2")
+    (merged / "model-00001-of-00002.safetensors").write_bytes(_minimal_safetensors())
+    (merged / "model-00002-of-00002.safetensors").write_bytes(_minimal_safetensors())
 
     assert is_merged_model_dir(merged) is True
     assert build_run_status(str(run_dir))["merged_model"] == {
@@ -460,7 +510,7 @@ def test_shared_shard_filenames_are_recognised(tmp_path):
             }
         )
     )
-    (merged / "model-00001-of-00001.safetensors").write_text("shared-shard")
+    (merged / "model-00001-of-00001.safetensors").write_bytes(_minimal_safetensors())
 
     assert is_merged_model_dir(merged) is True
     assert build_run_status(str(run_dir))["merged_model"] == {
@@ -513,6 +563,54 @@ def test_incomplete_shard_set_is_not_a_merged_model(tmp_path):
 
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
+
+
+def test_shard_index_rejects_adapter_filename(tmp_path):
+    """weight_map must name root-local model shards, not leftover adapter files."""
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = tmp_path / "merged" / run_dir.name
+    merged.mkdir(parents=True)
+    (merged / "config.json").write_text('{"model_type": "llama"}')
+    (merged / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
+    (merged / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"a": "adapter_model.safetensors"}})
+    )
+
+    assert is_merged_model_dir(merged) is False
+    assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
+
+
+def test_shard_index_rejects_out_of_directory_filename(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    elsewhere = tmp_path / "other"
+    elsewhere.mkdir()
+    (elsewhere / "model.safetensors").write_bytes(_minimal_safetensors())
+    merged = tmp_path / "merged" / run_dir.name
+    merged.mkdir(parents=True)
+    (merged / "config.json").write_text('{"model_type": "llama"}')
+    rel = os.path.relpath(elsewhere / "model.safetensors", merged)
+    (merged / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {"a": rel}}))
+
+    assert "/" in rel or rel.startswith("..")
+    assert is_merged_model_dir(merged) is False
+    assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
+
+
+def test_truncated_merged_weights_are_not_present(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = tmp_path / "merged" / run_dir.name
+    merged.mkdir(parents=True)
+    (merged / "config.json").write_text('{"model_type": "llama"}')
+    (merged / "model.safetensors").write_text("merged-weights")
+
+    assert is_merged_model_dir(merged) is False
+    assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
+
+    (merged / "model.safetensors").write_bytes(b"")
+    assert is_merged_model_dir(merged) is False
 
 
 def test_explicit_merged_dir_is_honored(runner, tmp_path):
@@ -704,6 +802,64 @@ def test_cli_symlinked_run_dir_finds_logical_merged_sibling(runner, tmp_path):
         "present": True,
         "path": str(merged.resolve()),
     }
+
+
+def test_logical_symlink_run_name_uses_logical_basename(tmp_path):
+    """run_name must be the logical adapters/<name>, not the symlink target."""
+    store = tmp_path / "store"
+    (store / "adapters").mkdir(parents=True)
+    real_run = tmp_path / "external" / "target-name"
+    real_run.mkdir(parents=True)
+    _write_final_adapter(real_run)
+    logical_run = store / "adapters" / "logical-name"
+    logical_run.symlink_to(real_run)
+    merged = _write_merged_model(store / "merged" / "logical-name")
+
+    report = build_run_status(str(logical_run))
+
+    assert report["run_name"] == "logical-name"
+    assert report["merged_model"] == {"present": True, "path": str(merged.resolve())}
+
+
+def test_dot_run_dir_finds_conventional_merged_sibling(tmp_path, monkeypatch):
+    run_dir = _make_run_dir(tmp_path, name="demo_run")
+    _write_final_adapter(run_dir)
+    merged = _write_merged_model(tmp_path / "merged" / "demo_run")
+    monkeypatch.chdir(run_dir)
+
+    report = build_run_status(".")
+
+    assert report["run_name"] == "demo_run"
+    assert report["merged_model"] == {"present": True, "path": str(merged.resolve())}
+
+
+def test_merged_config_permission_error_exits_one(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    config_path = merged / "config.json"
+    os.chmod(config_path, 0)
+    try:
+        result = runner.invoke(app, ["run-status", str(run_dir)])
+    finally:
+        os.chmod(config_path, 0o644)
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_adapter_config_permission_error_exits_one(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    config_path = run_dir / "adapter_config.json"
+    os.chmod(config_path, 0)
+    try:
+        result = runner.invoke(app, ["run-status", str(run_dir)])
+    finally:
+        os.chmod(config_path, 0o644)
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
 # --------------------------------------------------------------------------

@@ -33,13 +33,13 @@ SCHEMA_VERSION = 1
 
 PathLike = str | Path
 
-# A malformed or unreadable adapter_config.json must degrade to "unknown base
-# model", never crash a status report. json.JSONDecodeError is a ValueError
-# subclass; it is named here for the reader's benefit. AttributeError covers a
-# file that parses as valid JSON but is not an object (`[]`, `"text"`, `3`), on
-# which the checkpoint helpers' `.get(...)` call would otherwise raise.
+# A malformed adapter_config.json must degrade to "unknown base model", never
+# crash a status report. Permission/I/O failures propagate so the CLI can
+# exit 1. json.JSONDecodeError is a ValueError subclass; it is named here for
+# the reader's benefit. AttributeError covers a file that parses as valid JSON
+# but is not an object (`[]`, `"text"`, `3`), on which the checkpoint helpers'
+# `.get(...)` call would otherwise raise.
 _ADAPTER_CONFIG_ERRORS = (
-    OSError,
     ValueError,
     KeyError,
     TypeError,
@@ -62,9 +62,18 @@ def _merged_config_is_object(candidate: Path) -> bool:
         return False
     try:
         payload = json.loads(config_path.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError):
         return False
     return isinstance(payload, dict)
+
+
+def _is_root_model_shard_name(name: str) -> bool:
+    """True for a root-local *.safetensors shard that is not adapter weights."""
+    if not name or name != Path(name).name:
+        return False
+    if name == "adapter_model.safetensors":
+        return False
+    return name.endswith(".safetensors")
 
 
 def _shard_filenames(weight_map: dict[str, Any]) -> set[str] | None:
@@ -84,7 +93,7 @@ def _has_complete_sharded_weights(candidate: Path) -> bool:
         return False
     try:
         index = json.loads(index_path.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError):
         return False
     weight_map = index.get("weight_map") if isinstance(index, dict) else None
     if not isinstance(weight_map, dict) or not weight_map:
@@ -92,13 +101,17 @@ def _has_complete_sharded_weights(candidate: Path) -> bool:
     shards = _shard_filenames(weight_map)
     if shards is None:
         return False
-    return all((candidate / name).is_file() for name in shards)
+    return all(
+        _is_root_model_shard_name(name) and _safetensors_header_usable(candidate / name)
+        for name in shards
+    )
 
 
 def _has_complete_merged_weights(candidate: Path) -> bool:
     """True for unsharded model.safetensors or a complete shard index set."""
-    if (candidate / "model.safetensors").is_file():
-        return True
+    unsharded = candidate / "model.safetensors"
+    if unsharded.is_file():
+        return _safetensors_header_usable(unsharded)
     return _has_complete_sharded_weights(candidate)
 
 
@@ -106,9 +119,10 @@ def is_merged_model_dir(path: PathLike) -> bool:
     """Return True when `path` looks like an exported merged model directory.
 
     A merged model is a full `save_pretrained` tree: a parseable object
-    `config.json` plus either `model.safetensors` or every shard named in
-    `model.safetensors.index.json`, all at the directory root. Nested
-    adapter weights or a leftover `adapter_model.safetensors` do not count.
+    `config.json` plus either a usable `model.safetensors` container or every
+    root-local `*.safetensors` shard named in `model.safetensors.index.json`.
+    Nested adapter weights or a leftover `adapter_model.safetensors` do not
+    count.
     """
     candidate = Path(path)
     if not candidate.is_dir():
@@ -137,8 +151,10 @@ def find_merged_model_dir(run_dir: Path, merged_dir: str | None = None) -> Path 
     # Use the caller-supplied path, not a symlink-resolved one. If
     # adapters/<run> points at external storage, resolve() would probe
     # <target-grandparent>/merged/<target-basename> and miss the documented
-    # sibling merged/<run_name>.
-    conventional = run_dir.parent.parent / "merged" / run_dir.name
+    # sibling merged/<run_name>. Path(".").name is empty, so resolve only
+    # then; a named symlink must keep its logical parent.
+    probe_dir = run_dir if run_dir.name else run_dir.resolve()
+    conventional = probe_dir.parent.parent / "merged" / probe_dir.name
     if not is_merged_model_dir(conventional):
         return None
     # Discovery used the logical path; emit an absolute one so
@@ -197,7 +213,7 @@ def _adapter_config_usable(adapter_path: PathLike | None) -> bool:
     config_path = Path(adapter_path) / "adapter_config.json"
     try:
         payload = json.loads(config_path.read_text())
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError):
         return False
     if not isinstance(payload, dict):
         return False
@@ -233,8 +249,48 @@ def _safetensors_header_len_ok(header_len: int) -> bool:
     return header_len <= _SAFETENSORS_HEADER_MAX
 
 
+def _is_nonbool_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _safetensors_tensor_end(entry: Any) -> int | None:
+    """Return the data-region end offset, or None if tensor metadata is invalid."""
+    if not isinstance(entry, dict):
+        return None
+    offsets = entry.get("data_offsets")
+    if not (isinstance(offsets, list) and len(offsets) == 2):
+        return None
+    start, end = offsets
+    if not _is_nonbool_int(start) or not _is_nonbool_int(end):
+        return None
+    if start < 0 or end < start:
+        return None
+    dtype = entry.get("dtype")
+    shape = entry.get("shape")
+    if not isinstance(dtype, str) or not dtype:
+        return None
+    if not isinstance(shape, list):
+        return None
+    if not all(_is_nonbool_int(dim) and dim >= 0 for dim in shape):
+        return None
+    return end
+
+
+def _safetensors_data_region_ok(payload: dict[str, Any], file_size: int, header_len: int) -> bool:
+    """True when every tensor's offsets fit inside the file's data region."""
+    ends: list[int] = []
+    for key, entry in payload.items():
+        if key == "__metadata__":
+            continue
+        end = _safetensors_tensor_end(entry)
+        if end is None:
+            return False
+        ends.append(end)
+    return file_size >= 8 + header_len + max(ends, default=0)
+
+
 def _safetensors_header_usable(path: Path) -> bool:
-    """True when `path` has a parseable, 8-byte-aligned safetensors JSON header."""
+    """True when `path` is a parseable safetensors container with a full data region."""
     try:
         with path.open("rb") as handle:
             size_bytes = handle.read(8)
@@ -247,9 +303,13 @@ def _safetensors_header_usable(path: Path) -> bool:
             if len(header) != header_len:
                 return False
             payload = json.loads(header)
+            handle.seek(0, 2)
+            file_size = handle.tell()
     except (OSError, ValueError, json.JSONDecodeError):
         return False
-    return isinstance(payload, dict)
+    if not isinstance(payload, dict):
+        return False
+    return _safetensors_data_region_ok(payload, file_size, header_len)
 
 
 def _adapter_weights_usable(adapter_path: PathLike | None, *, allow_unsafe: bool = False) -> bool:
@@ -307,11 +367,14 @@ def build_run_status(
     # parent, which resolve() would lose if the run dir is a symlink.
     logical_run_dir = Path(run_dir).expanduser()
     merged_model = find_merged_model_dir(logical_run_dir, merged_dir)
+    # Symlink target basename is the wrong run identifier; Path(".").name is
+    # empty, so fall back to the resolved directory only in that case.
+    run_name = logical_run_dir.name or resolved_run_dir.name
 
     return {
         "schema_version": SCHEMA_VERSION,
         "run_dir": str(resolved_run_dir),
-        "run_name": resolved_run_dir.name,
+        "run_name": run_name,
         "allow_unsafe_serialization": allow_unsafe,
         "checkpoints": {
             "valid_count": len(checkpoints),
@@ -330,7 +393,11 @@ def build_run_status(
         "base_model": base_model,
         "base_revision": base_revision,
         "resume": {
-            "ready": latest_checkpoint is not None and _trainer_state_usable(latest_checkpoint),
+            "ready": (
+                latest_checkpoint is not None
+                and _trainer_state_usable(latest_checkpoint)
+                and _adapter_weights_usable(latest_checkpoint, allow_unsafe=allow_unsafe)
+            ),
             "checkpoint_path": _as_str(latest_checkpoint),
         },
         "export": {
