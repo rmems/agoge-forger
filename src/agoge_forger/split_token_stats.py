@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .split_loaders import iter_materialized_records
 from .split_materialize import exclusive_write
 from .split_schema import (
     SPLIT_NAMES,
@@ -19,7 +20,7 @@ from .split_schema import (
     canonical_json_bytes,
     sha256_file,
 )
-from .split_validation import iter_materialized_records, validate_split_manifest
+from .split_validation import validate_split_manifest
 
 
 @dataclass(frozen=True)

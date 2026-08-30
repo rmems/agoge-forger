@@ -5,6 +5,7 @@ implementation is separated by responsibility so materialization, validation,
 and derivative token statistics can evolve without duplicating that schema.
 """
 
+from .split_loaders import iter_frozen_records, load_frozen_dataset
 from .split_materialize import materialize_split
 from .split_schema import (
     SPLIT_ALGORITHM_VERSION,
@@ -28,12 +29,7 @@ from .split_schema import (
     sha256_file,
 )
 from .split_token_stats import TokenStatisticsDerivation, write_token_statistics
-from .split_validation import (
-    iter_frozen_records,
-    load_frozen_dataset,
-    load_split_manifest,
-    validate_split_manifest,
-)
+from .split_validation import load_split_manifest, validate_split_manifest
 
 __all__ = [
     "SPLIT_ALGORITHM_VERSION",
