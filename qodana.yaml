@@ -10,7 +10,11 @@ profile:
 # Qodana runs bootstrap from /data/project. Provisioning the environment here
 # ensures the analyzer can attach to /data/project/.venv/bin/python rather than
 # merely seeing a runner-only host path.
-bootstrap: /data/cache/bin/uv sync --python 3.12 --frozen
+bootstrap: >-
+  UV_CACHE_DIR=/data/cache/uv
+  UV_PYTHON_INSTALL_DIR=/data/cache/uv-python
+  UV_LINK_MODE=copy
+  /data/cache/bin/uv sync --python 3.12 --frozen
 # The pull-request-only zero-new-issues threshold lives in the workflow.
 # Applying it globally here would make main fail on the existing debt before a
 # reviewed baseline is committed.
