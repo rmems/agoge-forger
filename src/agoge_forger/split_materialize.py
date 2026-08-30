@@ -33,6 +33,14 @@ class SourceRecord:
 
 
 @dataclass(frozen=True)
+class _SourceLine:
+    row: dict[str, Any]
+    raw_line: bytes
+    coordinate: str
+    training_payload: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
 class _BucketPolicy:
     spec: SplitMaterializationSpec
     total_weight: int
@@ -66,13 +74,14 @@ def read_source_records(source_path: Path, identity: CanonicalIdentityPolicy) ->
                 continue
             coordinate = f"{source_path.name}:{line_number}"
             row = _decode_source_row(raw_line, coordinate)
-            training_payload = _content_hash_payload(row, identity, line_number)
             record = _build_source_record(
-                row,
-                raw_line,
-                coordinate,
+                _SourceLine(
+                    row=row,
+                    raw_line=raw_line,
+                    coordinate=coordinate,
+                    training_payload=_content_hash_payload(row, identity, line_number),
+                ),
                 identity,
-                training_payload,
             )
             _reject_duplicate_identity(record.member, seen_ids)
             records.append(record)
@@ -96,12 +105,11 @@ def _decode_source_row(raw_line: bytes, coordinate: str) -> dict[str, Any]:
 
 
 def _build_source_record(
-    row: dict[str, Any],
-    raw_line: bytes,
-    coordinate: str,
+    source: _SourceLine,
     identity: CanonicalIdentityPolicy,
-    training_payload: Mapping[str, str],
 ) -> SourceRecord:
+    row = source.row
+    coordinate = source.coordinate
     canonical_id = _required_string(row, identity.canonical_id_field, coordinate)
     lineage_id = _optional_string(row, identity.lineage_id_field, coordinate) or canonical_id
     group_id = _optional_string(row, identity.group_id_field, coordinate)
@@ -111,11 +119,11 @@ def _build_source_record(
         lineage_id=lineage_id,
         group_id=group_id,
         source_coordinate=coordinate,
-        content_sha256=sha256_bytes(canonical_json_bytes(training_payload)),
-        raw_line_sha256=sha256_bytes(raw_line),
+        content_sha256=sha256_bytes(canonical_json_bytes(source.training_payload)),
+        raw_line_sha256=sha256_bytes(source.raw_line),
         materialized_line_sha256=sha256_bytes(materialized_line),
     )
-    return SourceRecord(row=row, raw_line=raw_line, member=member)
+    return SourceRecord(row=row, raw_line=source.raw_line, member=member)
 
 
 def _content_hash_payload(

@@ -261,39 +261,61 @@ def _validate_sft_artifact(contract_path: Path, sft: EvaluationArm) -> None:
 
 
 def _require_artifact_index(path: Path, expected: str) -> None:
+    index = _load_artifact_index(path, expected)
+    targets = tuple(_resolve_indexed_target(path, entry.file) for entry in index.artifacts)
+    _require_unique_artifact_targets(targets)
+    for entry, artifact_path in zip(index.artifacts, targets, strict=True):
+        _require_matching_artifact(entry, artifact_path)
+
+
+def _load_artifact_index(path: Path, expected: str) -> ArtifactIndex:
+    payload = _read_artifact_index(path)
+    actual = sha256_bytes(payload)
+    if actual != expected:
+        raise ValueError(
+            f"SFT artifact-index SHA-256 mismatch: expected {expected}, found {actual}"
+        )
+    return _parse_artifact_index(path, payload)
+
+
+def _read_artifact_index(path: Path) -> bytes:
     try:
-        payload = path.read_bytes()
-        actual_index_digest = sha256_bytes(payload)
-        if actual_index_digest != expected:
-            raise ValueError(
-                f"SFT artifact-index SHA-256 mismatch: expected {expected}, "
-                f"found {actual_index_digest}"
-            )
-        value = json.loads(payload)
-        index = ArtifactIndex.model_validate(value)
-    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, OSError) as exc:
+        return path.read_bytes()
+    except OSError as exc:
         raise ValueError(f"invalid SFT artifact index: {path}") from exc
 
-    root = path.parent.resolve()
-    seen_targets: set[Path] = set()
-    for entry in index.artifacts:
-        artifact_path = _resolve_artifact_entry(root, entry.file)
-        if artifact_path == path.resolve():
-            raise ValueError("artifact index cannot list itself")
-        if artifact_path in seen_targets:
-            raise ValueError(f"artifact index resolves duplicate target: {entry.file}")
-        seen_targets.add(artifact_path)
-        actual_size, actual_digest = _stream_artifact(artifact_path)
-        if actual_size != entry.size_bytes:
-            raise ValueError(
-                f"indexed artifact size mismatch for {entry.file}: "
-                f"expected {entry.size_bytes}, found {actual_size}"
-            )
-        if actual_digest != entry.sha256:
-            raise ValueError(
-                f"indexed artifact SHA-256 mismatch for {entry.file}: "
-                f"expected {entry.sha256}, found {actual_digest}"
-            )
+
+def _parse_artifact_index(path: Path, payload: bytes) -> ArtifactIndex:
+    try:
+        return ArtifactIndex.model_validate(json.loads(payload))
+    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError) as exc:
+        raise ValueError(f"invalid SFT artifact index: {path}") from exc
+
+
+def _resolve_indexed_target(index_path: Path, value: str) -> Path:
+    target = _resolve_artifact_entry(index_path.parent.resolve(), value)
+    if target == index_path.resolve():
+        raise ValueError("artifact index cannot list itself")
+    return target
+
+
+def _require_unique_artifact_targets(targets: tuple[Path, ...]) -> None:
+    if len(targets) != len(set(targets)):
+        raise ValueError("artifact index resolves duplicate targets")
+
+
+def _require_matching_artifact(entry: ArtifactIndexEntry, path: Path) -> None:
+    actual_size, actual_digest = _stream_artifact(path)
+    if actual_size != entry.size_bytes:
+        raise ValueError(
+            f"indexed artifact size mismatch for {entry.file}: "
+            f"expected {entry.size_bytes}, found {actual_size}"
+        )
+    if actual_digest != entry.sha256:
+        raise ValueError(
+            f"indexed artifact SHA-256 mismatch for {entry.file}: "
+            f"expected {entry.sha256}, found {actual_digest}"
+        )
 
 
 def _stream_artifact(path: Path) -> tuple[int, str]:
@@ -330,20 +352,33 @@ def _stream_artifact(path: Path) -> tuple[int, str]:
 
 
 def _resolve_artifact_entry(root: Path, value: str) -> Path:
-    portable = PurePosixPath(value.replace("\\", "/"))
-    windows = PureWindowsPath(value)
-    if (
-        not value.strip()
-        or portable.is_absolute()
-        or windows.is_absolute()
-        or windows.drive
-        or ".." in portable.parts
-    ):
-        raise ValueError(f"artifact index path must stay relative to its directory: {value}")
-    try:
-        resolved = root.joinpath(*portable.parts).resolve(strict=True)
-    except FileNotFoundError as exc:
-        raise ValueError(f"indexed artifact does not exist: {value}") from exc
+    portable = _portable_artifact_path(value)
+    resolved = _resolve_existing_artifact(root, portable, value)
     if not resolved.is_relative_to(root):
         raise ValueError(f"artifact index path escapes its directory: {value}")
     return resolved
+
+
+def _portable_artifact_path(value: str) -> PurePosixPath:
+    if not value.strip():
+        raise ValueError(f"artifact index path must stay relative to its directory: {value}")
+    portable = PurePosixPath(value.replace("\\", "/"))
+    windows = PureWindowsPath(value)
+    unsafe = any(
+        (
+            portable.is_absolute(),
+            windows.is_absolute(),
+            bool(windows.drive),
+            ".." in portable.parts,
+        )
+    )
+    if unsafe:
+        raise ValueError(f"artifact index path must stay relative to its directory: {value}")
+    return portable
+
+
+def _resolve_existing_artifact(root: Path, portable: PurePosixPath, value: str) -> Path:
+    try:
+        return root.joinpath(*portable.parts).resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError(f"indexed artifact does not exist: {value}") from exc
