@@ -8,10 +8,19 @@ from .load import load_base_model
 
 
 def inspect_lora_targets(
-    model_id: str, trust_remote_code: bool = False, out_path: str | None = None
+    model_id: str,
+    trust_remote_code: bool = False,
+    out_path: str | None = None,
+    revision: str | None = None,
 ):
-    logger.info(f"Finding potential LoRA targets in {model_id}...")
-    model, _ = load_base_model(model_id, trust_remote_code, quant_config=None, bf16=True)
+    logger.info(f"Finding potential LoRA targets in {model_id}@{revision or 'default'}...")
+    model, _ = load_base_model(
+        model_id,
+        trust_remote_code,
+        quant_config=None,
+        bf16=True,
+        revision=revision,
+    )
 
     leaf_groups: dict[str, dict[str, Any]] = {}
     full_module_matches: list[dict[str, Any]] = []
@@ -68,6 +77,7 @@ def inspect_lora_targets(
 
     report = {
         "model_id": model_id,
+        "revision": revision,
         "architectures": getattr(model.config, "architectures", []),
         "candidate_leaf_names": leaf_groups,
         "full_module_matches_count": len(full_module_matches),

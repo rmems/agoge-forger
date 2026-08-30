@@ -19,6 +19,8 @@ def get_model_config_metadata(
     )
 
     meta = {
+        "model_id": model_id,
+        "revision": revision,
         "model_type": getattr(config, "model_type", "unknown"),
         "architectures": getattr(config, "architectures", []),
         "torch_dtype": str(getattr(config, "torch_dtype", "unknown")),

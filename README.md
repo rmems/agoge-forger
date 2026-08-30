@@ -61,8 +61,12 @@ Hub revisions, keep `trust_remote_code` disabled, and require architecture
 inspection before LoRA targets are frozen:
 
 ```bash
-uv run agoge model-metadata --model-id openbmb/MiniCPM5-1B-Base
-uv run agoge inspect-lora-targets --model-id openbmb/MiniCPM5-1B-Base
+uv run agoge model-metadata \
+  --model-id openbmb/MiniCPM5-1B-Base \
+  --revision 156170697656c48f69915b33a2fb44110242187c
+uv run agoge inspect-lora-targets \
+  --model-id openbmb/MiniCPM5-1B-Base \
+  --revision 156170697656c48f69915b33a2fb44110242187c
 ```
 
 The Granite template is not permission to start the measured experiment. The

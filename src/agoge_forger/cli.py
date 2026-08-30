@@ -45,19 +45,21 @@ def check_torch():
 @app.command()
 def inspect_model(
     model_id: str = typer.Option(..., help="Hugging Face model ID"),
+    revision: str | None = typer.Option(None, help="Immutable Hugging Face revision"),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
 ):
     """Inspect model architecture (loads weights)."""
-    _inspect_model(model_id, trust_remote_code)
+    _inspect_model(model_id, trust_remote_code, revision)
 
 
 @app.command()
 def model_metadata(
     model_id: str = typer.Option(..., help="Hugging Face model ID"),
+    revision: str | None = typer.Option(None, help="Immutable Hugging Face revision"),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
 ):
     """Inspect model metadata without loading weights."""
-    meta = get_model_config_metadata(model_id, trust_remote_code)
+    meta = get_model_config_metadata(model_id, trust_remote_code, revision)
     logger.info(json.dumps(meta, indent=2))
 
 
@@ -65,10 +67,11 @@ def model_metadata(
 def inspect_lora_targets(
     model_id: str = typer.Option(..., help="Hugging Face model ID"),
     out: str = typer.Option(None, help="Output JSON path"),
+    revision: str | None = typer.Option(None, help="Immutable Hugging Face revision"),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
 ):
     """Inspect model for potential LoRA targets."""
-    _inspect_lora_targets(model_id, trust_remote_code, out)
+    _inspect_lora_targets(model_id, trust_remote_code, out, revision)
 
 
 @app.command()
