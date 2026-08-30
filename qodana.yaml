@@ -7,8 +7,10 @@ version: "1.0"
 linter: qodana-python
 profile:
   name: qodana.recommended
-# The workflow provisions the frozen Python 3.12 runtime environment and points
-# the native analyzer at its interpreter before this configuration is evaluated.
+# Qodana runs bootstrap from /data/project. Provisioning the environment here
+# ensures the analyzer can attach to /data/project/.venv/bin/python rather than
+# merely seeing a runner-only host path.
+bootstrap: uv sync --python 3.12 --frozen
 # The pull-request-only zero-new-issues threshold lives in the workflow.
 # Applying it globally here would make main fail on the existing debt before a
 # reviewed baseline is committed.
