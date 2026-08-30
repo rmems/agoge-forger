@@ -32,6 +32,14 @@ class SourceRecord:
     member: SplitMember
 
 
+@dataclass(frozen=True)
+class _BucketPolicy:
+    spec: SplitMaterializationSpec
+    total_weight: int
+    train_threshold: int
+    validation_threshold: int
+
+
 class _UnionFind:
     def __init__(self, size: int) -> None:
         self.parent = list(range(size))
@@ -188,33 +196,27 @@ def assign_records(
     total_weight = sum(policy.weights.values())
     train_threshold = policy.weights["train"]
     validation_threshold = train_threshold + policy.weights["validation"]
+    bucket_policy = _BucketPolicy(
+        spec,
+        total_weight,
+        train_threshold,
+        validation_threshold,
+    )
     assigned: dict[SplitName, list[int]] = {name: [] for name in SPLIT_NAMES}
     for component in components:
-        split = _bucket_split(
-            _component_anchor(records, component),
-            spec,
-            total_weight,
-            train_threshold,
-            validation_threshold,
-        )
+        split = _bucket_split(_component_anchor(records, component), bucket_policy)
         assigned[split].extend(component)
     _sort_and_require_nonempty(assigned, records)
     return assigned
 
 
-def _bucket_split(
-    anchor: str,
-    spec: SplitMaterializationSpec,
-    total_weight: int,
-    train_threshold: int,
-    validation_threshold: int,
-) -> SplitName:
-    policy = spec.split_policy
+def _bucket_split(anchor: str, bucket_policy: _BucketPolicy) -> SplitName:
+    policy = bucket_policy.spec.split_policy
     material = f"{policy.algorithm_version}\0{policy.seed}\0{policy.salt}\0{anchor}".encode()
-    bucket = int(sha256_bytes(material), 16) % total_weight
-    if bucket < train_threshold:
+    bucket = int(sha256_bytes(material), 16) % bucket_policy.total_weight
+    if bucket < bucket_policy.train_threshold:
         return "train"
-    if bucket < validation_threshold:
+    if bucket < bucket_policy.validation_threshold:
         return "validation"
     return "held_out"
 
@@ -301,7 +303,10 @@ def materialize_split(
     assignments = assign_records(records, spec)
     artifacts, payloads = _build_artifacts(assignments, records)
     manifest = _build_manifest(
-        source, spec, records, artifacts, leakage_audit(assignments, records)
+        _source_file(source, spec, len(records)),
+        spec,
+        artifacts,
+        leakage_audit(assignments, records),
     )
     _write_snapshot(destination, manifest, payloads)
     return manifest
@@ -333,22 +338,29 @@ def _build_artifacts(
     return artifacts, payloads
 
 
-def _build_manifest(
+def _source_file(
     source: Path,
     spec: SplitMaterializationSpec,
-    records: Sequence[SourceRecord],
+    record_count: int,
+) -> SourceFile:
+    return SourceFile(
+        repository=spec.source_repository,
+        revision=spec.source_revision,
+        dataset_version=spec.dataset_version,
+        path=source.name,
+        sha256=sha256_file(source),
+        record_count=record_count,
+    )
+
+
+def _build_manifest(
+    source: SourceFile,
+    spec: SplitMaterializationSpec,
     artifacts: dict[SplitName, SplitArtifact],
     audit: LeakageAudit,
 ) -> SplitManifest:
     return SplitManifest(
-        source=SourceFile(
-            repository=spec.source_repository,
-            revision=spec.source_revision,
-            dataset_version=spec.dataset_version,
-            path=source.name,
-            sha256=sha256_file(source),
-            record_count=len(records),
-        ),
+        source=source,
         canonical_identity=spec.canonical_identity,
         split_policy=spec.split_policy,
         splits=artifacts,

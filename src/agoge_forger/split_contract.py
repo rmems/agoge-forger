@@ -27,7 +27,7 @@ from .split_schema import (
     sha256_bytes,
     sha256_file,
 )
-from .split_token_stats import write_token_statistics
+from .split_token_stats import TokenStatisticsDerivation, write_token_statistics
 from .split_validation import (
     iter_frozen_records,
     load_frozen_dataset,
@@ -51,6 +51,7 @@ __all__ = [
     "SplitPolicy",
     "TokenStatSplit",
     "TokenStatistics",
+    "TokenStatisticsDerivation",
     "TokenStatisticsSpec",
     "canonical_json_bytes",
     "iter_frozen_records",

@@ -22,18 +22,24 @@ from .split_schema import (
 from .split_validation import iter_materialized_records, validate_split_manifest
 
 
+@dataclass(frozen=True)
+class TokenStatisticsDerivation:
+    tokenizer: TokenizerLike
+    serializer: Serializer
+    spec: TokenStatisticsSpec
+
+
 def write_token_statistics(
     manifest_path: str | Path,
     output_path: str | Path,
-    tokenizer: TokenizerLike,
-    serializer: Serializer,
-    spec: TokenStatisticsSpec,
+    derivation: TokenStatisticsDerivation,
 ) -> TokenStatistics:
     """Write model-specific statistics without mutating canonical split identity."""
 
     path = Path(manifest_path).expanduser().resolve(strict=True)
     manifest = validate_split_manifest(path)
-    counter = _TokenCounter(tokenizer, serializer, spec.context_limit)
+    spec = derivation.spec
+    counter = _TokenCounter(derivation.tokenizer, derivation.serializer, spec.context_limit)
     split_stats = {split: counter.for_split(path, manifest, split) for split in SPLIT_NAMES}
     statistics = TokenStatistics(
         split_manifest_sha256=sha256_file(path),

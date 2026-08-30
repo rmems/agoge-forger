@@ -147,10 +147,24 @@ def validate_evaluation_contract(contract_path: str | Path) -> PairedEvaluationC
 
     path = Path(contract_path).expanduser().resolve(strict=True)
     contract = load_evaluation_contract(path)
-    manifest_path = (path.parent / contract.split_manifest_path).resolve(strict=True)
+    manifest = _validate_manifest_reference(path, contract)
+    _validate_held_out_reference(contract, manifest)
+    _validate_sft_artifact(path, contract.sft)
+    return contract
+
+
+def _validate_manifest_reference(
+    contract_path: Path, contract: PairedEvaluationContract
+) -> SplitManifest:
+    manifest_path = (contract_path.parent / contract.split_manifest_path).resolve(strict=True)
     if sha256_file(manifest_path) != contract.split_manifest_sha256:
         raise ValueError("evaluation contract split-manifest SHA-256 mismatch")
-    manifest = validate_split_manifest(manifest_path)
+    return validate_split_manifest(manifest_path)
+
+
+def _validate_held_out_reference(
+    contract: PairedEvaluationContract, manifest: SplitManifest
+) -> None:
     if manifest.splits["held_out"].sha256 != contract.held_out_split_sha256:
         raise ValueError("evaluation contract held-out split SHA-256 mismatch")
     expected_ids = held_out_task_ids(manifest)
@@ -158,8 +172,6 @@ def validate_evaluation_contract(contract_path: str | Path) -> PairedEvaluationC
         raise ValueError("evaluation contract task IDs differ from the frozen held-out manifest")
     if logical_task_set_sha256(expected_ids) != contract.logical_task_set_sha256:
         raise ValueError("evaluation contract task-set digest differs from held-out membership")
-    _validate_sft_artifact(path, contract.sft)
-    return contract
 
 
 def build_evaluation_contract(

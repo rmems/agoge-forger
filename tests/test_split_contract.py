@@ -9,6 +9,7 @@ from agoge_forger.split_contract import (
     SPLIT_NAMES,
     SplitMaterializationSpec,
     SplitPolicy,
+    TokenStatisticsDerivation,
     TokenStatisticsSpec,
     canonical_json_bytes,
     iter_frozen_records,
@@ -223,33 +224,37 @@ def test_materially_distinct_tokenizer_and_serializer_stats_do_not_change_splits
     character_stats = write_token_statistics(
         manifest_path,
         output / "character-token-stats.json",
-        tokenizer=CharacterTokenizer(),
-        serializer=lambda row: str(row["text"]),
-        spec=TokenStatisticsSpec(
-            model_id="fake/model-family-a",
-            model_revision="model-a-revision-v1",
-            tokenizer_id="fake/character-tokenizer",
-            tokenizer_revision="character-v1",
-            serializer_id="plain-text",
-            serializer_version="1",
-            serializer_sha256="a" * 64,
-            context_limit=64,
+        TokenStatisticsDerivation(
+            tokenizer=CharacterTokenizer(),
+            serializer=lambda row: str(row["text"]),
+            spec=TokenStatisticsSpec(
+                model_id="fake/model-family-a",
+                model_revision="model-a-revision-v1",
+                tokenizer_id="fake/character-tokenizer",
+                tokenizer_revision="character-v1",
+                serializer_id="plain-text",
+                serializer_version="1",
+                serializer_sha256="a" * 64,
+                context_limit=64,
+            ),
         ),
     )
     word_stats = write_token_statistics(
         manifest_path,
         output / "word-token-stats.json",
-        tokenizer=WordPieceTokenizer(),
-        serializer=lambda row: f"<instruction>\n{row['text'].upper()}\n</instruction>",
-        spec=TokenStatisticsSpec(
-            model_id="fake/model-family-b",
-            model_revision="model-b-revision-v9",
-            tokenizer_id="fake/word-piece-tokenizer",
-            tokenizer_revision="wordpiece-v9",
-            serializer_id="tagged-uppercase",
-            serializer_version="9",
-            serializer_sha256="b" * 64,
-            context_limit=16,
+        TokenStatisticsDerivation(
+            tokenizer=WordPieceTokenizer(),
+            serializer=lambda row: f"<instruction>\n{row['text'].upper()}\n</instruction>",
+            spec=TokenStatisticsSpec(
+                model_id="fake/model-family-b",
+                model_revision="model-b-revision-v9",
+                tokenizer_id="fake/word-piece-tokenizer",
+                tokenizer_revision="wordpiece-v9",
+                serializer_id="tagged-uppercase",
+                serializer_version="9",
+                serializer_sha256="b" * 64,
+                context_limit=16,
+            ),
         ),
     )
 
