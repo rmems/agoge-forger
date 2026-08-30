@@ -79,4 +79,6 @@ Python writes and consumes `artifact_index.json` after training and merging.
 - The index file itself is not listed in the `artifacts` array
 - Consumers resolve listed files from the directory containing `artifact_index.json`; `output_dir` is producer provenance and may become stale when an immutable artifact bundle is relocated
 - Consumers verify every listed file's existence, regular-file type, byte size, and SHA-256 digest before using the bundle
+- Evaluation-contract validation also requires the index to cover every regular file recursively beneath the bundle root, excluding only the root `artifact_index.json`, and rejects symlinks or special files
+- A `peft_adapter` evaluation artifact requires `adapter_config.json` plus `adapter_model.safetensors` and binds the adapter's base repository and immutable revision to the SFT arm; a `merged_model` requires `config.json` plus either one `model.safetensors` or a complete safetensors shard index
 - All JSON output uses `indent=2` formatting

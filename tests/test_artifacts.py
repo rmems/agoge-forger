@@ -26,6 +26,24 @@ def test_artifact_index_hashes_file(tmp_path):
         assert data["artifacts"][0]["sha256"] != "unknown"
 
 
+def test_artifact_index_excludes_only_its_root_index(tmp_path):
+    out_dir = tmp_path / "test_out"
+    nested_dir = out_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    nested_index = nested_dir / "artifact_index.json"
+    nested_index.write_text('{"nested": true}\n')
+
+    index_path = write_artifact_index(str(out_dir))
+
+    import json
+
+    with open(index_path) as f:
+        data = json.load(f)
+    assert [artifact["file"] for artifact in data["artifacts"]] == [
+        os.path.join("nested", "artifact_index.json")
+    ]
+
+
 def test_no_bin_outputs_when_safe_serialization_required(tmp_path):
     out_dir = tmp_path / "safe_dir"
     out_dir.mkdir()

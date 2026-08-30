@@ -78,13 +78,14 @@ def sha256_file(path: str) -> str:
 
 def write_artifact_index(output_dir: str) -> str:
     index_path = os.path.join(output_dir, "artifact_index.json")
+    resolved_index_path = os.path.abspath(index_path)
     artifacts = []
 
     for root, _, files in os.walk(output_dir):
         for file in files:
-            if file == "artifact_index.json":
-                continue
             filepath = os.path.join(root, file)
+            if os.path.abspath(filepath) == resolved_index_path:
+                continue
             rel_path = os.path.relpath(filepath, output_dir)
             size = os.path.getsize(filepath)
             checksum = sha256_file(filepath)

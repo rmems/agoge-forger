@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess  # nosec B404
 import sys
 
@@ -51,8 +52,15 @@ def serve_vllm(cfg: ServingConfig) -> int:
         return 1
 
     logger.info("Starting vLLM: %s", " ".join(cmd))
+    serve_env = os.environ.copy()
+    serve_env["VLLM_USE_RUST_FRONTEND"] = "0"
     try:
-        proc = subprocess.run(cmd, check=False, shell=False)  # nosec B603  # nosemgrep
+        proc = subprocess.run(  # nosec B603  # nosemgrep
+            cmd,
+            check=False,
+            shell=False,
+            env=serve_env,
+        )
     except FileNotFoundError:
         logger.error("vLLM entry point not found. Is vLLM installed?")
         return 1
