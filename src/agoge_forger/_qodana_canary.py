@@ -1,10 +1,10 @@
 """Temporary canary for Qodana's configured Python language level."""
 
-from os import PathLike
 
-
-def normalize_path_for_qodana_canary(
-    value: str | PathLike[str] | None,
+def normalize_value_for_qodana_canary(
+    value: str | bytes | None,
 ) -> str | None:
-    """Exercise PEP 604 unions and generic path-like annotations."""
-    return None if value is None else str(value)
+    """Exercise PEP 604 unions under the configured Python language level."""
+    if value is None:
+        return None
+    return value.decode() if isinstance(value, bytes) else value

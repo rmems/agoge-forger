@@ -7,10 +7,11 @@ version: "1.0"
 linter: qodana-python
 profile:
   name: qodana.recommended
-# Qodana runs bootstrap from /data/project. Provisioning the environment here
-# ensures the analyzer can attach to /data/project/.venv/bin/python rather than
-# merely seeing a runner-only host path.
+# Qodana runs bootstrap from /data/project. Discard tracked legacy IDE module
+# state only from the ephemeral scan checkout so it cannot override pyproject
+# metadata.
 bootstrap: >-
+  rm -rf -- /data/project/.idea &&
   UV_CACHE_DIR=/data/cache/uv
   UV_PYTHON_INSTALL_DIR=/data/cache/uv-python
   UV_LINK_MODE=copy
