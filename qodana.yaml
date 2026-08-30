@@ -1,10 +1,16 @@
 ####################################################################################################################
 # WARNING: Do not store sensitive information in this file, as its contents will be included in the Qodana report. #
 ####################################################################################################################
+# yaml-language-server: $schema=https://json.schemastore.org/qodana-1.0.json
 
 version: "1.0"
 linter: qodana-python
 profile:
   name: qodana.recommended
+# The workflow provisions the frozen Python 3.12 runtime environment and points
+# the native analyzer at its interpreter before this configuration is evaluated.
+# The pull-request-only zero-new-issues threshold lives in the workflow.
+# Applying it globally here would make main fail on the existing debt before a
+# reviewed baseline is committed.
 include:
   - name: CheckDependencyLicenses
