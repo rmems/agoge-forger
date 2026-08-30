@@ -246,22 +246,44 @@ def canonical_json_bytes(value: Any) -> bytes:
 def validate_repository_relative_path(value: str) -> str:
     """Require one canonical, portable path confined to a repository root."""
 
-    if value != value.strip() or any(ord(character) < 32 for character in value):
-        raise ValueError(
-            "repository-relative path must not contain surrounding whitespace or control characters"
-        )
-    if "\\" in value:
-        raise ValueError("repository-relative path must use POSIX '/' separators")
+    _require_portable_path_text(value)
     posix_path = PurePosixPath(value)
     windows_path = PureWindowsPath(value)
-    if posix_path.is_absolute() or windows_path.is_absolute() or windows_path.drive:
-        raise ValueError("repository-relative path must not be absolute or use a drive prefix")
+    _require_relative_path(posix_path, windows_path)
+    _require_canonical_path(value, posix_path)
+    return value
+
+
+def _require_portable_path_text(value: str) -> None:
+    text_error = (
+        "repository-relative path must not contain surrounding whitespace or control characters"
+    )
+    if value != value.strip():
+        raise ValueError(text_error)
+    if any(ord(character) < 32 for character in value):
+        raise ValueError(text_error)
+    if "\\" in value:
+        raise ValueError("repository-relative path must use POSIX '/' separators")
+
+
+def _require_relative_path(posix_path: PurePosixPath, windows_path: PureWindowsPath) -> None:
+    absolute_error = "repository-relative path must not be absolute or use a drive prefix"
+    if posix_path.is_absolute():
+        raise ValueError(absolute_error)
+    if windows_path.is_absolute():
+        raise ValueError(absolute_error)
+    if windows_path.drive:
+        raise ValueError(absolute_error)
     if ".." in posix_path.parts:
         raise ValueError("repository-relative path must not escape the repository root")
+
+
+def _require_canonical_path(value: str, posix_path: PurePosixPath) -> None:
     canonical = posix_path.as_posix()
-    if canonical in {"", "."} or canonical != value:
+    if canonical in {"", "."}:
         raise ValueError("repository-relative path must be a canonical POSIX path")
-    return value
+    if canonical != value:
+        raise ValueError("repository-relative path must be a canonical POSIX path")
 
 
 def sha256_bytes(value: bytes) -> str:

@@ -350,6 +350,10 @@ def _require_shard_metadata(shard_index: dict[str, object]) -> None:
 def _model_tensor_shard(tensor_name: str, value: object) -> PurePosixPath:
     if not tensor_name:
         raise ValueError("merged-model weight_map tensor names must be non-empty")
+    return _require_model_shard_path(value)
+
+
+def _require_model_shard_path(value: object) -> PurePosixPath:
     if not isinstance(value, str):
         raise TypeError("merged-model weight_map shard paths must be strings")
     path = _portable_artifact_path(value)

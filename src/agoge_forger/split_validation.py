@@ -48,18 +48,15 @@ def validate_split_manifest(
     manifest = load_split_manifest(path)
     if source_path is not None:
         _validate_source(manifest, Path(source_path).expanduser().resolve(strict=True))
-    audit_builder = LeakageAuditBuilder()
-    representation_tracker = TrainingRepresentationTracker()
+    context = _ArtifactValidationContext(
+        manifest_path=path,
+        manifest=manifest,
+        audit_builder=LeakageAuditBuilder(),
+        representation_tracker=TrainingRepresentationTracker(),
+    )
     for split, artifact in manifest.splits.items():
-        _validate_artifact(
-            path,
-            split,
-            artifact,
-            manifest,
-            audit_builder,
-            representation_tracker,
-        )
-    audit = audit_builder.result()
+        _validate_artifact(context, split, artifact)
+    audit = context.audit_builder.result()
     _require_equal(
         audit,
         manifest.leakage_audit,
@@ -119,22 +116,27 @@ def _require_expected_ownership(manifest: SplitManifest, records: list[SourceRec
     )
 
 
+@dataclass(frozen=True)
+class _ArtifactValidationContext:
+    manifest_path: Path
+    manifest: SplitManifest
+    audit_builder: LeakageAuditBuilder
+    representation_tracker: TrainingRepresentationTracker
+
+
 def _validate_artifact(
-    manifest_path: Path,
+    context: _ArtifactValidationContext,
     split: SplitName,
     artifact: SplitArtifact,
-    manifest: SplitManifest,
-    audit: LeakageAuditBuilder,
-    representation_tracker: TrainingRepresentationTracker,
 ) -> None:
-    with verified_split_snapshot(manifest_path, split, artifact) as snapshot_path:
+    with verified_split_snapshot(context.manifest_path, split, artifact) as snapshot_path:
         count = 0
         membership_mismatch = False
         records = iter_source_records(
             snapshot_path,
-            manifest.canonical_identity,
+            context.manifest.canonical_identity,
             source_coordinate_path=artifact.path,
-            representation_tracker=representation_tracker,
+            representation_tracker=context.representation_tracker,
         )
         for count, record in enumerate(records, 1):
             if count > artifact.record_count:
@@ -149,7 +151,7 @@ def _validate_artifact(
             if actual != expected:
                 membership_mismatch = True
             else:
-                audit.observe(split, actual)
+                context.audit_builder.observe(split, actual)
     _require_equal(count, artifact.record_count, f"{split} record count mismatch")
     if membership_mismatch:
         raise ValueError(f"{split} membership metadata does not match materialized records")

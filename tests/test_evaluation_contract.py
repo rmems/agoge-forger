@@ -25,6 +25,7 @@ from agoge_forger.split_contract import (
 
 MODEL_REPOSITORY = "example/base-model"
 MODEL_REVISION = "abcdef0123456789abcdef0123456789abcdef01"
+_BuildArgs = tuple[Path, Path, EvaluationArm, EvaluationArm]
 
 
 def _write_safetensors(path: Path, value: int = 0, *, keys: tuple[str, ...] = ("weight",)) -> None:
@@ -191,15 +192,12 @@ def _build(tmp_path: Path, manifest_path: Path, base: EvaluationArm, sft: Evalua
 
 
 def _assert_build_rejected(
-    tmp_path: Path,
-    manifest_path: Path,
-    base: EvaluationArm,
-    sft: EvaluationArm,
+    build_args: _BuildArgs,
     expected_error: str,
     error_type: type[BaseException] = ValueError,
 ) -> None:
     with pytest.raises(error_type, match=expected_error):
-        _build(tmp_path, manifest_path, base, sft)
+        _build(*build_args)
 
 
 def _write_shard_index(output_dir: Path, payload: dict[str, object]) -> None:
@@ -417,7 +415,7 @@ def test_evaluation_contract_enforces_declared_artifact_kind(tmp_path, kind, exp
         _write_adapter_config(output_dir, _provenance())
         _write_safetensors(output_dir / "adapter_model.safetensors")
     wrong_kind_sft = _with_artifact(sft, output_dir, kind=kind)
-    _assert_build_rejected(tmp_path, manifest_path, base, wrong_kind_sft, expected_error)
+    _assert_build_rejected((tmp_path, manifest_path, base, wrong_kind_sft), expected_error)
 
 
 @pytest.mark.parametrize(
@@ -437,7 +435,7 @@ def test_evaluation_contract_rejects_unsafe_adapter_weight_substitute(tmp_path, 
     unsafe_path.parent.mkdir(parents=True, exist_ok=True)
     unsafe_path.write_bytes(b"pickle-weights")
     unsafe_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
-    _assert_build_rejected(tmp_path, manifest_path, base, unsafe_sft, "unsafe serialized weights")
+    _assert_build_rejected((tmp_path, manifest_path, base, unsafe_sft), "unsafe serialized weights")
 
 
 def test_evaluation_contract_accepts_indexed_adapter_training_state(tmp_path):
@@ -461,10 +459,7 @@ def test_evaluation_contract_rejects_conflicting_root_adapter_safetensors(tmp_pa
     _write_safetensors(output_dir / "model.safetensors")
     conflicting_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
     _assert_build_rejected(
-        tmp_path,
-        manifest_path,
-        base,
-        conflicting_sft,
+        (tmp_path, manifest_path, base, conflicting_sft),
         "only adapter_model.safetensors weights",
     )
 
@@ -537,7 +532,7 @@ def test_evaluation_contract_binds_peft_adapter_to_sft_base(tmp_path, config, ex
     manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "adapter")
     _write_adapter_config(output_dir, config)
     mismatched_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
-    _assert_build_rejected(tmp_path, manifest_path, base, mismatched_sft, expected_error)
+    _assert_build_rejected((tmp_path, manifest_path, base, mismatched_sft), expected_error)
 
 
 def test_evaluation_contract_revalidates_peft_provenance(tmp_path):
@@ -620,7 +615,7 @@ def test_evaluation_contract_rejects_invalid_merged_model_layout(
         "provenance-revision": _provenance(revision="4" * 40),
     }.get(variant)
     merged_sft = _with_artifact(sft, output_dir, kind="merged_model", provenance=provenance)
-    _assert_build_rejected(tmp_path, manifest_path, base, merged_sft, expected_error, error_type)
+    _assert_build_rejected((tmp_path, manifest_path, base, merged_sft), expected_error, error_type)
 
 
 def test_evaluation_contract_rejects_contract_inside_artifact_bundle(tmp_path):
@@ -669,7 +664,7 @@ def test_evaluation_contract_rejects_artifact_index_path_escape(tmp_path):
     )
     contract_path = tmp_path / "eval" / "contract.json"
 
-    _assert_build_rejected(tmp_path, manifest_path, base, escaped_sft, "must stay relative")
+    _assert_build_rejected((tmp_path, manifest_path, base, escaped_sft), "must stay relative")
     assert not contract_path.exists()
 
 
@@ -680,10 +675,7 @@ def test_evaluation_contract_revalidates_copied_arms_before_writing(tmp_path):
     contract_path = tmp_path / "eval" / "contract.json"
 
     _assert_build_rejected(
-        tmp_path,
-        manifest_path,
-        invalid_base,
-        invalid_sft,
+        (tmp_path, manifest_path, invalid_base, invalid_sft),
         "context_window",
         ValidationError,
     )

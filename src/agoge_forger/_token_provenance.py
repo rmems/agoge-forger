@@ -140,12 +140,20 @@ def _resolved_tokenizer_commit(
 
 
 def _unique_revision(values: Sequence[Any], label: str) -> str | None:
-    present = [value for value in values if value is not None and value != ""]
+    present = _present_revisions(values)
     if not present:
         return None
-    if any(not isinstance(value, str) for value in present):
+    return _require_unique_revision(present, label)
+
+
+def _present_revisions(values: Sequence[Any]) -> list[Any]:
+    return [value for value in values if value is not None and value != ""]
+
+
+def _require_unique_revision(values: Sequence[Any], label: str) -> str:
+    if any(not isinstance(value, str) for value in values):
         raise TypeError(f"{label} values must be strings")
-    unique = set(present)
+    unique = set(values)
     if len(unique) != 1:
         raise ValueError(f"conflicting {label} values: {sorted(unique)!r}")
     return next(iter(unique))
@@ -160,7 +168,7 @@ def derive_tokenizer_sha256(tokenizer: TokenizerLike) -> str:
     }
     backend_to_str = getattr(getattr(tokenizer, "backend_tokenizer", None), "to_str", None)
     if isinstance(tokenizer, PreTrainedTokenizerFast):
-        if type(tokenizer) is not PreTrainedTokenizerFast:
+        if not _is_exact_fast_tokenizer_type(tokenizer_type):
             raise TypeError("fast tokenizer subclasses cannot be fingerprinted fail-closed")
         if not callable(backend_to_str):
             raise TypeError("fast tokenizer does not expose canonical backend serialization")
@@ -170,20 +178,18 @@ def derive_tokenizer_sha256(tokenizer: TokenizerLike) -> str:
     return sha256_bytes(canonical_json_bytes(payload))
 
 
+def _is_exact_fast_tokenizer_type(tokenizer_type: type[Any]) -> bool:
+    return tokenizer_type is PreTrainedTokenizerFast
+
+
 def _fast_tokenizer_state(
     tokenizer: TokenizerLike,
     backend_to_str: Callable[[], Any],
     code: CodeType | None,
 ) -> dict[str, Any]:
-    backend_state = backend_to_str()
-    if not isinstance(backend_state, str) or not backend_state:
-        raise ValueError("tokenizer backend serialization must be a non-empty string")
-    get_vocab = getattr(tokenizer, "get_vocab", None)
-    if not callable(get_vocab):
-        raise TypeError("fast tokenizer does not expose a verifiable vocabulary")
-    special_tokens = getattr(tokenizer, "special_tokens_map", None)
-    if not isinstance(special_tokens, Mapping):
-        raise TypeError("fast tokenizer does not expose canonical special-token state")
+    backend_state = _fast_tokenizer_backend_state(backend_to_str)
+    get_vocab = _fast_tokenizer_vocabulary_getter(tokenizer)
+    special_tokens = _fast_tokenizer_special_tokens(tokenizer)
     payload = {
         "backend": backend_state,
         "vocabulary": _fingerprint_value(get_vocab()),
@@ -193,6 +199,31 @@ def _fast_tokenizer_state(
         "runtime_configuration": _tokenizer_runtime_configuration(tokenizer),
         "python_instance": _fast_tokenizer_instance_state(tokenizer),
     }
+    return _with_callable_code(payload, code)
+
+
+def _fast_tokenizer_backend_state(backend_to_str: Callable[[], Any]) -> str:
+    backend_state = backend_to_str()
+    if not isinstance(backend_state, str) or not backend_state:
+        raise ValueError("tokenizer backend serialization must be a non-empty string")
+    return backend_state
+
+
+def _fast_tokenizer_vocabulary_getter(tokenizer: TokenizerLike) -> Callable[[], Any]:
+    get_vocab = getattr(tokenizer, "get_vocab", None)
+    if not callable(get_vocab):
+        raise TypeError("fast tokenizer does not expose a verifiable vocabulary")
+    return get_vocab
+
+
+def _fast_tokenizer_special_tokens(tokenizer: TokenizerLike) -> Mapping[Any, Any]:
+    special_tokens = getattr(tokenizer, "special_tokens_map", None)
+    if not isinstance(special_tokens, Mapping):
+        raise TypeError("fast tokenizer does not expose canonical special-token state")
+    return special_tokens
+
+
+def _with_callable_code(payload: dict[str, Any], code: CodeType | None) -> dict[str, Any]:
     if code is not None:
         payload["callable_code"] = _code_payload(code)
     return payload
