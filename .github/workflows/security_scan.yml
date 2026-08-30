@@ -7,7 +7,6 @@ on:
       - "src/**"
       - "scripts/**"
       - "pyproject.toml"
-      - "requirements.txt"
       - "uv.lock"
 
 permissions:

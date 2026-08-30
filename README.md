@@ -52,6 +52,23 @@ The smoke configuration is a plumbing check, not a model-quality experiment.
 Do not publish quality claims from it. Measured runs must pin the dataset and
 model revisions and preserve the resulting manifest.
 
+## Approved readiness configurations
+
+The first compatibility canary is
+`openbmb/MiniCPM5-1B-Base`; the measured flagship candidate is
+`ibm-granite/granite-4.1-3b-base`. Both committed configurations pin immutable
+Hub revisions, keep `trust_remote_code` disabled, and require architecture
+inspection before LoRA targets are frozen:
+
+```bash
+uv run agoge model-metadata --model-id openbmb/MiniCPM5-1B-Base
+uv run agoge inspect-lora-targets --model-id openbmb/MiniCPM5-1B-Base
+```
+
+The Granite template is not permission to start the measured experiment. The
+immutable split, paired evaluation contract, and Granite compatibility gate
+must all be complete first.
+
 ## Evaluate and export
 
 Evaluate an adapter:

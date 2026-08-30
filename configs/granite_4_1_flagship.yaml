@@ -1,9 +1,11 @@
-model_id: "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
-trust_remote_code: true
+# Flagship template. Do not run a measured experiment until #99, #100, and #104 are complete.
+model_id: "ibm-granite/granite-4.1-3b-base"
+revision: "dacb9cb9157bec98e99b09f285c92a4d58405c96"
+trust_remote_code: false
 dataset_path: "../datasets/samples/tiny_sft.jsonl"
 dataset_text_field: "text"
 output_dir: "adapters"
-run_name: "nemotron_nano_qlora"
+run_name: "granite_4_1_flagship"
 
 load_in_4bit: true
 bnb_4bit_quant_type: "nf4"
@@ -22,6 +24,6 @@ seed: 42
 lora_r: 16
 lora_alpha: 32
 lora_dropout: 0.05
-# Nemotron target modules must be discovered from model inspection before training.
+# Freeze targets only after Granite architecture inspection under #104.
 target_modules: []
 target_modules_mode: "discover_required"
