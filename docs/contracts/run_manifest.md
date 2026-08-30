@@ -88,11 +88,7 @@ runs/<run_name>/manifest.json
 
 ## Owner
 
-| Language | Responsibility                                            |
-|----------|-----------------------------------------------------------|
-| Python   | Writes `manifest.json` during training and eval runs      |
-| Rust     | Reads manifest for artifact discovery and validation      |
-| Julia    | Reads manifest for run context (model, dataset info)      |
+Python writes and consumes `manifest.json` during training and evaluation.
 
 ## Notes
 

@@ -1,9 +1,6 @@
-"""Pydantic configuration models for vLLM serving and frontend benchmarks."""
+"""Pydantic configuration models for vLLM serving."""
 
 from __future__ import annotations
-
-from enum import Enum
-from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field
@@ -11,18 +8,10 @@ from pydantic import BaseModel, Field
 from ..path_safety import resolve_existing_path
 
 
-class Frontend(str, Enum):
-    """Supported vLLM frontends."""
-
-    PYTHON = "python"
-    RUST = "rust"
-
-
 class ServingConfig(BaseModel):
     """Configuration for `agoge serve-vllm`."""
 
     model: str = ""
-    frontend: Frontend = Frontend.PYTHON
     host: str = "127.0.0.1"
     port: int = 8000
     max_model_len: int | None = None
@@ -33,31 +22,10 @@ class ServingConfig(BaseModel):
 
 
 class PromptSet(BaseModel):
-    """A set of benchmark prompts and an optional system message."""
+    """A vLLM smoke-test prompt set and optional system message."""
 
     system: str = ""
     prompts: list[str] = Field(default_factory=list)
-
-
-class BenchmarkConfig(BaseModel):
-    """Configuration for `agoge bench-vllm-frontend`."""
-
-    model: str = ""
-    frontend: Frontend | None = None  # None means benchmark both frontends.
-    host: str = "127.0.0.1"
-    port: int = 8000
-    prompt_set: str = ""
-    out_dir: str = ""
-    run_name: str = "vllm_bench"
-    stream: bool = False
-    max_tokens: int = 512
-    temperature: float = 0.7
-    concurrency: int = 1
-    dry_run: bool = False
-    max_model_len: int | None = None
-    dtype: str | None = None
-    gpu_memory_utilization: float | None = None
-    extra_args: list[str] = Field(default_factory=list)
 
 
 def load_serving_config(path: str) -> ServingConfig:
@@ -70,7 +38,7 @@ def load_serving_config(path: str) -> ServingConfig:
 
 
 def load_prompt_set(path: str) -> PromptSet:
-    """Load a YAML prompt set (list of strings or mapping with system/prompts)."""
+    """Load a YAML prompt set for vLLM compatibility smoke testing."""
     prompt_path = resolve_existing_path(path, must_be_file=True)
     raw = yaml.safe_load(prompt_path.read_text(encoding="utf-8"))
     if isinstance(raw, list):
@@ -81,31 +49,3 @@ def load_prompt_set(path: str) -> PromptSet:
             raise TypeError(f"Prompt set 'prompts' must be a list: {path}")
         return PromptSet(system=raw.get("system", ""), prompts=prompts)
     raise TypeError(f"Prompt set must be a list of strings or a mapping: {path}")
-
-
-def load_benchmark_config(path: str) -> BenchmarkConfig:
-    """Load a YAML benchmark config and resolve relative prompt_set paths."""
-    config_path = resolve_existing_path(path, must_be_file=True)
-    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    if not isinstance(data, dict):
-        raise TypeError(f"Benchmark config must be a YAML mapping: {path}")
-    cfg = BenchmarkConfig.model_validate(data)
-    if cfg.prompt_set and not Path(cfg.prompt_set).is_absolute():
-        resolved = (config_path.parent / cfg.prompt_set).resolve()
-        cfg.prompt_set = str(resolved)
-    return cfg
-
-
-def to_serving_config(benchmark_cfg: BenchmarkConfig, frontend: Frontend) -> ServingConfig:
-    """Convert a benchmark config into a serving config for one frontend."""
-    return ServingConfig(
-        model=benchmark_cfg.model,
-        frontend=frontend,
-        host=benchmark_cfg.host,
-        port=benchmark_cfg.port,
-        max_model_len=benchmark_cfg.max_model_len,
-        dtype=benchmark_cfg.dtype,
-        gpu_memory_utilization=benchmark_cfg.gpu_memory_utilization,
-        extra_args=benchmark_cfg.extra_args,
-        dry_run=benchmark_cfg.dry_run,
-    )

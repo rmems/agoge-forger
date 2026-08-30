@@ -3,7 +3,6 @@
 Benchmark and smoke-test results are logged as newline-delimited JSON (JSONL). The schema depends on the producer:
 
 - **Python inference smoke test** (`scripts/smoke_test.py`): one object per inference request with token and latency fields (documented below).
-- **Rust and Julia smoke workflows**: status-only lines such as `{"status": "ok", "command": "check"}` — not interchangeable with the Python inference schema.
 
 ## File Location
 
@@ -115,8 +114,4 @@ Human-readable markdown summary of the benchmark run.
 
 ## Owner
 
-| Language | Responsibility                                              |
-|----------|-------------------------------------------------------------|
-| Python   | Writes benchmark events, usage, and summary                 |
-| Rust     | Reads `results.jsonl` for validation and analysis           |
-| Julia    | Reads `results.jsonl` for statistical analysis              |
+Python writes and consumes benchmark events, usage, and summaries.

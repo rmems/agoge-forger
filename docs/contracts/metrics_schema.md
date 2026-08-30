@@ -35,7 +35,7 @@ Metrics are currently embedded within `manifest.json` under the `metrics` key. T
 
 ## Planned CSV/Parquet Format
 
-For cross-language metrics aggregation (Python training results + Julia statistical analysis), the following tabular format is planned:
+For Python training and evaluation analysis, the following tabular format is planned:
 
 ### File Location
 
@@ -83,11 +83,8 @@ df = pd.read_parquet("runs/my-run/metrics.parquet")
 
 ## Owner
 
-| Language | Responsibility                                           |
-|----------|----------------------------------------------------------|
-| Python   | Writes metrics (current: manifest; planned: CSV/Parquet) |
-| Julia    | Reads CSV/Parquet for statistical analysis               |
-| Rust     | Reads CSV for benchmark comparison                       |
+Python writes metrics (currently in the manifest; CSV/Parquet is planned) and
+consumes them for analysis.
 
 ## Notes
 
