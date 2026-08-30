@@ -12,7 +12,12 @@ from agoge_forger.eval.contract import (
     logical_task_set_sha256,
     validate_evaluation_contract,
 )
-from agoge_forger.split_contract import canonical_json_bytes, materialize_split
+from agoge_forger.split_contract import (
+    SplitMaterializationSpec,
+    SplitPolicy,
+    canonical_json_bytes,
+    materialize_split,
+)
 
 
 def _frozen_manifest(tmp_path: Path):
@@ -28,18 +33,17 @@ def _frozen_manifest(tmp_path: Path):
     ]
     source.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in rows))
     output = tmp_path / "snapshot"
-    manifest = materialize_split(
-        source_path=source,
-        output_dir=output,
+    spec = SplitMaterializationSpec(
         source_repository="rmems/synthetic-factory",
         source_revision="abcdef0123456789abcdef0123456789abcdef01",
         dataset_version="curated-eval-v1",
-        seed=99,
-        salt="paired-evaluation-v1",
-        train_weight=6,
-        validation_weight=2,
-        held_out_weight=2,
+        split_policy=SplitPolicy(
+            seed=99,
+            salt="paired-evaluation-v1",
+            weights={"train": 6, "validation": 2, "held_out": 2},
+        ),
     )
+    manifest = materialize_split(source, output, spec)
     return output / "split_manifest.json", manifest
 
 

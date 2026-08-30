@@ -25,6 +25,21 @@ EVALUATION_CONTRACT_VERSION: Literal["agoge.evaluation-contract.v1"] = (
     "agoge.evaluation-contract.v1"
 )
 
+COMPARABLE_ARM_FIELDS = (
+    "model_repository",
+    "model_revision",
+    "tokenizer_repository",
+    "tokenizer_revision",
+    "serializer_id",
+    "serializer_version",
+    "serializer_sha256",
+    "logical_task_set_sha256",
+    "context_window",
+    "truncation_policy",
+    "decoding",
+    "scoring_version",
+)
+
 
 class FrozenEvaluationModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -73,38 +88,33 @@ class PairedEvaluationContract(FrozenEvaluationModel):
 
     @model_validator(mode="after")
     def require_pair_comparability(self) -> PairedEvaluationContract:
-        if self.base.role != "causal_base" or self.sft.role != "causal_sft":
-            raise ValueError("paired contract requires causal_base and causal_sft arms")
-        if len(set(self.logical_task_ids)) != len(self.logical_task_ids):
-            raise ValueError("logical_task_ids must be unique")
-        expected_task_digest = logical_task_set_sha256(self.logical_task_ids)
-        if self.logical_task_set_sha256 != expected_task_digest:
-            raise ValueError("logical task-set digest does not match logical_task_ids")
-
-        comparable_fields = (
-            "model_repository",
-            "model_revision",
-            "tokenizer_repository",
-            "tokenizer_revision",
-            "serializer_id",
-            "serializer_version",
-            "serializer_sha256",
-            "logical_task_set_sha256",
-            "context_window",
-            "truncation_policy",
-            "decoding",
-            "scoring_version",
-        )
-        drift = [
-            field
-            for field in comparable_fields
-            if getattr(self.base, field) != getattr(self.sft, field)
-        ]
-        if drift:
-            raise ValueError(f"paired evaluation arms are non-comparable; drift in: {drift}")
-        if self.base.logical_task_set_sha256 != self.logical_task_set_sha256:
-            raise ValueError("paired arms do not reference the contract logical task set")
+        _require_arm_roles(self.base, self.sft)
+        _require_task_identity(self)
+        _require_no_arm_drift(self.base, self.sft)
         return self
+
+
+def _require_arm_roles(base: EvaluationArm, sft: EvaluationArm) -> None:
+    if base.role != "causal_base" or sft.role != "causal_sft":
+        raise ValueError("paired contract requires causal_base and causal_sft arms")
+
+
+def _require_task_identity(contract: PairedEvaluationContract) -> None:
+    if len(set(contract.logical_task_ids)) != len(contract.logical_task_ids):
+        raise ValueError("logical_task_ids must be unique")
+    expected_digest = logical_task_set_sha256(contract.logical_task_ids)
+    if contract.logical_task_set_sha256 != expected_digest:
+        raise ValueError("logical task-set digest does not match logical_task_ids")
+    if contract.base.logical_task_set_sha256 != contract.logical_task_set_sha256:
+        raise ValueError("paired arms do not reference the contract logical task set")
+
+
+def _require_no_arm_drift(base: EvaluationArm, sft: EvaluationArm) -> None:
+    drift = [
+        field for field in COMPARABLE_ARM_FIELDS if getattr(base, field) != getattr(sft, field)
+    ]
+    if drift:
+        raise ValueError(f"paired evaluation arms are non-comparable; drift in: {drift}")
 
 
 def logical_task_set_sha256(task_ids: tuple[str, ...] | list[str]) -> str:

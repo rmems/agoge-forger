@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import argparse
 
-from agoge_forger.split_contract import materialize_split
+from agoge_forger.split_contract import (
+    CanonicalIdentityPolicy,
+    SplitMaterializationSpec,
+    SplitPolicy,
+    materialize_split,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,21 +33,26 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    manifest = materialize_split(
-        source_path=args.source,
-        output_dir=args.output_dir,
+    spec = SplitMaterializationSpec(
         source_repository=args.source_repository,
         source_revision=args.source_revision,
         dataset_version=args.dataset_version,
-        seed=args.seed,
-        salt=args.salt,
-        train_weight=args.train_weight,
-        validation_weight=args.validation_weight,
-        held_out_weight=args.held_out_weight,
-        canonical_id_field=args.canonical_id_field,
-        lineage_id_field=args.lineage_id_field,
-        group_id_field=args.group_id_field,
+        split_policy=SplitPolicy(
+            seed=args.seed,
+            salt=args.salt,
+            weights={
+                "train": args.train_weight,
+                "validation": args.validation_weight,
+                "held_out": args.held_out_weight,
+            },
+        ),
+        canonical_identity=CanonicalIdentityPolicy(
+            canonical_id_field=args.canonical_id_field,
+            lineage_id_field=args.lineage_id_field,
+            group_id_field=args.group_id_field,
+        ),
     )
+    manifest = materialize_split(args.source, args.output_dir, spec)
     print(f"wrote {args.output_dir}/split_manifest.json")
     print(f"wrote {args.output_dir}/split_report.md")
     print(

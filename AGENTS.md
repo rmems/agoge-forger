@@ -36,12 +36,14 @@ uv run pytest tests/
 uv build
 ```
 
-Training changes also require dataset/config validation and a tiny, non-claiming
-SFT smoke. GPU-specific behavior must be validated on the documented target
-hardware; CPU CI is not evidence that CUDA, bitsandbytes, or vLLM paths work.
+Training changes should include dataset/config validation and a tiny,
+non-claiming SFT smoke when compatible hardware is available. Otherwise,
+record the hardware limitation explicitly; CPU CI is not evidence that CUDA,
+bitsandbytes, or vLLM paths work.
 
 ## Licensing
 
 Contributions are submitted under Apache-2.0 unless explicitly stated
 otherwise. Before adding or redistributing third-party material, follow
-`THIRD_PARTY_NOTICES.md` and record authoritative license provenance.
+[the third-party notice policy](THIRD_PARTY_NOTICES.md) and record authoritative
+license provenance.

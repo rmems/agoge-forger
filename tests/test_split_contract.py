@@ -7,6 +7,9 @@ import pytest
 
 from agoge_forger.split_contract import (
     SPLIT_NAMES,
+    SplitMaterializationSpec,
+    SplitPolicy,
+    TokenStatisticsSpec,
     canonical_json_bytes,
     iter_frozen_records,
     load_frozen_dataset,
@@ -31,18 +34,17 @@ def _write_source(path: Path, count: int = 90) -> None:
 
 
 def _materialize(source: Path, output: Path):
-    return materialize_split(
-        source_path=source,
-        output_dir=output,
+    spec = SplitMaterializationSpec(
         source_repository="rmems/synthetic-factory",
         source_revision="0123456789abcdef0123456789abcdef01234567",
         dataset_version="curated-sft-v1",
-        seed=20260830,
-        salt="agoge-issue-99-v1",
-        train_weight=6,
-        validation_weight=2,
-        held_out_weight=2,
+        split_policy=SplitPolicy(
+            seed=20260830,
+            salt="agoge-issue-99-v1",
+            weights={"train": 6, "validation": 2, "held_out": 2},
+        ),
     )
+    return materialize_split(source, output, spec)
 
 
 def test_one_command_materializes_repeatable_three_way_split(tmp_path):
@@ -190,32 +192,36 @@ def test_materially_distinct_tokenizer_and_serializer_stats_do_not_change_splits
     split_digests = {name: manifest.splits[name].sha256 for name in SPLIT_NAMES}
 
     character_stats = write_token_statistics(
-        manifest_path=manifest_path,
-        output_path=output / "character-token-stats.json",
+        manifest_path,
+        output / "character-token-stats.json",
         tokenizer=CharacterTokenizer(),
         serializer=lambda row: str(row["text"]),
-        model_id="fake/model-family-a",
-        model_revision="model-a-revision-v1",
-        tokenizer_id="fake/character-tokenizer",
-        tokenizer_revision="character-v1",
-        serializer_id="plain-text",
-        serializer_version="1",
-        serializer_sha256="a" * 64,
-        context_limit=64,
+        spec=TokenStatisticsSpec(
+            model_id="fake/model-family-a",
+            model_revision="model-a-revision-v1",
+            tokenizer_id="fake/character-tokenizer",
+            tokenizer_revision="character-v1",
+            serializer_id="plain-text",
+            serializer_version="1",
+            serializer_sha256="a" * 64,
+            context_limit=64,
+        ),
     )
     word_stats = write_token_statistics(
-        manifest_path=manifest_path,
-        output_path=output / "word-token-stats.json",
+        manifest_path,
+        output / "word-token-stats.json",
         tokenizer=WordPieceTokenizer(),
         serializer=lambda row: f"<instruction>\n{row['text'].upper()}\n</instruction>",
-        model_id="fake/model-family-b",
-        model_revision="model-b-revision-v9",
-        tokenizer_id="fake/word-piece-tokenizer",
-        tokenizer_revision="wordpiece-v9",
-        serializer_id="tagged-uppercase",
-        serializer_version="9",
-        serializer_sha256="b" * 64,
-        context_limit=16,
+        spec=TokenStatisticsSpec(
+            model_id="fake/model-family-b",
+            model_revision="model-b-revision-v9",
+            tokenizer_id="fake/word-piece-tokenizer",
+            tokenizer_revision="wordpiece-v9",
+            serializer_id="tagged-uppercase",
+            serializer_version="9",
+            serializer_sha256="b" * 64,
+            context_limit=16,
+        ),
     )
 
     assert character_stats.source_split_sha256 == split_digests
