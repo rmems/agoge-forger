@@ -1,0 +1,29 @@
+configs/minicpm5_canary.yaml
+  s_a642b0e72c17d0::t_468b366518a523 1-4,8,15,17,27-29
+configs/smoke_test.yaml
+  s_a642b0e72c17d0::t_468b366518a523 5
+tests/test_qlora.py
+  s_a642b0e72c17d0::t_468b366518a523 20-21
+configs/granite_4_1_flagship.yaml
+  s_a642b0e72c17d0::t_468b366518a523 1-4,8,27
+README.md
+  s_a642b0e72c17d0::t_468b366518a523 55-71
+tests/test_config.py
+  s_a642b0e72c17d0::t_468b366518a523 4-5,13,18-19,21-25,37-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e977d4667d4aa6e190f27d1cd1153018c9578d3b",
+  "prompts": {},
+  "sessions": {
+    "s_a642b0e72c17d0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05137-733f-7410-8135-b731266c1ce4",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
