@@ -1,0 +1,239 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from agoge_forger.split_contract import (
+    SPLIT_NAMES,
+    canonical_json_bytes,
+    iter_frozen_records,
+    load_frozen_dataset,
+    materialize_split,
+    sha256_bytes,
+    validate_split_manifest,
+    write_token_statistics,
+)
+
+
+def _write_source(path: Path, count: int = 90) -> None:
+    rows = [
+        {
+            "canonical_id": f"sample-{index:03d}",
+            "lineage_id": f"lineage-{index // 2:03d}",
+            "group_id": f"family-{index // 3:03d}",
+            "text": f"Explain deterministic sample {index} with unique evidence {index * 17}.",
+        }
+        for index in range(count)
+    ]
+    path.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in rows))
+
+
+def _materialize(source: Path, output: Path):
+    return materialize_split(
+        source_path=source,
+        output_dir=output,
+        source_repository="rmems/synthetic-factory",
+        source_revision="0123456789abcdef0123456789abcdef01234567",
+        dataset_version="curated-sft-v1",
+        seed=20260830,
+        salt="agoge-issue-99-v1",
+        train_weight=6,
+        validation_weight=2,
+        held_out_weight=2,
+    )
+
+
+def test_one_command_materializes_repeatable_three_way_split(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_source(source)
+
+    command = [
+        sys.executable,
+        "scripts/freeze_split.py",
+        "--source",
+        str(source),
+        "--output-dir",
+        str(first),
+        "--source-repository",
+        "rmems/synthetic-factory",
+        "--source-revision",
+        "0123456789abcdef0123456789abcdef01234567",
+        "--dataset-version",
+        "curated-sft-v1",
+        "--seed",
+        "20260830",
+        "--salt",
+        "agoge-issue-99-v1",
+        "--train-weight",
+        "6",
+        "--validation-weight",
+        "2",
+        "--held-out-weight",
+        "2",
+    ]
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    assert "split_manifest.json" in result.stdout
+    assert "split_report.md" in result.stdout
+
+    first_manifest = validate_split_manifest(first / "split_manifest.json", source_path=source)
+    second_manifest = _materialize(source, second)
+
+    assert first_manifest == second_manifest
+    assert (first / "split_manifest.json").read_bytes() == (
+        second / "split_manifest.json"
+    ).read_bytes()
+    assert first_manifest.source.record_count == 90
+    assert first_manifest.leakage_audit.status == "passed"
+    assert set(first_manifest.splits) == set(SPLIT_NAMES)
+    assert all(first_manifest.splits[name].record_count > 0 for name in SPLIT_NAMES)
+    assert "Source coverage: 90/90" in (first / "split_report.md").read_text()
+
+    loaded_ids = {
+        row["canonical_id"]
+        for split in SPLIT_NAMES
+        for row in iter_frozen_records(first / "split_manifest.json", split)
+    }
+    assert loaded_ids == {f"sample-{index:03d}" for index in range(90)}
+    train_dataset = load_frozen_dataset(first / "split_manifest.json", "train")
+    assert len(train_dataset) == first_manifest.splits["train"].record_count
+
+
+def test_frozen_output_refuses_silent_regeneration(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    _materialize(source, output)
+
+    with pytest.raises(FileExistsError, match="refusing silent regeneration"):
+        _materialize(source, output)
+
+
+def test_source_and_materialized_mutations_are_detected(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    manifest = _materialize(source, output)
+    manifest_path = output / "split_manifest.json"
+
+    source.write_bytes(source.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="source SHA-256 mismatch"):
+        validate_split_manifest(manifest_path, source_path=source)
+
+    split_path = output / manifest.splits["train"].path
+    split_path.write_bytes(split_path.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="train digest mismatch"):
+        validate_split_manifest(manifest_path)
+
+
+def test_cross_split_exact_content_leakage_fails_closed(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    manifest = _materialize(source, output)
+
+    train_row = next(iter(iter_frozen_records(output / "split_manifest.json", "train")))
+    held_path = output / manifest.splits["held_out"].path
+    held_rows = [json.loads(line) for line in held_path.read_text().splitlines()]
+    held_rows[0]["text"] = train_row["text"]
+    held_payload = b"".join(canonical_json_bytes(row) + b"\n" for row in held_rows)
+    held_path.write_bytes(held_payload)
+
+    raw_manifest = json.loads((output / "split_manifest.json").read_text())
+    train_content_sha = raw_manifest["splits"]["train"]["members"][0]["content_sha256"]
+    raw_manifest["splits"]["held_out"]["sha256"] = sha256_bytes(held_payload)
+    raw_manifest["splits"]["held_out"]["members"][0]["content_sha256"] = train_content_sha
+    raw_manifest["splits"]["held_out"]["members"][0]["materialized_line_sha256"] = sha256_bytes(
+        canonical_json_bytes(held_rows[0]) + b"\n"
+    )
+    (output / "split_manifest.json").write_bytes(canonical_json_bytes(raw_manifest) + b"\n")
+
+    with pytest.raises(ValueError, match="deterministic leakage audit failed"):
+        validate_split_manifest(output / "split_manifest.json")
+
+
+def test_lineage_and_declared_group_membership_remain_atomic(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    manifest = _materialize(source, output)
+
+    lineage_owners: dict[str, str] = {}
+    group_owners: dict[str, str] = {}
+    for split, artifact in manifest.splits.items():
+        for member in artifact.members:
+            assert lineage_owners.setdefault(member.lineage_id, split) == split
+            assert member.group_id is not None
+            assert group_owners.setdefault(member.group_id, split) == split
+
+
+class CharacterTokenizer:
+    def __call__(self, text: str):
+        return {"input_ids": list(text.encode("utf-8"))}
+
+
+class WordPieceTokenizer:
+    def __call__(self, text: str):
+        return [piece for word in text.split() for piece in (word[:2], word[2:]) if piece]
+
+
+def test_materially_distinct_tokenizer_and_serializer_stats_do_not_change_splits(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    manifest = _materialize(source, output)
+    manifest_path = output / "split_manifest.json"
+    manifest_before = manifest_path.read_bytes()
+    split_digests = {name: manifest.splits[name].sha256 for name in SPLIT_NAMES}
+
+    character_stats = write_token_statistics(
+        manifest_path=manifest_path,
+        output_path=output / "character-token-stats.json",
+        tokenizer=CharacterTokenizer(),
+        serializer=lambda row: str(row["text"]),
+        model_id="fake/model-family-a",
+        model_revision="model-a-revision-v1",
+        tokenizer_id="fake/character-tokenizer",
+        tokenizer_revision="character-v1",
+        serializer_id="plain-text",
+        serializer_version="1",
+        serializer_sha256="a" * 64,
+        context_limit=64,
+    )
+    word_stats = write_token_statistics(
+        manifest_path=manifest_path,
+        output_path=output / "word-token-stats.json",
+        tokenizer=WordPieceTokenizer(),
+        serializer=lambda row: f"<instruction>\n{row['text'].upper()}\n</instruction>",
+        model_id="fake/model-family-b",
+        model_revision="model-b-revision-v9",
+        tokenizer_id="fake/word-piece-tokenizer",
+        tokenizer_revision="wordpiece-v9",
+        serializer_id="tagged-uppercase",
+        serializer_version="9",
+        serializer_sha256="b" * 64,
+        context_limit=16,
+    )
+
+    assert character_stats.source_split_sha256 == split_digests
+    assert word_stats.source_split_sha256 == split_digests
+    assert manifest_path.read_bytes() == manifest_before
+    assert character_stats.splits["train"].total_tokens != word_stats.splits["train"].total_tokens
+    assert character_stats.tokenizer_revision != word_stats.tokenizer_revision
+    assert character_stats.model_id != word_stats.model_id
+    assert character_stats.serializer_sha256 != word_stats.serializer_sha256
+
+
+def test_duplicate_canonical_identity_is_rejected_before_materialization(tmp_path):
+    source = tmp_path / "bad.jsonl"
+    rows = [
+        {"canonical_id": "same", "lineage_id": "one", "text": "first"},
+        {"canonical_id": "same", "lineage_id": "two", "text": "second"},
+    ]
+    source.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in rows))
+
+    with pytest.raises(ValueError, match="duplicate canonical ID"):
+        _materialize(source, tmp_path / "never-created")
