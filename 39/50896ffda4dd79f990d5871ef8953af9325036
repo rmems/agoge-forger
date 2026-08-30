@@ -1,0 +1,28 @@
+src/agoge_forger/_token_provenance.py
+  s_a642b0e72c17d0::t_593faf9dd17b5b 143,146-154,156,183-184,190-192,202-226
+  s_a642b0e72c17d0::t_989cfb858be595 171,181-182
+src/agoge_forger/split_schema.py
+  s_a642b0e72c17d0::t_b6a7695f546ce1 249,252-276,279-281,283-285
+src/agoge_forger/eval/_artifact_validation.py
+  s_a642b0e72c17d0::t_f55e08a1ef4dfb 353-356
+tests/test_evaluation_contract.py
+  s_a642b0e72c17d0::t_f55e08a1ef4dfb 28,195,200,418,438,462,535,618,667,678
+src/agoge_forger/split_validation.py
+  s_a642b0e72c17d0::t_b6a7695f546ce1 51-56,58-59,119-126,128,132,137,139,154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3950896ffda4dd79f990d5871ef8953af9325036",
+  "prompts": {},
+  "sessions": {
+    "s_a642b0e72c17d0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05137-733f-7410-8135-b731266c1ce4",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
