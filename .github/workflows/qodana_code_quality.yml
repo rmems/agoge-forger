@@ -60,9 +60,13 @@ jobs:
         with:
           # Pull requests fail on any newly reported problem. Full main/release
           # scans remain report-only until the existing debt has a baseline.
+          # The -e argument crosses QODANA_PYTHON_PATH into the native linter;
+          # setting it only on this Actions step does not configure its SDK.
           pr-mode: ${{ github.event_name == 'pull_request' }}
           args: >-
             --within-docker false
+            -e
+            QODANA_PYTHON_PATH=/data/project/.venv/bin/python
             ${{ github.event_name == 'pull_request' && '--fail-threshold 0' || '' }}
           use-annotations: true
           post-pr-comment: true
@@ -74,4 +78,3 @@ jobs:
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN_322213879 }}
           QODANA_ENDPOINT: "https://qodana.cloud"
-          QODANA_PYTHON_PATH: /data/project/.venv/bin/python
