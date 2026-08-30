@@ -6,12 +6,14 @@ model loading, inference, scoring, or result generation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-from pathlib import Path
+import stat
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ..split_contract import (
     SplitManifest,
@@ -51,6 +53,24 @@ class DecodingContract(FrozenEvaluationModel):
     max_new_tokens: int = Field(ge=1)
     temperature: float = Field(ge=0)
     top_p: float = Field(gt=0, le=1)
+
+
+class ArtifactIndexEntry(FrozenEvaluationModel):
+    file: str = Field(min_length=1)
+    size_bytes: int = Field(ge=0, strict=True)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ArtifactIndex(FrozenEvaluationModel):
+    output_dir: str = Field(min_length=1)
+    artifacts: tuple[ArtifactIndexEntry, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_unique_paths(self) -> ArtifactIndex:
+        paths = tuple(entry.file for entry in self.artifacts)
+        if len(paths) != len(set(paths)):
+            raise ValueError("artifact index contains duplicate file paths")
+        return self
 
 
 class ArtifactIndexReference(FrozenEvaluationModel):
@@ -181,17 +201,19 @@ def build_evaluation_contract(
 
     manifest_file = Path(manifest_path).expanduser().resolve(strict=True)
     destination = Path(contract_path).expanduser()
+    validated_base = EvaluationArm.model_validate(base.model_dump(mode="json"))
+    validated_sft = EvaluationArm.model_validate(sft.model_dump(mode="json"))
     manifest = validate_split_manifest(manifest_file)
     task_ids = held_out_task_ids(manifest)
     task_digest = logical_task_set_sha256(task_ids)
-    normalized_sft = _normalize_sft_artifact(sft, destination)
+    normalized_sft = _normalize_sft_artifact(validated_sft, destination)
     contract = PairedEvaluationContract(
         split_manifest_path=str(Path(os.path.relpath(manifest_file, destination.parent.resolve()))),
         split_manifest_sha256=sha256_file(manifest_file),
         held_out_split_sha256=manifest.splits["held_out"].sha256,
         logical_task_ids=task_ids,
         logical_task_set_sha256=task_digest,
-        base=base,
+        base=validated_base,
         sft=normalized_sft,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -213,23 +235,115 @@ def _normalize_sft_artifact(sft: EvaluationArm, destination: Path) -> Evaluation
         if supplied.is_absolute()
         else (anchor / supplied).resolve(strict=True)
     )
-    _require_artifact_digest(artifact_path, sft.artifact.artifact_index_sha256)
-    normalized = sft.artifact.model_copy(
-        update={"artifact_index_path": str(Path(os.path.relpath(artifact_path, anchor)))}
+    _require_artifact_index(
+        artifact_path,
+        sft.artifact.artifact_index_sha256,
     )
-    return sft.model_copy(update={"artifact": normalized})
+    normalized = ArtifactIndexReference.model_validate(
+        {
+            **sft.artifact.model_dump(mode="json"),
+            "artifact_index_path": str(Path(os.path.relpath(artifact_path, anchor))),
+        }
+    )
+    return EvaluationArm.model_validate(
+        {**sft.model_dump(mode="json"), "artifact": normalized.model_dump(mode="json")}
+    )
 
 
 def _validate_sft_artifact(contract_path: Path, sft: EvaluationArm) -> None:
     if sft.artifact is None:
         raise ValueError("causal_sft arm requires a verified artifact-index reference")
     artifact_path = (contract_path.parent / sft.artifact.artifact_index_path).resolve(strict=True)
-    _require_artifact_digest(artifact_path, sft.artifact.artifact_index_sha256)
+    _require_artifact_index(
+        artifact_path,
+        sft.artifact.artifact_index_sha256,
+    )
 
 
-def _require_artifact_digest(path: Path, expected: str) -> None:
-    actual = sha256_file(path)
-    if actual != expected:
-        raise ValueError(
-            f"SFT artifact-index SHA-256 mismatch: expected {expected}, found {actual}"
-        )
+def _require_artifact_index(path: Path, expected: str) -> None:
+    try:
+        payload = path.read_bytes()
+        actual_index_digest = sha256_bytes(payload)
+        if actual_index_digest != expected:
+            raise ValueError(
+                f"SFT artifact-index SHA-256 mismatch: expected {expected}, "
+                f"found {actual_index_digest}"
+            )
+        value = json.loads(payload)
+        index = ArtifactIndex.model_validate(value)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, OSError) as exc:
+        raise ValueError(f"invalid SFT artifact index: {path}") from exc
+
+    root = path.parent.resolve()
+    seen_targets: set[Path] = set()
+    for entry in index.artifacts:
+        artifact_path = _resolve_artifact_entry(root, entry.file)
+        if artifact_path == path.resolve():
+            raise ValueError("artifact index cannot list itself")
+        if artifact_path in seen_targets:
+            raise ValueError(f"artifact index resolves duplicate target: {entry.file}")
+        seen_targets.add(artifact_path)
+        actual_size, actual_digest = _stream_artifact(artifact_path)
+        if actual_size != entry.size_bytes:
+            raise ValueError(
+                f"indexed artifact size mismatch for {entry.file}: "
+                f"expected {entry.size_bytes}, found {actual_size}"
+            )
+        if actual_digest != entry.sha256:
+            raise ValueError(
+                f"indexed artifact SHA-256 mismatch for {entry.file}: "
+                f"expected {entry.sha256}, found {actual_digest}"
+            )
+
+
+def _stream_artifact(path: Path) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as handle:
+            before = os.fstat(handle.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError(f"indexed artifact is not a regular file: {path}")
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+            after = os.fstat(handle.fileno())
+    except OSError as exc:
+        raise ValueError(f"indexed artifact is not a readable file: {path}") from exc
+    identity_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    identity_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if identity_before != identity_after:
+        raise ValueError(f"indexed artifact changed during validation: {path}")
+    return before.st_size, digest.hexdigest()
+
+
+def _resolve_artifact_entry(root: Path, value: str) -> Path:
+    portable = PurePosixPath(value.replace("\\", "/"))
+    windows = PureWindowsPath(value)
+    if (
+        not value.strip()
+        or portable.is_absolute()
+        or windows.is_absolute()
+        or windows.drive
+        or ".." in portable.parts
+    ):
+        raise ValueError(f"artifact index path must stay relative to its directory: {value}")
+    try:
+        resolved = root.joinpath(*portable.parts).resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError(f"indexed artifact does not exist: {value}") from exc
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"artifact index path escapes its directory: {value}")
+    return resolved

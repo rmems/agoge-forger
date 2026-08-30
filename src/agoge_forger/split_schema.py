@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 SPLIT_MANIFEST_VERSION: Literal["agoge.split-manifest.v1"] = "agoge.split-manifest.v1"
 SPLIT_ALGORITHM_VERSION: Literal["sha256-atomic-bucket-v1"] = "sha256-atomic-bucket-v1"
 TOKEN_STATS_VERSION: Literal["agoge.token-stats.v1"] = "agoge.token-stats.v1"
+IMMUTABLE_REVISION_PATTERN = r"^[0-9a-f]{40,64}$"
 
 SplitName = Literal["train", "validation", "held_out"]
 SPLIT_NAMES: tuple[SplitName, ...] = ("train", "validation", "held_out")
@@ -26,7 +27,7 @@ class FrozenModel(BaseModel):
 
 class SourceFile(FrozenModel):
     repository: str = Field(min_length=1)
-    revision: str = Field(pattern=r"^[0-9a-f]{40,64}$")
+    revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     dataset_version: str = Field(min_length=1)
     path: str = Field(min_length=1)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -38,9 +39,10 @@ class CanonicalIdentityPolicy(FrozenModel):
     lineage_id_field: str = Field(default="lineage_id", min_length=1)
     group_id_field: str = Field(default="group_id", min_length=1)
     missing_lineage: Literal["canonical_id"] = "canonical_id"
-    content_hash_policy: Literal["canonical-json-excluding-identity-fields"] = (
-        "canonical-json-excluding-identity-fields"
-    )
+    content_hash_policy: Literal[
+        "canonical-json-excluding-identity-fields",
+        "normalized-training-payload-v1",
+    ] = "canonical-json-excluding-identity-fields"
     source_coordinate_policy: Literal["source-path-plus-one-based-line"] = (
         "source-path-plus-one-based-line"
     )
@@ -60,14 +62,18 @@ class SplitPolicy(FrozenModel):
         return self
 
 
+def _new_identity_policy() -> CanonicalIdentityPolicy:
+    return CanonicalIdentityPolicy(content_hash_policy="normalized-training-payload-v1")
+
+
 class SplitMaterializationSpec(FrozenModel):
     """Pinned provenance and policy supplied to one materialization."""
 
     source_repository: str = Field(min_length=1)
-    source_revision: str = Field(pattern=r"^[0-9a-f]{40,64}$")
+    source_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     dataset_version: str = Field(min_length=1)
     split_policy: SplitPolicy
-    canonical_identity: CanonicalIdentityPolicy = Field(default_factory=CanonicalIdentityPolicy)
+    canonical_identity: CanonicalIdentityPolicy = Field(default_factory=_new_identity_policy)
 
 
 class SplitMember(FrozenModel):
@@ -174,9 +180,9 @@ class TokenStatSplit(FrozenModel):
 
 class TokenStatisticsSpec(FrozenModel):
     model_id: str = Field(min_length=1)
-    model_revision: str = Field(min_length=1)
+    model_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     tokenizer_id: str = Field(min_length=1)
-    tokenizer_revision: str = Field(min_length=1)
+    tokenizer_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     serializer_id: str = Field(min_length=1)
     serializer_version: str = Field(min_length=1)
     serializer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -188,9 +194,9 @@ class TokenStatistics(FrozenModel):
     split_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_split_sha256: dict[SplitName, str]
     model_id: str = Field(min_length=1)
-    model_revision: str = Field(min_length=1)
+    model_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     tokenizer_id: str = Field(min_length=1)
-    tokenizer_revision: str = Field(min_length=1)
+    tokenizer_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     serializer_id: str = Field(min_length=1)
     serializer_version: str = Field(min_length=1)
     serializer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")

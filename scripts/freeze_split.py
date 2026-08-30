@@ -50,6 +50,7 @@ def main() -> None:
             canonical_id_field=args.canonical_id_field,
             lineage_id_field=args.lineage_id_field,
             group_id_field=args.group_id_field,
+            content_hash_policy="normalized-training-payload-v1",
         ),
     )
     manifest = materialize_split(args.source, args.output_dir, spec)

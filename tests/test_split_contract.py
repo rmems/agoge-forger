@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from agoge_forger.split_contract import (
     SPLIT_NAMES,
@@ -187,6 +188,118 @@ def test_cross_split_exact_content_leakage_fails_closed(tmp_path):
         validate_split_manifest(output / "split_manifest.json")
 
 
+def test_ancillary_metadata_cannot_split_identical_training_content(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    rows = [json.loads(line) for line in source.read_text().splitlines()]
+    rows[0].update(
+        lineage_id="metadata-lineage-a",
+        group_id="metadata-group-a",
+        quality_score=0.1,
+    )
+    rows[1].update(
+        lineage_id="metadata-lineage-b",
+        group_id="metadata-group-b",
+        quality_score=0.9,
+        text=rows[0]["text"],
+    )
+    source.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in rows))
+
+    manifest = _materialize(source, output)
+    members = {
+        member.canonical_id: (split, member)
+        for split, artifact in manifest.splits.items()
+        for member in artifact.members
+    }
+    first_split, first = members[rows[0]["canonical_id"]]
+    second_split, second = members[rows[1]["canonical_id"]]
+
+    assert first.content_sha256 == second.content_sha256
+    assert first.raw_line_sha256 != second.raw_line_sha256
+    assert first_split == second_split
+
+
+def test_equivalent_supported_formats_share_training_content_identity(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    rows = [json.loads(line) for line in source.read_text().splitlines()]
+    rows[0].update(
+        lineage_id="text-message-a",
+        group_id="text-message-a",
+        text="User: Q\nAssistant: A",
+    )
+    rows[1].pop("text")
+    rows[1].update(
+        lineage_id="text-message-b",
+        group_id="text-message-b",
+        messages=[
+            {"role": "user", "content": "Q"},
+            {"role": "assistant", "content": "A"},
+        ],
+    )
+    rows[2].update(
+        lineage_id="text-instruction-a",
+        group_id="text-instruction-a",
+        text="Instruction: Q\nOutput: A",
+    )
+    rows[3].pop("text")
+    rows[3].update(
+        lineage_id="text-instruction-b",
+        group_id="text-instruction-b",
+        instruction="Q",
+        output="A",
+    )
+    source.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in rows))
+
+    manifest = _materialize(source, output)
+    members = {
+        member.canonical_id: (split, member.content_sha256)
+        for split, artifact in manifest.splits.items()
+        for member in artifact.members
+    }
+    for left, right in ((rows[0], rows[1]), (rows[2], rows[3])):
+        assert members[left["canonical_id"]] == members[right["canonical_id"]]
+
+
+def test_v1_manifest_omitting_legacy_content_policy_keeps_legacy_semantics(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    rows = [json.loads(line) for line in source.read_text().splitlines()]
+    for index, row in enumerate(rows):
+        row["quality_score"] = index / len(rows)
+    source.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in rows))
+    _materialize(source, output)
+
+    manifest_path = output / "split_manifest.json"
+    raw_manifest = json.loads(manifest_path.read_text())
+    legacy_digests = {
+        row["canonical_id"]: sha256_bytes(
+            canonical_json_bytes(
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key not in {"canonical_id", "lineage_id", "group_id"}
+                }
+            )
+        )
+        for row in rows
+    }
+    for artifact in raw_manifest["splits"].values():
+        for member in artifact["members"]:
+            member["content_sha256"] = legacy_digests[member["canonical_id"]]
+    raw_manifest["canonical_identity"].pop("content_hash_policy")
+    manifest_path.write_bytes(canonical_json_bytes(raw_manifest) + b"\n")
+
+    validated = validate_split_manifest(manifest_path, source_path=source)
+    assert (
+        validated.canonical_identity.content_hash_policy
+        == "canonical-json-excluding-identity-fields"
+    )
+
+
 def test_lineage_and_declared_group_membership_remain_atomic(tmp_path):
     source = tmp_path / "curated.jsonl"
     output = tmp_path / "frozen"
@@ -229,9 +342,9 @@ def test_materially_distinct_tokenizer_and_serializer_stats_do_not_change_splits
             serializer=lambda row: str(row["text"]),
             spec=TokenStatisticsSpec(
                 model_id="fake/model-family-a",
-                model_revision="model-a-revision-v1",
+                model_revision="a" * 40,
                 tokenizer_id="fake/character-tokenizer",
-                tokenizer_revision="character-v1",
+                tokenizer_revision="b" * 40,
                 serializer_id="plain-text",
                 serializer_version="1",
                 serializer_sha256="a" * 64,
@@ -247,9 +360,9 @@ def test_materially_distinct_tokenizer_and_serializer_stats_do_not_change_splits
             serializer=lambda row: f"<instruction>\n{row['text'].upper()}\n</instruction>",
             spec=TokenStatisticsSpec(
                 model_id="fake/model-family-b",
-                model_revision="model-b-revision-v9",
+                model_revision="c" * 40,
                 tokenizer_id="fake/word-piece-tokenizer",
-                tokenizer_revision="wordpiece-v9",
+                tokenizer_revision="d" * 40,
                 serializer_id="tagged-uppercase",
                 serializer_version="9",
                 serializer_sha256="b" * 64,
@@ -265,6 +378,26 @@ def test_materially_distinct_tokenizer_and_serializer_stats_do_not_change_splits
     assert character_stats.tokenizer_revision != word_stats.tokenizer_revision
     assert character_stats.model_id != word_stats.model_id
     assert character_stats.serializer_sha256 != word_stats.serializer_sha256
+
+
+@pytest.mark.parametrize(
+    ("field", "floating_revision"),
+    [("model_revision", "main"), ("tokenizer_revision", "latest")],
+)
+def test_token_statistics_requires_immutable_revisions(field, floating_revision):
+    values = {
+        "model_id": "fake/model",
+        "model_revision": "a" * 40,
+        "tokenizer_id": "fake/tokenizer",
+        "tokenizer_revision": "b" * 40,
+        "serializer_id": "plain-text",
+        "serializer_version": "1",
+        "serializer_sha256": "c" * 64,
+    }
+    values[field] = floating_revision
+
+    with pytest.raises(ValidationError, match=field):
+        TokenStatisticsSpec(**values)
 
 
 def test_duplicate_canonical_identity_is_rejected_before_materialization(tmp_path):

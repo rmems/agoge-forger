@@ -49,10 +49,31 @@ def _frozen_manifest(tmp_path: Path):
     return output / "split_manifest.json", manifest
 
 
+def _write_artifact_index(output_dir: Path) -> Path:
+    artifact_index = output_dir / "artifact_index.json"
+    artifacts = [
+        {
+            "file": str(path.relative_to(output_dir)),
+            "size_bytes": path.stat().st_size,
+            "sha256": sha256_file(path),
+        }
+        for path in sorted(output_dir.rglob("*"))
+        if path.is_file() and path != artifact_index
+    ]
+    artifact_index.write_bytes(
+        canonical_json_bytes({"output_dir": str(output_dir), "artifacts": artifacts}) + b"\n"
+    )
+    return artifact_index
+
+
 def _arms(task_digest: str, tmp_path: Path):
-    artifact_index = tmp_path / "adapter" / "artifact_index.json"
-    artifact_index.parent.mkdir(parents=True, exist_ok=True)
-    artifact_index.write_bytes(b'{"artifacts":[]}\n')
+    output_dir = tmp_path / "adapter"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    adapter_weights = output_dir / "adapter_model.safetensors"
+    adapter_weights.write_bytes(b"adapter-v1")
+    adapter_config = output_dir / "adapter_config.json"
+    adapter_config.write_bytes(b"{}\n")
+    artifact_index = _write_artifact_index(output_dir)
     common = {
         "tokenizer_repository": "example/tokenizer",
         "tokenizer_revision": "1111111111111111111111111111111111111111",
@@ -225,3 +246,90 @@ def test_evaluation_contract_detects_artifact_index_mutation(tmp_path):
 
     with pytest.raises(ValueError, match="artifact-index SHA-256 mismatch"):
         validate_evaluation_contract(contract_path)
+
+
+@pytest.mark.parametrize(
+    ("mutated", "expected_error"),
+    [
+        (b"adapter-v2", "indexed artifact SHA-256 mismatch"),
+        (b"adapter-version-two", "indexed artifact size mismatch"),
+    ],
+)
+def test_evaluation_contract_detects_indexed_artifact_mutation(tmp_path, mutated, expected_error):
+    manifest_path, manifest = _frozen_manifest(tmp_path)
+    digest = logical_task_set_sha256(held_out_task_ids(manifest))
+    base, sft = _arms(digest, tmp_path)
+    contract_path = tmp_path / "eval" / "contract.json"
+    build_evaluation_contract(
+        manifest_path=manifest_path,
+        contract_path=contract_path,
+        base=base,
+        sft=sft,
+    )
+
+    weights = tmp_path / "adapter" / "adapter_model.safetensors"
+    weights.write_bytes(mutated)
+    with pytest.raises(ValueError, match=expected_error):
+        validate_evaluation_contract(contract_path)
+
+
+def test_evaluation_contract_rejects_artifact_index_path_escape(tmp_path):
+    manifest_path, manifest = _frozen_manifest(tmp_path)
+    digest = logical_task_set_sha256(held_out_task_ids(manifest))
+    base, sft = _arms(digest, tmp_path)
+    assert sft.artifact is not None
+    artifact_index = Path(sft.artifact.artifact_index_path)
+    outside = tmp_path / "outside.safetensors"
+    outside.write_bytes(b"outside")
+    artifact_index.write_bytes(
+        canonical_json_bytes(
+            {
+                "output_dir": str(artifact_index.parent),
+                "artifacts": [
+                    {
+                        "file": "../outside.safetensors",
+                        "size_bytes": outside.stat().st_size,
+                        "sha256": sha256_file(outside),
+                    }
+                ],
+            }
+        )
+        + b"\n"
+    )
+    escaped_sft = sft.model_copy(
+        update={
+            "artifact": ArtifactIndexReference(
+                kind="peft_adapter",
+                artifact_index_path=str(artifact_index),
+                artifact_index_sha256=sha256_file(artifact_index),
+            )
+        }
+    )
+    contract_path = tmp_path / "eval" / "contract.json"
+
+    with pytest.raises(ValueError, match="must stay relative"):
+        build_evaluation_contract(
+            manifest_path=manifest_path,
+            contract_path=contract_path,
+            base=base,
+            sft=escaped_sft,
+        )
+    assert not contract_path.exists()
+
+
+def test_evaluation_contract_revalidates_copied_arms_before_writing(tmp_path):
+    manifest_path, manifest = _frozen_manifest(tmp_path)
+    digest = logical_task_set_sha256(held_out_task_ids(manifest))
+    base, sft = _arms(digest, tmp_path)
+    invalid_base = base.model_copy(update={"context_window": 0})
+    invalid_sft = sft.model_copy(update={"context_window": 0})
+    contract_path = tmp_path / "eval" / "contract.json"
+
+    with pytest.raises(ValidationError, match="context_window"):
+        build_evaluation_contract(
+            manifest_path=manifest_path,
+            contract_path=contract_path,
+            base=invalid_base,
+            sft=invalid_sft,
+        )
+    assert not contract_path.exists()

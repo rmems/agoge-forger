@@ -1,0 +1,39 @@
+# https://docs.devin.ai/onboard-devin/environment-yaml
+# Repo-level environment for rmems/agoge-forger (Python/PyTorch).
+# Commands run from the repo root.
+
+initialize: |
+  set -e
+  # Install uv if it is not present in the base image.
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$ENVRC"
+  export PATH="$HOME/.local/bin:$PATH"
+
+  # Create a virtual environment and install the project in editable mode.
+  uv venv
+  uv pip install -e ".[dev]"
+
+maintenance: |
+  set -e
+  export PATH="$HOME/.local/bin:$PATH"
+  uv pip install -e ".[dev]"
+
+knowledge:
+  - name: lint
+    contents: |
+      uv run ruff check .
+      uv run mypy src/agoge_forger
+  - name: test
+    contents: |
+      uv run pytest tests/
+  - name: build
+    contents: |
+      uv build
+  - name: format
+    contents: |
+      uv run ruff format --check .
+  - name: smoke
+    contents: |
+      uv run python scripts/smoke_test.py --model HuggingFaceM4/tiny-random-LlamaForCausalLM --workload inference --max-requests 3 --dry-run --output-dir smoke_output

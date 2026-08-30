@@ -66,8 +66,14 @@ def read_source_records(source_path: Path, identity: CanonicalIdentityPolicy) ->
                 continue
             coordinate = f"{source_path.name}:{line_number}"
             row = _decode_source_row(raw_line, coordinate)
-            normalize_row(row, tokenizer=None, index=line_number)
-            record = _build_source_record(row, raw_line, coordinate, identity)
+            training_payload = _content_hash_payload(row, identity, line_number)
+            record = _build_source_record(
+                row,
+                raw_line,
+                coordinate,
+                identity,
+                training_payload,
+            )
             _reject_duplicate_identity(record.member, seen_ids)
             records.append(record)
     if not records:
@@ -94,22 +100,51 @@ def _build_source_record(
     raw_line: bytes,
     coordinate: str,
     identity: CanonicalIdentityPolicy,
+    training_payload: Mapping[str, str],
 ) -> SourceRecord:
     canonical_id = _required_string(row, identity.canonical_id_field, coordinate)
     lineage_id = _optional_string(row, identity.lineage_id_field, coordinate) or canonical_id
     group_id = _optional_string(row, identity.group_id_field, coordinate)
-    content_row = _without_identity_fields(row, identity)
     materialized_line = canonical_json_bytes(row) + b"\n"
     member = SplitMember(
         canonical_id=canonical_id,
         lineage_id=lineage_id,
         group_id=group_id,
         source_coordinate=coordinate,
-        content_sha256=sha256_bytes(canonical_json_bytes(content_row)),
+        content_sha256=sha256_bytes(canonical_json_bytes(training_payload)),
         raw_line_sha256=sha256_bytes(raw_line),
         materialized_line_sha256=sha256_bytes(materialized_line),
     )
     return SourceRecord(row=row, raw_line=raw_line, member=member)
+
+
+def _content_hash_payload(
+    row: dict[str, Any], identity: CanonicalIdentityPolicy, line_number: int
+) -> Mapping[str, Any]:
+    """Return the versioned payload used for exact-content grouping.
+
+    Ancillary source metadata remains covered by the raw and materialized line
+    digests, but it must not let identical training examples cross partitions.
+    The legacy branch exists only to validate already-frozen v1 manifests.
+    """
+
+    if identity.content_hash_policy == "canonical-json-excluding-identity-fields":
+        return _without_identity_fields(row, identity)
+    normalized = normalize_row(row, tokenizer=None, index=line_number)
+    return {"text": normalized["text"]}
+
+
+def _without_identity_fields(
+    row: Mapping[str, Any], identity: CanonicalIdentityPolicy
+) -> dict[str, Any]:
+    content_row = dict(row)
+    for field_name in (
+        identity.canonical_id_field,
+        identity.lineage_id_field,
+        identity.group_id_field,
+    ):
+        content_row.pop(field_name, None)
+    return content_row
 
 
 def _required_string(row: Mapping[str, Any], field: str, coordinate: str) -> str:
@@ -126,19 +161,6 @@ def _optional_string(row: Mapping[str, Any], field: str, coordinate: str) -> str
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{coordinate}: optional identity field '{field}' must be a string")
     return value.strip()
-
-
-def _without_identity_fields(
-    row: Mapping[str, Any], identity: CanonicalIdentityPolicy
-) -> dict[str, Any]:
-    content_row = dict(row)
-    for field_name in (
-        identity.canonical_id_field,
-        identity.lineage_id_field,
-        identity.group_id_field,
-    ):
-        content_row.pop(field_name, None)
-    return content_row
 
 
 def _reject_duplicate_identity(member: SplitMember, seen: dict[str, str]) -> None:
@@ -298,6 +320,11 @@ def materialize_split(
 
     source = Path(source_path).expanduser().resolve(strict=True)
     destination = Path(output_dir).expanduser()
+    if spec.canonical_identity.content_hash_policy != "normalized-training-payload-v1":
+        raise ValueError(
+            "new split materializations require normalized-training-payload-v1 "
+            "exact-content hashing"
+        )
     _validate_materialization_paths(source, destination)
     records = read_source_records(source, spec.canonical_identity)
     assignments = assign_records(records, spec)

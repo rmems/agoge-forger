@@ -35,7 +35,7 @@ adapters/<run_name>/artifact_index.json   # training output
 |---------------------|--------|----------|------------------------------------------------|
 | `output_dir`        | str    | Yes      | Path to the output directory (as written by producer — may be relative or absolute) |
 | `artifacts`         | list   | Yes      | Array of artifact objects                      |
-| `artifacts[].file`  | str    | Yes      | Relative path from `output_dir`                |
+| `artifacts[].file`  | str    | Yes      | Relative path from the directory containing `artifact_index.json` (normally `output_dir`) |
 | `artifacts[].size_bytes` | int | Yes    | File size in bytes                             |
 | `artifacts[].sha256` | str   | Yes      | Hex-encoded SHA-256 hash of the file contents  |
 
@@ -77,4 +77,6 @@ Python writes and consumes `artifact_index.json` after training and merging.
 - `sha256` is computed on the raw file bytes before any encoding
 - `file` paths use the platform's native path separator (backslashes on Windows, forward slashes on Unix)
 - The index file itself is not listed in the `artifacts` array
+- Consumers resolve listed files from the directory containing `artifact_index.json`; `output_dir` is producer provenance and may become stale when an immutable artifact bundle is relocated
+- Consumers verify every listed file's existence, regular-file type, byte size, and SHA-256 digest before using the bundle
 - All JSON output uses `indent=2` formatting
