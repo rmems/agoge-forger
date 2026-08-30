@@ -41,17 +41,21 @@ def validate_split_manifest(
         for split, artifact in manifest.splits.items()
     }
     audit = _audit_observed(observed)
-    if audit != manifest.leakage_audit:
-        raise ValueError("stored leakage audit differs from recomputed audit")
+    _require_equal(
+        audit,
+        manifest.leakage_audit,
+        "stored leakage audit differs from recomputed audit",
+    )
     return manifest
 
 
 def _validate_source(manifest: SplitManifest, source: Path) -> None:
     actual_source_sha = sha256_file(source)
-    if actual_source_sha != manifest.source.sha256:
-        raise ValueError(
-            f"source SHA-256 mismatch: expected {manifest.source.sha256}, found {actual_source_sha}"
-        )
+    _require_equal(
+        actual_source_sha,
+        manifest.source.sha256,
+        f"source SHA-256 mismatch: expected {manifest.source.sha256}, found {actual_source_sha}",
+    )
     records = read_source_records(source, manifest.canonical_identity)
     _require_expected_ownership(manifest, records)
     source_members = {record.member.canonical_id: record.member for record in records}
@@ -60,8 +64,11 @@ def _validate_source(manifest: SplitManifest, source: Path) -> None:
         for artifact in manifest.splits.values()
         for member in artifact.members
     }
-    if source_members != manifest_members:
-        raise ValueError("manifest membership metadata differs from the pinned source")
+    _require_equal(
+        source_members,
+        manifest_members,
+        "manifest membership metadata differs from the pinned source",
+    )
 
 
 def _require_expected_ownership(manifest: SplitManifest, records: list[SourceRecord]) -> None:
@@ -81,8 +88,11 @@ def _require_expected_ownership(manifest: SplitManifest, records: list[SourceRec
         split: tuple(member.canonical_id for member in manifest.splits[split].members)
         for split in SPLIT_NAMES
     }
-    if expected_ids != manifest_ids:
-        raise ValueError("manifest split ownership differs from the pinned split policy")
+    _require_equal(
+        expected_ids,
+        manifest_ids,
+        "manifest split ownership differs from the pinned split policy",
+    )
 
 
 def _validate_artifact(
@@ -94,11 +104,13 @@ def _validate_artifact(
     artifact_path = resolve_split_path(manifest_path, artifact)
     _require_artifact_digest(split, artifact, artifact_path)
     records = read_source_records(artifact_path, manifest.canonical_identity)
-    if len(records) != artifact.record_count:
-        raise ValueError(f"{split} record count mismatch")
+    _require_equal(len(records), artifact.record_count, f"{split} record count mismatch")
     actual_members = _materialized_members(records, artifact.members)
-    if actual_members != list(artifact.members):
-        raise ValueError(f"{split} membership metadata does not match materialized records")
+    _require_equal(
+        actual_members,
+        list(artifact.members),
+        f"{split} membership metadata does not match materialized records",
+    )
     return [
         SourceRecord(row=record.row, raw_line=record.raw_line, member=artifact.members[index])
         for index, record in enumerate(records)
@@ -107,10 +119,11 @@ def _validate_artifact(
 
 def _require_artifact_digest(split: SplitName, artifact: SplitArtifact, path: Path) -> None:
     actual_digest = sha256_file(path)
-    if actual_digest != artifact.sha256:
-        raise ValueError(
-            f"{split} digest mismatch: expected {artifact.sha256}, found {actual_digest}"
-        )
+    _require_equal(
+        actual_digest,
+        artifact.sha256,
+        f"{split} digest mismatch: expected {artifact.sha256}, found {actual_digest}",
+    )
 
 
 def _materialized_members(
@@ -143,3 +156,8 @@ def resolve_split_path(manifest_path: Path, artifact: SplitArtifact) -> Path:
     if candidate != root and root not in candidate.parents:
         raise ValueError(f"split artifact escapes manifest directory: {artifact.path}")
     return candidate
+
+
+def _require_equal(actual: object, expected: object, message: str) -> None:
+    if actual != expected:
+        raise ValueError(message)
