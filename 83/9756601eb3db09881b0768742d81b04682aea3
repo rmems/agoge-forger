@@ -1,0 +1,48 @@
+src/agoge_forger/split_materialize.py
+  s_a642b0e72c17d0::t_fae935b136011b 70-76,103,114,126-127,129,133-134
+  s_a642b0e72c17d0::t_cf2c7f396cda46 69,121-124,128,131-132,323-327
+tests/test_split_contract.py
+  s_a642b0e72c17d0::t_f65ecddf66a9d3 7,191-222,345,347,363,365,383-400
+  s_a642b0e72c17d0::t_843fd36011f86e 223-265
+  s_a642b0e72c17d0::t_41d78f7d5ee1ea 266-302
+src/agoge_forger/eval/contract.py
+  s_a642b0e72c17d0::t_46faf89811ac62 9,12,297-298,300,302,305-328
+  s_a642b0e72c17d0::t_0cd4f9312f7e7f 263,286,299,329
+  s_a642b0e72c17d0::t_b6114daacc2bd7 238-241,257-260,265-272,274,330-331
+  s_a642b0e72c17d0::t_41d78f7d5ee1ea 344
+  s_a642b0e72c17d0::t_fae935b136011b 13,16,58-75,204-205,209,216,242-249,264,273,275-285,287-296,332-343,345-349
+  s_a642b0e72c17d0::t_f95ec816f17de6 301,303-304
+docs/contracts/artifact_index.md
+  s_a642b0e72c17d0::t_f95ec816f17de6 38
+  s_a642b0e72c17d0::t_b6114daacc2bd7 80
+  s_a642b0e72c17d0::t_c3de0faac49076 81
+scripts/freeze_split.py
+  s_a642b0e72c17d0::t_a5b06aa5c510c7 53
+src/agoge_forger/split_schema.py
+  s_a642b0e72c17d0::t_b6114daacc2bd7 45,65-68,76
+  s_a642b0e72c17d0::t_fae935b136011b 16,30,73,183,185,197,199
+  s_a642b0e72c17d0::t_cf2c7f396cda46 42-44
+.devin/blueprint.yaml
+  s_a642b0e72c17d0::t_fae935b136011b 1-39
+tests/test_evaluation_contract.py
+  s_a642b0e72c17d0::t_b26b31aff9c63a 52-62,64,66-68,70-76
+  s_a642b0e72c17d0::t_f65ecddf66a9d3 63,65,249-250,259-270,276-335
+  s_a642b0e72c17d0::t_41d78f7d5ee1ea 274-275
+  s_a642b0e72c17d0::t_0cd4f9312f7e7f 251-258,271-272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "839756601eb3db09881b0768742d81b04682aea3",
+  "prompts": {},
+  "sessions": {
+    "s_a642b0e72c17d0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05137-733f-7410-8135-b731266c1ce4",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
