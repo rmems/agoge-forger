@@ -5,10 +5,21 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agoge-forger"
 version = "0.1.0"
-description = "A local-first, GPU-aware forge for modern LLM fine-tuning."
-authors = [{name = "Agoge"}]
+description = "A Python/PyTorch-first platform for reproducible post-training, evaluation, and model releases."
+authors = [{name = "Raul Montoya Cardenas"}]
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.10"
+keywords = ["pytorch", "llm", "post-training", "sft", "qlora", "evaluation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "torch>=2.0.0",
     # Transformers 5 / TRL 1 are hard floors: the trainer builds `trl.SFTConfig`
@@ -29,13 +40,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-jax = ["jax[cuda13]", "flax", "optax", "orbax-checkpoint"]
 dev = ["pytest", "ruff==0.16.4", "mypy>=1.0", "pre-commit"]
-infra = []
-cuda = []
 
 [project.scripts]
 agoge = "agoge_forger.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/rmems/agoge-forger"
+Repository = "https://github.com/rmems/agoge-forger"
+Issues = "https://github.com/rmems/agoge-forger/issues"
 
 [tool.ruff]
 line-length = 100
