@@ -8,7 +8,6 @@ import typer
 import yaml
 
 from .artifacts.safetensors_io import assert_no_unsafe_weight_bins, inspect_safetensors_file
-from .backends.jax_backend import check_jax_env
 from .backends.torch_backend import check_torch_env
 from .config import load_config
 from .datasets import dataset_stats as _dataset_stats
@@ -21,14 +20,7 @@ from .models.lora_targets import inspect_lora_targets as _inspect_lora_targets
 from .models.metadata import get_model_config_metadata
 from .path_safety import resolve_existing_path, resolve_output_directory
 from .providers.chat_completions import ChatCompletionsConfig
-from .serving.benchmark import benchmark_vllm_frontends
-from .serving.config import (
-    BenchmarkConfig,
-    Frontend,
-    ServingConfig,
-    load_benchmark_config,
-    load_serving_config,
-)
+from .serving.config import ServingConfig, load_serving_config
 from .serving.serve import serve_vllm as _serve_vllm
 from .serving.smoke import run_vllm_smoke
 from .train.checkpoints import infer_base_model_from_adapter, is_adapter_artifact
@@ -40,21 +32,14 @@ app = typer.Typer(help="Agoge Forger CLI")
 
 @app.command()
 def check_env():
-    """Run all environment checks."""
+    """Run the supported PyTorch environment check."""
     check_torch_env()
-    check_jax_env()
 
 
 @app.command()
 def check_torch():
     """Check PyTorch/CUDA environment."""
     check_torch_env()
-
-
-@app.command()
-def check_jax():
-    """Check JAX environment."""
-    check_jax_env()
 
 
 @app.command()
@@ -238,7 +223,6 @@ def _merge_serving_config(config_path: str | None, overrides: dict[str, Any]) ->
 def serve_vllm(
     config: str | None = typer.Option(None, "--config", help="Path to YAML serving config"),
     model: str | None = typer.Option(None, help="Model ID"),
-    frontend: Annotated[Frontend | None, typer.Option(help="python or rust")] = None,
     host: str | None = typer.Option(None, help="Host to bind"),
     port: int | None = typer.Option(None, help="Port"),
     max_model_len: int | None = typer.Option(None, help="Maximum model context length"),
@@ -249,10 +233,9 @@ def serve_vllm(
         list[str] | None, typer.Option("--extra-arg", help="Extra vllm serve argument")
     ] = None,
 ):
-    """Serve a model with vLLM, optionally using the Rust frontend."""
+    """Serve a model with vLLM."""
     overrides: dict[str, Any] = {
         "model": model,
-        "frontend": frontend,
         "host": host,
         "port": port,
         "max_model_len": max_model_len,
@@ -264,60 +247,6 @@ def serve_vllm(
         overrides["extra_args"] = extra_arg
     cfg = _merge_serving_config(config, overrides)
     raise typer.Exit(_serve_vllm(cfg))
-
-
-# pylint: enable=too-many-arguments,too-many-positional-arguments
-
-
-def _resolve_prompt_set_path(prompt_set: str | None) -> str:
-    if not prompt_set:
-        return ""
-    return str(resolve_existing_path(prompt_set, must_be_file=True))
-
-
-def _merge_benchmark_config(config_path: str | None, overrides: dict[str, Any]) -> BenchmarkConfig:
-    cfg = load_benchmark_config(config_path) if config_path else BenchmarkConfig()
-    for key, value in overrides.items():
-        if value is not None:
-            setattr(cfg, key, value)
-    cfg.prompt_set = _resolve_prompt_set_path(cfg.prompt_set)
-    if not cfg.model:
-        raise typer.BadParameter("Model ID is required (--model or config.model)")
-    if not cfg.prompt_set:
-        raise typer.BadParameter("Prompt set is required (--prompt-set or config.prompt_set)")
-    return cfg
-
-
-# pylint: disable=too-many-arguments,too-many-positional-arguments
-@app.command()
-def bench_vllm_frontend(
-    config: str | None = typer.Option(None, "--config", help="Path to YAML benchmark config"),
-    model: str | None = typer.Option(None, help="Model ID"),
-    frontend: Annotated[
-        Frontend | None, typer.Option(help="python, rust, or omit for both")
-    ] = None,
-    prompt_set: str | None = typer.Option(None, "--prompt-set", help="Path to prompt set YAML"),
-    out_dir: str | None = typer.Option(None, help="Output directory"),
-    stream: bool | None = typer.Option(None, "--stream/--no-stream", help="Use streaming requests"),
-    max_tokens: int | None = typer.Option(None, help="Max tokens per request"),
-    temperature: float | None = typer.Option(None, help="Sampling temperature"),
-    concurrency: int | None = typer.Option(None, help="Request concurrency"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Simulate benchmark"),
-):
-    """Benchmark vLLM Python vs Rust frontends."""
-    overrides: dict[str, Any] = {
-        "model": model,
-        "frontend": frontend,
-        "prompt_set": prompt_set,
-        "out_dir": out_dir,
-        "stream": stream,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "concurrency": concurrency,
-        "dry_run": dry_run,
-    }
-    cfg = _merge_benchmark_config(config, overrides)
-    raise typer.Exit(benchmark_vllm_frontends(cfg))
 
 
 # pylint: enable=too-many-arguments,too-many-positional-arguments

@@ -1,1 +1,1 @@
-"""vLLM serving and frontend benchmark lane."""
+"""vLLM serving and compatibility smoke tests."""

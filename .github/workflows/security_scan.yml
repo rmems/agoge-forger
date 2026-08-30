@@ -9,11 +9,6 @@ on:
       - "pyproject.toml"
       - "requirements.txt"
       - "uv.lock"
-      - "rust-tools/**"
-      - "julia/**"
-      - "Project.toml"
-      - "Manifest.toml"
-      - "infra/**"
 
 permissions:
   contents: read
@@ -42,25 +37,3 @@ jobs:
 
       - name: Run pytest
         run: .venv/bin/pytest tests/
-
-  rust-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # v1 of dtolnay/rust-toolchain requires an explicit `toolchain`
-      # input even for the implicit "stable" channel. The earlier
-      # invocation with no `with:` block failed with
-      # "'toolchain' is a required input".
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
-
-      - name: Cargo check and clippy
-        working-directory: rust-tools
-        run: |
-          cargo check
-          cargo clippy -- -D warnings

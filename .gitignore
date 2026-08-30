@@ -32,31 +32,12 @@ ENV/
 env/
 .env
 
-# IDE / local agent tooling
-.kilo/*
-!.kilo/plans/
-!.kilo/plans/**
+# IDE / local tooling
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
-
-# Rust
-rust-tools/target/
-**/target/
-**/*.rs.bk
-Cargo.lock
-
-# Julia
-*.jl.c
-*.jl.o
-*.ji
-*.jich
-*.jich.gz
-Manifest.toml
-LocalPreferences.toml
-JuliaArtifacts/
 
 # Jupyter
 .ipynb_checkpoints
@@ -85,14 +66,6 @@ merged/
 gguf/
 runs/
 smoke_output/
-rust_output/
-julia_output/
-
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.backup
-
 # Datasets
 datasets/samples/*.jsonl
 !datasets/samples/tiny_sft.jsonl

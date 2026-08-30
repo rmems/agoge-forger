@@ -62,7 +62,7 @@ def test_dataset_text_field_validation_accepts_a_present_column():
     [
         {"text": "User: hi\nAssistant: hello"},
         {"messages": [{"role": "user", "content": "hi"}]},
-        {"instruction": "Define JAX.", "output": "An autograd library."},
+        {"instruction": "Define PyTorch.", "output": "A tensor and autograd library."},
     ],
     ids=["plain_text", "messages", "instruction"],
 )
@@ -89,7 +89,7 @@ def test_production_loader_always_yields_the_text_column(row, tmp_path):
     [
         {"text": "User: hi\nAssistant: hello"},
         {"messages": [{"role": "user", "content": "hi"}]},
-        {"instruction": "Define JAX.", "output": "An autograd library."},
+        {"instruction": "Define PyTorch.", "output": "A tensor and autograd library."},
     ],
     ids=["plain_text", "messages", "instruction"],
 )

@@ -70,11 +70,7 @@ The `manifest.json` `metrics.artifact_index` field contains the path to the arti
 
 ## Owner
 
-| Language | Responsibility                                              |
-|----------|-------------------------------------------------------------|
-| Python   | Writes `artifact_index.json` after training and merging     |
-| Rust     | Reads artifact index for validation and file verification   |
-| Julia    | Reads artifact index for model discovery                    |
+Python writes and consumes `artifact_index.json` after training and merging.
 
 ## Notes
 
