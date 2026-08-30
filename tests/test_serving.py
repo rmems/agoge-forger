@@ -3,9 +3,11 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from agoge_forger.cli import app
+from agoge_forger.serving.config import ServingConfig
 
 
 @pytest.fixture
@@ -33,3 +35,8 @@ def test_serve_vllm_requires_model(runner: CliRunner, caplog):
     result = runner.invoke(app, ["serve-vllm", "--dry-run"])
     assert result.exit_code != 0
     assert "Model ID is required" in result.output or "Model ID is required" in caplog.text
+
+
+def test_removed_rust_frontend_setting_is_rejected():
+    with pytest.raises(ValidationError, match="frontend"):
+        ServingConfig.model_validate({"model": "example/model", "frontend": "rust"})

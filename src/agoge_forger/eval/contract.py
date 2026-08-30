@@ -53,13 +53,19 @@ class DecodingContract(FrozenEvaluationModel):
     top_p: float = Field(gt=0, le=1)
 
 
+class ArtifactIndexReference(FrozenEvaluationModel):
+    kind: Literal["peft_adapter", "merged_model"]
+    artifact_index_path: str = Field(min_length=1)
+    artifact_index_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class EvaluationArm(FrozenEvaluationModel):
     role: Literal["causal_base", "causal_sft"]
     model_repository: str = Field(min_length=1)
-    model_revision: str = Field(min_length=1)
-    artifact_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    model_revision: str = Field(pattern=r"^[0-9a-f]{40,64}$")
+    artifact: ArtifactIndexReference | None = None
     tokenizer_repository: str = Field(min_length=1)
-    tokenizer_revision: str = Field(min_length=1)
+    tokenizer_revision: str = Field(pattern=r"^[0-9a-f]{40,64}$")
     serializer_id: str = Field(min_length=1)
     serializer_version: str = Field(min_length=1)
     serializer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -71,8 +77,10 @@ class EvaluationArm(FrozenEvaluationModel):
 
     @model_validator(mode="after")
     def require_sft_artifact(self) -> EvaluationArm:
-        if self.role == "causal_sft" and self.artifact_sha256 is None:
-            raise ValueError("causal_sft arm requires an immutable artifact_sha256")
+        if self.role == "causal_sft" and self.artifact is None:
+            raise ValueError("causal_sft arm requires a verified artifact-index reference")
+        if self.role == "causal_base" and self.artifact is not None:
+            raise ValueError("causal_base arm cannot reference a trained artifact")
         return self
 
 
@@ -150,6 +158,7 @@ def validate_evaluation_contract(contract_path: str | Path) -> PairedEvaluationC
         raise ValueError("evaluation contract task IDs differ from the frozen held-out manifest")
     if logical_task_set_sha256(expected_ids) != contract.logical_task_set_sha256:
         raise ValueError("evaluation contract task-set digest differs from held-out membership")
+    _validate_sft_artifact(path, contract.sft)
     return contract
 
 
@@ -163,6 +172,7 @@ def build_evaluation_contract(
     manifest = validate_split_manifest(manifest_file)
     task_ids = held_out_task_ids(manifest)
     task_digest = logical_task_set_sha256(task_ids)
+    normalized_sft = _normalize_sft_artifact(sft, destination)
     contract = PairedEvaluationContract(
         split_manifest_path=str(Path(os.path.relpath(manifest_file, destination.parent.resolve()))),
         split_manifest_sha256=sha256_file(manifest_file),
@@ -170,7 +180,7 @@ def build_evaluation_contract(
         logical_task_ids=task_ids,
         logical_task_set_sha256=task_digest,
         base=base,
-        sft=sft,
+        sft=normalized_sft,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -179,3 +189,35 @@ def build_evaluation_contract(
     except FileExistsError as exc:
         raise FileExistsError(f"refusing to overwrite evaluation contract: {destination}") from exc
     return contract
+
+
+def _normalize_sft_artifact(sft: EvaluationArm, destination: Path) -> EvaluationArm:
+    if sft.artifact is None:
+        raise ValueError("causal_sft arm requires a verified artifact-index reference")
+    anchor = destination.parent.resolve()
+    supplied = Path(sft.artifact.artifact_index_path).expanduser()
+    artifact_path = (
+        supplied.resolve(strict=True)
+        if supplied.is_absolute()
+        else (anchor / supplied).resolve(strict=True)
+    )
+    _require_artifact_digest(artifact_path, sft.artifact.artifact_index_sha256)
+    normalized = sft.artifact.model_copy(
+        update={"artifact_index_path": str(Path(os.path.relpath(artifact_path, anchor)))}
+    )
+    return sft.model_copy(update={"artifact": normalized})
+
+
+def _validate_sft_artifact(contract_path: Path, sft: EvaluationArm) -> None:
+    if sft.artifact is None:
+        raise ValueError("causal_sft arm requires a verified artifact-index reference")
+    artifact_path = (contract_path.parent / sft.artifact.artifact_index_path).resolve(strict=True)
+    _require_artifact_digest(artifact_path, sft.artifact.artifact_index_sha256)
+
+
+def _require_artifact_digest(path: Path, expected: str) -> None:
+    actual = sha256_file(path)
+    if actual != expected:
+        raise ValueError(
+            f"SFT artifact-index SHA-256 mismatch: expected {expected}, found {actual}"
+        )

@@ -180,7 +180,7 @@ def _component_anchor(records: Sequence[SourceRecord], component: Sequence[int])
     return f"lineage:{lineages[0]}"
 
 
-def _assign_components(
+def assign_records(
     records: Sequence[SourceRecord], spec: SplitMaterializationSpec
 ) -> dict[SplitName, list[int]]:
     policy = spec.split_policy
@@ -298,7 +298,7 @@ def materialize_split(
     destination = Path(output_dir).expanduser()
     _validate_materialization_paths(source, destination)
     records = read_source_records(source, spec.canonical_identity)
-    assignments = _assign_components(records, spec)
+    assignments = assign_records(records, spec)
     artifacts, payloads = _build_artifacts(assignments, records)
     manifest = _build_manifest(
         source, spec, records, artifacts, leakage_audit(assignments, records)

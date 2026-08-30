@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..path_safety import resolve_existing_path
 
 
 class ServingConfig(BaseModel):
     """Configuration for `agoge serve-vllm`."""
+
+    model_config = ConfigDict(extra="forbid")
 
     model: str = ""
     host: str = "127.0.0.1"

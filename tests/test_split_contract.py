@@ -131,6 +131,35 @@ def test_source_and_materialized_mutations_are_detected(tmp_path):
         validate_split_manifest(manifest_path)
 
 
+def test_source_validation_recomputes_pinned_split_ownership(tmp_path):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    manifest = _materialize(source, output)
+    manifest_path = output / "split_manifest.json"
+    raw_manifest = json.loads(manifest_path.read_text())
+
+    train_path = output / manifest.splits["train"].path
+    held_path = output / manifest.splits["held_out"].path
+    train_rows = [json.loads(line) for line in train_path.read_text().splitlines()]
+    held_rows = [json.loads(line) for line in held_path.read_text().splitlines()]
+    train_rows[0], held_rows[0] = held_rows[0], train_rows[0]
+    train_payload = b"".join(canonical_json_bytes(row) + b"\n" for row in train_rows)
+    held_payload = b"".join(canonical_json_bytes(row) + b"\n" for row in held_rows)
+    train_path.write_bytes(train_payload)
+    held_path.write_bytes(held_payload)
+
+    train_members = raw_manifest["splits"]["train"]["members"]
+    held_members = raw_manifest["splits"]["held_out"]["members"]
+    train_members[0], held_members[0] = held_members[0], train_members[0]
+    raw_manifest["splits"]["train"]["sha256"] = sha256_bytes(train_payload)
+    raw_manifest["splits"]["held_out"]["sha256"] = sha256_bytes(held_payload)
+    manifest_path.write_bytes(canonical_json_bytes(raw_manifest) + b"\n")
+
+    with pytest.raises(ValueError, match="split ownership differs"):
+        validate_split_manifest(manifest_path, source_path=source)
+
+
 def test_cross_split_exact_content_leakage_fails_closed(tmp_path):
     source = tmp_path / "curated.jsonl"
     output = tmp_path / "frozen"

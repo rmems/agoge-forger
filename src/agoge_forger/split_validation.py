@@ -10,11 +10,12 @@ from typing import Any
 from datasets import Dataset  # type: ignore[attr-defined]
 
 from .datasets import normalize_row
-from .split_materialize import SourceRecord, leakage_audit, read_source_records
+from .split_materialize import SourceRecord, assign_records, leakage_audit, read_source_records
 from .split_schema import (
     SPLIT_NAMES,
     SplitArtifact,
     SplitManifest,
+    SplitMaterializationSpec,
     SplitMember,
     SplitName,
     sha256_file,
@@ -56,6 +57,7 @@ def _validate_source(manifest: SplitManifest, source: Path) -> None:
             f"source SHA-256 mismatch: expected {manifest.source.sha256}, found {actual_source_sha}"
         )
     records = read_source_records(source, manifest.canonical_identity)
+    _require_expected_ownership(manifest, records)
     source_members = {record.member.canonical_id: record.member for record in records}
     manifest_members = {
         member.canonical_id: member
@@ -64,6 +66,27 @@ def _validate_source(manifest: SplitManifest, source: Path) -> None:
     }
     if source_members != manifest_members:
         raise ValueError("manifest membership metadata differs from the pinned source")
+
+
+def _require_expected_ownership(manifest: SplitManifest, records: list[SourceRecord]) -> None:
+    spec = SplitMaterializationSpec(
+        source_repository=manifest.source.repository,
+        source_revision=manifest.source.revision,
+        dataset_version=manifest.source.dataset_version,
+        split_policy=manifest.split_policy,
+        canonical_identity=manifest.canonical_identity,
+    )
+    expected = assign_records(records, spec)
+    expected_ids = {
+        split: tuple(records[index].member.canonical_id for index in expected[split])
+        for split in SPLIT_NAMES
+    }
+    manifest_ids = {
+        split: tuple(member.canonical_id for member in manifest.splits[split].members)
+        for split in SPLIT_NAMES
+    }
+    if expected_ids != manifest_ids:
+        raise ValueError("manifest split ownership differs from the pinned split policy")
 
 
 def _validate_artifact(
