@@ -1,6 +1,6 @@
 import json
+import os
 from pathlib import Path
-from typing import Literal
 
 import pytest
 from pydantic import ValidationError
@@ -54,6 +54,7 @@ def _frozen_manifest(tmp_path: Path):
     spec = SplitMaterializationSpec(
         source_repository="rmems/synthetic-factory",
         source_revision="abcdef0123456789abcdef0123456789abcdef01",
+        source_path="curated.jsonl",
         dataset_version="curated-eval-v1",
         split_policy=SplitPolicy(
             seed=99,
@@ -65,7 +66,7 @@ def _frozen_manifest(tmp_path: Path):
     return output / "split_manifest.json", manifest
 
 
-def _write_artifact_index(output_dir: Path) -> Path:
+def _write_artifact_index(output_dir: Path, provenance=None) -> Path:
     artifact_index = output_dir / "artifact_index.json"
     artifacts = [
         {
@@ -76,19 +77,18 @@ def _write_artifact_index(output_dir: Path) -> Path:
         for path in sorted(output_dir.rglob("*"))
         if path.is_file() and path != artifact_index
     ]
-    artifact_index.write_bytes(
-        canonical_json_bytes({"output_dir": str(output_dir), "artifacts": artifacts}) + b"\n"
-    )
+    payload: dict[str, object] = {"output_dir": str(output_dir), "artifacts": artifacts}
+    if provenance is not None:
+        payload["producer_provenance"] = provenance
+    artifact_index.write_bytes(canonical_json_bytes(payload) + b"\n")
     return artifact_index
 
 
-def _with_artifact(
-    sft: EvaluationArm,
-    output_dir: Path,
-    *,
-    kind: Literal["peft_adapter", "merged_model"],
-) -> EvaluationArm:
-    artifact_index = _write_artifact_index(output_dir)
+def _with_artifact(sft: EvaluationArm, output_dir: Path, *, kind, provenance=None):
+    if provenance is None and kind == "merged_model":
+        provenance = _provenance()
+    index_provenance = None if provenance is False else provenance
+    artifact_index = _write_artifact_index(output_dir, index_provenance)
     return sft.model_copy(
         update={
             "artifact": ArtifactIndexReference(
@@ -103,6 +103,12 @@ def _with_artifact(
 def _write_adapter_config(output_dir: Path, payload: dict[str, object]) -> None:
     complete = {"peft_type": "LORA", **payload}
     (output_dir / "adapter_config.json").write_bytes(canonical_json_bytes(complete) + b"\n")
+
+
+def _provenance(
+    repository: object = MODEL_REPOSITORY, revision: object = MODEL_REVISION
+) -> dict[str, object]:
+    return {"base_model_name_or_path": repository, "revision": revision}
 
 
 def _write_merged_config(output_dir: Path, payload: dict[str, str] | None = None) -> None:
@@ -121,13 +127,7 @@ def _arms(task_digest: str, tmp_path: Path):
     output_dir.mkdir(parents=True, exist_ok=True)
     adapter_weights = output_dir / "adapter_model.safetensors"
     _write_safetensors(adapter_weights)
-    _write_adapter_config(
-        output_dir,
-        {
-            "base_model_name_or_path": MODEL_REPOSITORY,
-            "revision": MODEL_REVISION,
-        },
-    )
+    _write_adapter_config(output_dir, _provenance())
     artifact_index = _write_artifact_index(output_dir)
     common = {
         "tokenizer_repository": "example/tokenizer",
@@ -167,11 +167,119 @@ def _arms(task_digest: str, tmp_path: Path):
     return base, sft
 
 
-def test_schema_only_contract_consumes_frozen_held_out_manifest(tmp_path):
+def _case(tmp_path: Path):
     manifest_path, manifest = _frozen_manifest(tmp_path)
+    digest = logical_task_set_sha256(held_out_task_ids(manifest))
+    base, sft = _arms(digest, tmp_path)
+    return manifest_path, manifest, base, sft
+
+
+def _artifact_case(tmp_path: Path, directory: str):
+    manifest_path, _, base, sft = _case(tmp_path)
+    output_dir = tmp_path / directory
+    output_dir.mkdir(exist_ok=True)
+    return manifest_path, base, sft, output_dir
+
+
+def _build(tmp_path: Path, manifest_path: Path, base: EvaluationArm, sft: EvaluationArm):
+    return build_evaluation_contract(
+        manifest_path=manifest_path,
+        contract_path=tmp_path / "eval" / "contract.json",
+        base=base,
+        sft=sft,
+    )
+
+
+def _assert_build_rejected(
+    tmp_path: Path,
+    manifest_path: Path,
+    base: EvaluationArm,
+    sft: EvaluationArm,
+    expected_error: str,
+    error_type: type[BaseException] = ValueError,
+) -> None:
+    with pytest.raises(error_type, match=expected_error):
+        _build(tmp_path, manifest_path, base, sft)
+
+
+def _write_shard_index(output_dir: Path, payload: dict[str, object]) -> None:
+    (output_dir / "model.safetensors.index.json").write_bytes(canonical_json_bytes(payload) + b"\n")
+
+
+def _paths_absent(*paths: Path) -> bool:
+    return all(not path.exists() for path in paths)
+
+
+def _write_invalid_merged_layout(output_dir: Path, variant: str) -> None:
+    _write_merged_config(output_dir)
+    single = "model-00001-of-00001.safetensors"
+    first = "model-00001-of-00002.safetensors"
+    second = "model-00002-of-00002.safetensors"
+    if variant.startswith("provenance-"):
+        _write_safetensors(output_dir / "model.safetensors")
+        return
+    tensor_maps = {
+        "tensor-missing": (("actual.a",), ("actual.b",), {"claimed.a": first, "actual.b": second}),
+        "tensor-extra": (
+            ("mapped.a", "extra.a"),
+            ("mapped.b",),
+            {"mapped.a": first, "mapped.b": second},
+        ),
+        "tensor-duplicate": (
+            ("shared", "a"),
+            ("shared", "b"),
+            {"shared": first, "a": first, "b": second},
+        ),
+        "tensor-misplaced": (("a",), ("b",), {"a": second, "b": first}),
+    }
+    if variant in tensor_maps:
+        first_keys, second_keys, weight_map = tensor_maps[variant]
+        _write_safetensors(output_dir / first, keys=first_keys)
+        _write_safetensors(output_dir / second, keys=second_keys)
+        _write_shard_index(output_dir, {"metadata": {"total_size": 2}, "weight_map": weight_map})
+        return
+
+    shard_references = {
+        "shard-bin": "model-00001-of-00001.bin",
+        "shard-noncanonical": "./model-00001-of-00001.safetensors",
+        "shard-unindexed": "model-00001-of-00001.safetensors",
+    }
+    if variant in shard_references:
+        _write_shard_index(
+            output_dir,
+            {"metadata": {"total_size": 1}, "weight_map": {"layer.0": shard_references[variant]}},
+        )
+    elif variant == "ambiguous":
+        _write_safetensors(output_dir / "model.safetensors")
+        _write_shard_index(
+            output_dir,
+            {"metadata": {"total_size": 1}, "weight_map": {"layer.0": single}},
+        )
+    elif variant == "duplicate-map-key":
+        _write_safetensors(output_dir / single)
+        (output_dir / "model.safetensors.index.json").write_text(
+            f'{{"metadata":{{}},"weight_map":{{"layer.0":"{single}","layer.0":"{single}"}}}}\n',
+            encoding="utf-8",
+        )
+    elif variant == "unreferenced-shard":
+        _write_safetensors(output_dir / single)
+        _write_safetensors(output_dir / second, value=1)
+        _write_shard_index(
+            output_dir, {"metadata": {"total_size": 2}, "weight_map": {"layer.0": single}}
+        )
+    else:
+        invalid_indices = {
+            "empty-map-missing": {},
+            "empty-map-list": {"weight_map": []},
+            "non-string-shard": {"metadata": {}, "weight_map": {"layer.0": 7}},
+            "missing-metadata": {"weight_map": {"layer.0": single}},
+        }
+        _write_shard_index(output_dir, invalid_indices[variant])
+
+
+def test_schema_only_contract_consumes_frozen_held_out_manifest(tmp_path):
+    manifest_path, manifest, base, sft = _case(tmp_path)
     task_ids = held_out_task_ids(manifest)
-    task_digest = logical_task_set_sha256(task_ids)
-    base, sft = _arms(task_digest, tmp_path)
     contract_path = tmp_path / "eval" / "contract.json"
 
     written = build_evaluation_contract(
@@ -188,8 +296,7 @@ def test_schema_only_contract_consumes_frozen_held_out_manifest(tmp_path):
     assert validated.base.model_repository == validated.sft.model_repository
     assert validated.sft.artifact is not None
     assert not Path(validated.sft.artifact.artifact_index_path).is_absolute()
-    assert not (contract_path.parent / "base").exists()
-    assert not (contract_path.parent / "sft").exists()
+    assert _paths_absent(contract_path.parent / "base", contract_path.parent / "sft")
 
 
 @pytest.mark.parametrize(
@@ -212,10 +319,9 @@ def test_schema_only_contract_consumes_frozen_held_out_manifest(tmp_path):
     ],
 )
 def test_paired_contract_fails_closed_on_comparability_drift(tmp_path, field, replacement):
-    _, manifest = _frozen_manifest(tmp_path)
+    _, manifest, base, sft = _case(tmp_path)
     task_ids = held_out_task_ids(manifest)
     task_digest = logical_task_set_sha256(task_ids)
-    base, sft = _arms(task_digest, tmp_path)
     drifted_sft = sft.model_copy(update={field: replacement})
 
     with pytest.raises(ValidationError, match="non-comparable"):
@@ -231,17 +337,9 @@ def test_paired_contract_fails_closed_on_comparability_drift(tmp_path, field, re
 
 
 def test_evaluation_contract_detects_manifest_mutation(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    task_ids = held_out_task_ids(manifest)
-    task_digest = logical_task_set_sha256(task_ids)
-    base, sft = _arms(task_digest, tmp_path)
+    manifest_path, _, base, sft = _case(tmp_path)
     contract_path = tmp_path / "eval" / "contract.json"
-    build_evaluation_contract(
-        manifest_path=manifest_path,
-        contract_path=contract_path,
-        base=base,
-        sft=sft,
-    )
+    _build(tmp_path, manifest_path, base, sft)
 
     manifest_path.write_bytes(manifest_path.read_bytes() + b"\n")
     with pytest.raises(ValueError, match="split-manifest SHA-256 mismatch"):
@@ -249,30 +347,15 @@ def test_evaluation_contract_detects_manifest_mutation(tmp_path):
 
 
 def test_evaluation_contract_refuses_overwrite(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    task_digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(task_digest, tmp_path)
-    contract_path = tmp_path / "eval" / "contract.json"
-    build_evaluation_contract(
-        manifest_path=manifest_path,
-        contract_path=contract_path,
-        base=base,
-        sft=sft,
-    )
+    manifest_path, _, base, sft = _case(tmp_path)
+    _build(tmp_path, manifest_path, base, sft)
 
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=contract_path,
-            base=base,
-            sft=sft,
-        )
+        _build(tmp_path, manifest_path, base, sft)
 
 
 def test_evaluation_contract_requires_immutable_model_and_tokenizer_revisions(tmp_path):
-    _, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, _ = _arms(digest, tmp_path)
+    _, _, base, _ = _case(tmp_path)
 
     with pytest.raises(ValidationError, match="model_revision"):
         base.model_copy(update={"model_revision": "main"}).model_validate(
@@ -285,16 +368,9 @@ def test_evaluation_contract_requires_immutable_model_and_tokenizer_revisions(tm
 
 
 def test_evaluation_contract_detects_artifact_index_mutation(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
+    manifest_path, _, base, sft = _case(tmp_path)
     contract_path = tmp_path / "eval" / "contract.json"
-    contract = build_evaluation_contract(
-        manifest_path=manifest_path,
-        contract_path=contract_path,
-        base=base,
-        sft=sft,
-    )
+    contract = _build(tmp_path, manifest_path, base, sft)
     assert contract.sft.artifact is not None
     artifact_path = (contract_path.parent / contract.sft.artifact.artifact_index_path).resolve()
     artifact_path.write_bytes(artifact_path.read_bytes() + b"\n")
@@ -311,16 +387,9 @@ def test_evaluation_contract_detects_artifact_index_mutation(tmp_path):
     ],
 )
 def test_evaluation_contract_detects_indexed_artifact_mutation(tmp_path, mutation, expected_error):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
+    manifest_path, _, base, sft = _case(tmp_path)
     contract_path = tmp_path / "eval" / "contract.json"
-    build_evaluation_contract(
-        manifest_path=manifest_path,
-        contract_path=contract_path,
-        base=base,
-        sft=sft,
-    )
+    _build(tmp_path, manifest_path, base, sft)
 
     weights = tmp_path / "adapter" / "adapter_model.safetensors"
     original = weights.read_bytes()
@@ -340,32 +409,15 @@ def test_evaluation_contract_detects_indexed_artifact_mutation(tmp_path, mutatio
     ],
 )
 def test_evaluation_contract_enforces_declared_artifact_kind(tmp_path, kind, expected_error):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "wrong-kind"
-    output_dir.mkdir()
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "wrong-kind")
     if kind == "peft_adapter":
         _write_merged_config(output_dir)
         _write_safetensors(output_dir / "model.safetensors")
     else:
-        _write_adapter_config(
-            output_dir,
-            {
-                "base_model_name_or_path": MODEL_REPOSITORY,
-                "revision": MODEL_REVISION,
-            },
-        )
+        _write_adapter_config(output_dir, _provenance())
         _write_safetensors(output_dir / "adapter_model.safetensors")
     wrong_kind_sft = _with_artifact(sft, output_dir, kind=kind)
-
-    with pytest.raises(ValueError, match=expected_error):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
-            base=base,
-            sft=wrong_kind_sft,
-        )
+    _assert_build_rejected(tmp_path, manifest_path, base, wrong_kind_sft, expected_error)
 
 
 @pytest.mark.parametrize(
@@ -379,37 +431,17 @@ def test_evaluation_contract_enforces_declared_artifact_kind(tmp_path, kind, exp
     ],
 )
 def test_evaluation_contract_rejects_unsafe_adapter_weight_substitute(tmp_path, unsafe_name):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "unsafe-adapter"
-    output_dir.mkdir()
-    _write_adapter_config(
-        output_dir,
-        {
-            "base_model_name_or_path": MODEL_REPOSITORY,
-            "revision": MODEL_REVISION,
-        },
-    )
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "unsafe-adapter")
+    _write_adapter_config(output_dir, _provenance())
     unsafe_path = output_dir / unsafe_name
     unsafe_path.parent.mkdir(parents=True, exist_ok=True)
     unsafe_path.write_bytes(b"pickle-weights")
     unsafe_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
-
-    with pytest.raises(ValueError, match="unsafe serialized weights"):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
-            base=base,
-            sft=unsafe_sft,
-        )
+    _assert_build_rejected(tmp_path, manifest_path, base, unsafe_sft, "unsafe serialized weights")
 
 
 def test_evaluation_contract_accepts_indexed_adapter_training_state(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "adapter"
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "adapter")
     (output_dir / "README.md").write_text("adapter card\n", encoding="utf-8")
     checkpoint = output_dir / "checkpoint-1"
     checkpoint.mkdir()
@@ -419,31 +451,22 @@ def test_evaluation_contract_accepts_indexed_adapter_training_state(tmp_path):
     complete_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
     contract_path = tmp_path / "eval" / "contract.json"
 
-    written = build_evaluation_contract(
-        manifest_path=manifest_path,
-        contract_path=contract_path,
-        base=base,
-        sft=complete_sft,
-    )
+    written = _build(tmp_path, manifest_path, base, complete_sft)
 
     assert validate_evaluation_contract(contract_path) == written
 
 
 def test_evaluation_contract_rejects_conflicting_root_adapter_safetensors(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "adapter"
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "adapter")
     _write_safetensors(output_dir / "model.safetensors")
     conflicting_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
-
-    with pytest.raises(ValueError, match="only adapter_model.safetensors weights"):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
-            base=base,
-            sft=conflicting_sft,
-        )
+    _assert_build_rejected(
+        tmp_path,
+        manifest_path,
+        base,
+        conflicting_sft,
+        "only adapter_model.safetensors weights",
+    )
 
 
 @pytest.mark.parametrize(
@@ -456,16 +479,9 @@ def test_evaluation_contract_rejects_conflicting_root_adapter_safetensors(tmp_pa
     ],
 )
 def test_evaluation_contract_rejects_files_omitted_from_artifact_index(tmp_path, relative_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
+    manifest_path, _, base, sft = _case(tmp_path)
     contract_path = tmp_path / "eval" / "contract.json"
-    build_evaluation_contract(
-        manifest_path=manifest_path,
-        contract_path=contract_path,
-        base=base,
-        sft=sft,
-    )
+    _build(tmp_path, manifest_path, base, sft)
     omitted = tmp_path / "adapter" / relative_path
     omitted.parent.mkdir(parents=True, exist_ok=True)
     omitted.write_bytes(b"not-indexed")
@@ -476,20 +492,31 @@ def test_evaluation_contract_rejects_files_omitted_from_artifact_index(tmp_path,
 
 @pytest.mark.parametrize("target", ["adapter_model.safetensors", ".", "missing"])
 def test_evaluation_contract_rejects_symlink_in_artifact_bundle(tmp_path, target):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
+    manifest_path, _, base, sft = _case(tmp_path)
     contract_path = tmp_path / "eval" / "contract.json"
-    build_evaluation_contract(
-        manifest_path=manifest_path,
-        contract_path=contract_path,
-        base=base,
-        sft=sft,
-    )
+    _build(tmp_path, manifest_path, base, sft)
     (tmp_path / "adapter" / "artifact-link").symlink_to(target)
 
     with pytest.raises(ValueError, match="artifact bundle cannot contain symlinks"):
         validate_evaluation_contract(contract_path)
+
+
+def test_evaluation_contract_fails_if_index_disappears_during_bundle_scan(
+    tmp_path,
+    monkeypatch,
+):
+    manifest_path, _, base, sft = _case(tmp_path)
+    assert sft.artifact is not None
+    artifact_index = Path(sft.artifact.artifact_index_path)
+    original_scandir = os.scandir
+
+    def remove_index_before_scan(directory):
+        artifact_index.unlink()
+        return original_scandir(directory)
+
+    monkeypatch.setattr(os, "scandir", remove_index_before_scan)
+    with pytest.raises(FileNotFoundError):
+        _build(tmp_path, manifest_path, base, sft)
 
 
 @pytest.mark.parametrize(
@@ -497,93 +524,27 @@ def test_evaluation_contract_rejects_symlink_in_artifact_bundle(tmp_path, target
     [
         ({"revision": MODEL_REVISION}, "missing required base_model_name_or_path"),
         ({"base_model_name_or_path": MODEL_REPOSITORY}, "missing required revision"),
-        (
-            {
-                "base_model_name_or_path": "example/other-model",
-                "revision": MODEL_REVISION,
-            },
-            "base_model_name_or_path does not match",
-        ),
-        (
-            {
-                "base_model_name_or_path": f"{MODEL_REPOSITORY}/",
-                "revision": MODEL_REVISION,
-            },
-            "base_model_name_or_path does not match",
-        ),
-        (
-            {
-                "base_model_name_or_path": MODEL_REPOSITORY.upper(),
-                "revision": MODEL_REVISION,
-            },
-            "base_model_name_or_path does not match",
-        ),
-        (
-            {
-                "base_model_name_or_path": MODEL_REPOSITORY,
-                "revision": "4" * 40,
-            },
-            "revision does not match",
-        ),
-        (
-            {
-                "base_model_name_or_path": MODEL_REPOSITORY,
-                "revision": MODEL_REVISION.upper(),
-            },
-            "revision does not match",
-        ),
-        (
-            {
-                "base_model_name_or_path": MODEL_REPOSITORY,
-                "revision": "main",
-            },
-            "revision does not match",
-        ),
-        (
-            {
-                "base_model_name_or_path": MODEL_REPOSITORY,
-                "revision": None,
-            },
-            "missing required revision",
-        ),
+        (_provenance("example/other-model"), "base_model_name_or_path does not match"),
+        (_provenance(f"{MODEL_REPOSITORY}/"), "base_model_name_or_path does not match"),
+        (_provenance(MODEL_REPOSITORY.upper()), "base_model_name_or_path does not match"),
+        (_provenance(revision="4" * 40), "revision does not match"),
+        (_provenance(revision=MODEL_REVISION.upper()), "revision does not match"),
+        (_provenance(revision="main"), "revision does not match"),
+        (_provenance(revision=None), "missing required revision"),
     ],
 )
 def test_evaluation_contract_binds_peft_adapter_to_sft_base(tmp_path, config, expected_error):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "adapter"
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "adapter")
     _write_adapter_config(output_dir, config)
     mismatched_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
-
-    with pytest.raises(ValueError, match=expected_error):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
-            base=base,
-            sft=mismatched_sft,
-        )
+    _assert_build_rejected(tmp_path, manifest_path, base, mismatched_sft, expected_error)
 
 
 def test_evaluation_contract_revalidates_peft_provenance(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "adapter")
     contract_path = tmp_path / "eval" / "contract.json"
-    build_evaluation_contract(
-        manifest_path=manifest_path,
-        contract_path=contract_path,
-        base=base,
-        sft=sft,
-    )
-    output_dir = tmp_path / "adapter"
-    _write_adapter_config(
-        output_dir,
-        {
-            "base_model_name_or_path": MODEL_REPOSITORY,
-            "revision": "4" * 40,
-        },
-    )
+    _build(tmp_path, manifest_path, base, sft)
+    _write_adapter_config(output_dir, _provenance(revision="4" * 40))
     artifact_index = _write_artifact_index(output_dir)
     _refresh_contract_artifact_digest(contract_path, artifact_index)
 
@@ -593,11 +554,7 @@ def test_evaluation_contract_revalidates_peft_provenance(tmp_path):
 
 @pytest.mark.parametrize("layout", ["single", "sharded"])
 def test_evaluation_contract_accepts_valid_merged_model_layouts(tmp_path, layout):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "merged"
-    output_dir.mkdir()
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged")
     _write_merged_config(output_dir)
     if layout == "single":
         _write_safetensors(output_dir / "model.safetensors")
@@ -609,28 +566,21 @@ def test_evaluation_contract_accepts_valid_merged_model_layouts(tmp_path, layout
             keys=("layer.0.weight", "layer.0.bias"),
         )
         _write_safetensors(output_dir / second, value=1, keys=("layer.1.weight",))
-        (output_dir / "model.safetensors.index.json").write_bytes(
-            canonical_json_bytes(
-                {
-                    "metadata": {"total_size": 2},
-                    "weight_map": {
-                        "layer.0.weight": first,
-                        "layer.0.bias": first,
-                        "layer.1.weight": second,
-                    },
-                }
-            )
-            + b"\n"
+        _write_shard_index(
+            output_dir,
+            {
+                "metadata": {"total_size": 2},
+                "weight_map": {
+                    "layer.0.weight": first,
+                    "layer.0.bias": first,
+                    "layer.1.weight": second,
+                },
+            },
         )
     merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
     contract_path = tmp_path / "eval" / "contract.json"
 
-    written = build_evaluation_contract(
-        manifest_path=manifest_path,
-        contract_path=contract_path,
-        base=base,
-        sft=merged_sft,
-    )
+    written = _build(tmp_path, manifest_path, base, merged_sft)
 
     assert validate_evaluation_contract(contract_path) == written
     assert written.sft.artifact is not None
@@ -638,204 +588,57 @@ def test_evaluation_contract_accepts_valid_merged_model_layouts(tmp_path, layout
 
 
 @pytest.mark.parametrize(
-    ("variant", "expected_error"),
+    ("variant", "error_type", "expected_error"),
     [
-        ("missing", "names tensors absent from shards"),
-        ("extra", "tensors absent from weight_map"),
-        ("duplicate", "tensor keys occur in multiple"),
-        ("misplaced", "assigns tensors to wrong shards"),
+        ("tensor-missing", ValueError, "names tensors absent from shards"),
+        ("tensor-extra", ValueError, "tensors absent from weight_map"),
+        ("tensor-duplicate", ValueError, "tensor keys occur in multiple"),
+        ("tensor-misplaced", ValueError, "assigns tensors to wrong shards"),
+        ("shard-bin", ValueError, "must reference safetensors shards only"),
+        ("shard-noncanonical", ValueError, "shard paths must be canonical"),
+        ("shard-unindexed", ValueError, "references unindexed shards"),
+        ("ambiguous", ValueError, "exactly one of model.safetensors"),
+        ("duplicate-map-key", ValueError, "invalid merged-model shard index"),
+        ("empty-map-missing", ValueError, "requires a non-empty weight_map"),
+        ("empty-map-list", ValueError, "requires a non-empty weight_map"),
+        ("non-string-shard", TypeError, "shard paths must be strings"),
+        ("missing-metadata", TypeError, "requires a metadata object"),
+        ("unreferenced-shard", ValueError, "shards absent from weight_map"),
+        ("provenance-missing", ValueError, "requires producer_provenance"),
+        ("provenance-repository", ValueError, "base_model_name_or_path does not match"),
+        ("provenance-revision", ValueError, "revision does not match"),
     ],
 )
-def test_evaluation_contract_requires_exact_merged_tensor_shard_map(
-    tmp_path, variant, expected_error
+def test_evaluation_contract_rejects_invalid_merged_model_layout(
+    tmp_path, variant, error_type, expected_error
 ):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "merged"
-    output_dir.mkdir()
-    _write_merged_config(output_dir)
-    first = "model-00001-of-00002.safetensors"
-    second = "model-00002-of-00002.safetensors"
-    if variant == "missing":
-        first_keys, second_keys = ("actual.a",), ("actual.b",)
-        weight_map = {"claimed.a": first, "actual.b": second}
-    elif variant == "extra":
-        first_keys, second_keys = ("mapped.a", "extra.a"), ("mapped.b",)
-        weight_map = {"mapped.a": first, "mapped.b": second}
-    elif variant == "duplicate":
-        first_keys, second_keys = ("shared", "a"), ("shared", "b")
-        weight_map = {"shared": first, "a": first, "b": second}
-    else:
-        first_keys, second_keys = ("a",), ("b",)
-        weight_map = {"a": second, "b": first}
-    _write_safetensors(output_dir / first, keys=first_keys)
-    _write_safetensors(output_dir / second, keys=second_keys)
-    (output_dir / "model.safetensors.index.json").write_bytes(
-        canonical_json_bytes({"metadata": {"total_size": 2}, "weight_map": weight_map}) + b"\n"
-    )
-    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged")
+    _write_invalid_merged_layout(output_dir, variant)
+    provenance = {
+        "provenance-missing": False,
+        "provenance-repository": _provenance("example/other-model"),
+        "provenance-revision": _provenance(revision="4" * 40),
+    }.get(variant)
+    merged_sft = _with_artifact(sft, output_dir, kind="merged_model", provenance=provenance)
+    _assert_build_rejected(tmp_path, manifest_path, base, merged_sft, expected_error, error_type)
 
-    with pytest.raises(ValueError, match=expected_error):
+
+def test_evaluation_contract_rejects_contract_inside_artifact_bundle(tmp_path):
+    manifest_path, _, base, sft = _case(tmp_path)
+    contract_path = tmp_path / "adapter" / "contract.json"
+
+    with pytest.raises(ValueError, match="cannot be written inside its artifact bundle"):
         build_evaluation_contract(
             manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
+            contract_path=contract_path,
             base=base,
-            sft=merged_sft,
+            sft=sft,
         )
-
-
-@pytest.mark.parametrize(
-    ("shard", "expected_error"),
-    [
-        ("model-00001-of-00001.bin", "must reference safetensors shards only"),
-        ("./model-00001-of-00001.safetensors", "shard paths must be canonical"),
-        ("model-00001-of-00001.safetensors", "references unindexed shards"),
-    ],
-)
-def test_evaluation_contract_rejects_invalid_merged_model_shard_reference(
-    tmp_path, shard, expected_error
-):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "merged"
-    output_dir.mkdir()
-    _write_merged_config(output_dir)
-    (output_dir / "model.safetensors.index.json").write_bytes(
-        canonical_json_bytes({"metadata": {"total_size": 1}, "weight_map": {"layer.0": shard}})
-        + b"\n"
-    )
-    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
-
-    with pytest.raises(ValueError, match=expected_error):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
-            base=base,
-            sft=merged_sft,
-        )
-
-
-def test_evaluation_contract_rejects_ambiguous_merged_model_weights(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "merged"
-    output_dir.mkdir()
-    _write_merged_config(output_dir)
-    _write_safetensors(output_dir / "model.safetensors")
-    (output_dir / "model.safetensors.index.json").write_bytes(
-        canonical_json_bytes(
-            {
-                "metadata": {"total_size": 1},
-                "weight_map": {"layer.0": "model-00001-of-00001.safetensors"},
-            }
-        )
-        + b"\n"
-    )
-    ambiguous_sft = _with_artifact(sft, output_dir, kind="merged_model")
-
-    with pytest.raises(ValueError, match="exactly one of model.safetensors"):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
-            base=base,
-            sft=ambiguous_sft,
-        )
-
-
-def test_evaluation_contract_rejects_duplicate_merged_weight_map_keys(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "merged"
-    output_dir.mkdir()
-    _write_merged_config(output_dir)
-    shard = "model-00001-of-00001.safetensors"
-    _write_safetensors(output_dir / shard)
-    (output_dir / "model.safetensors.index.json").write_text(
-        f'{{"metadata":{{}},"weight_map":{{"layer.0":"{shard}","layer.0":"{shard}"}}}}\n',
-        encoding="utf-8",
-    )
-    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
-
-    with pytest.raises(ValueError, match="invalid merged-model shard index"):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
-            base=base,
-            sft=merged_sft,
-        )
-
-
-@pytest.mark.parametrize(
-    ("payload", "error_type", "expected_error"),
-    [
-        ({}, ValueError, "requires a non-empty weight_map"),
-        ({"weight_map": []}, ValueError, "requires a non-empty weight_map"),
-        (
-            {"metadata": {}, "weight_map": {"layer.0": 7}},
-            TypeError,
-            "shard paths must be strings",
-        ),
-        (
-            {"weight_map": {"layer.0": "model-00001-of-00001.safetensors"}},
-            TypeError,
-            "requires a metadata object",
-        ),
-    ],
-)
-def test_evaluation_contract_rejects_invalid_merged_weight_map(
-    tmp_path, payload, error_type, expected_error
-):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "merged"
-    output_dir.mkdir()
-    _write_merged_config(output_dir)
-    (output_dir / "model.safetensors.index.json").write_bytes(canonical_json_bytes(payload) + b"\n")
-    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
-
-    with pytest.raises(error_type, match=expected_error):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
-            base=base,
-            sft=merged_sft,
-        )
-
-
-def test_evaluation_contract_rejects_unreferenced_merged_model_shard(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
-    output_dir = tmp_path / "merged"
-    output_dir.mkdir()
-    _write_merged_config(output_dir)
-    referenced = "model-00001-of-00001.safetensors"
-    _write_safetensors(output_dir / referenced)
-    _write_safetensors(output_dir / "model-00002-of-00002.safetensors", value=1)
-    (output_dir / "model.safetensors.index.json").write_bytes(
-        canonical_json_bytes({"metadata": {"total_size": 2}, "weight_map": {"layer.0": referenced}})
-        + b"\n"
-    )
-    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
-
-    with pytest.raises(ValueError, match="shards absent from weight_map"):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=tmp_path / "eval" / "contract.json",
-            base=base,
-            sft=merged_sft,
-        )
+    assert not contract_path.exists()
 
 
 def test_evaluation_contract_rejects_artifact_index_path_escape(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
+    manifest_path, _, base, sft = _case(tmp_path)
     assert sft.artifact is not None
     artifact_index = Path(sft.artifact.artifact_index_path)
     outside = tmp_path / "outside.safetensors"
@@ -866,29 +669,22 @@ def test_evaluation_contract_rejects_artifact_index_path_escape(tmp_path):
     )
     contract_path = tmp_path / "eval" / "contract.json"
 
-    with pytest.raises(ValueError, match="must stay relative"):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=contract_path,
-            base=base,
-            sft=escaped_sft,
-        )
+    _assert_build_rejected(tmp_path, manifest_path, base, escaped_sft, "must stay relative")
     assert not contract_path.exists()
 
 
 def test_evaluation_contract_revalidates_copied_arms_before_writing(tmp_path):
-    manifest_path, manifest = _frozen_manifest(tmp_path)
-    digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    base, sft = _arms(digest, tmp_path)
+    manifest_path, _, base, sft = _case(tmp_path)
     invalid_base = base.model_copy(update={"context_window": 0})
     invalid_sft = sft.model_copy(update={"context_window": 0})
     contract_path = tmp_path / "eval" / "contract.json"
 
-    with pytest.raises(ValidationError, match="context_window"):
-        build_evaluation_contract(
-            manifest_path=manifest_path,
-            contract_path=contract_path,
-            base=invalid_base,
-            sft=invalid_sft,
-        )
+    _assert_build_rejected(
+        tmp_path,
+        manifest_path,
+        invalid_base,
+        invalid_sft,
+        "context_window",
+        ValidationError,
+    )
     assert not contract_path.exists()

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 
 from agoge_forger.split_contract import (
+    SPLIT_NAMES,
     CanonicalIdentityPolicy,
     SplitMaterializationSpec,
     SplitPolicy,
@@ -16,6 +17,11 @@ from agoge_forger.split_contract import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, help="Versioned curated source JSONL")
+    parser.add_argument(
+        "--source-path",
+        required=True,
+        help="Canonical repository-relative path of the source at --source-revision",
+    )
     parser.add_argument("--output-dir", required=True, help="New immutable snapshot directory")
     parser.add_argument("--source-repository", required=True)
     parser.add_argument("--source-revision", required=True)
@@ -37,6 +43,7 @@ def main() -> None:
         source_repository=args.source_repository,
         source_revision=args.source_revision,
         dataset_version=args.dataset_version,
+        source_path=args.source_path,
         split_policy=SplitPolicy(
             seed=args.seed,
             salt=args.salt,
@@ -54,14 +61,12 @@ def main() -> None:
         ),
     )
     manifest = materialize_split(args.source, args.output_dir, spec)
+    print(f"source: {manifest.source.repository}@{manifest.source.revision}:{manifest.source.path}")
     print(f"wrote {args.output_dir}/split_manifest.json")
     print(f"wrote {args.output_dir}/split_report.md")
     print(
         "counts: "
-        + ", ".join(
-            f"{name}={manifest.splits[name].record_count}"
-            for name in ("train", "validation", "held_out")
-        )
+        + ", ".join(f"{name}={manifest.splits[name].record_count}" for name in SPLIT_NAMES)
     )
 
 

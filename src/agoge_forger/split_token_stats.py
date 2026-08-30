@@ -7,6 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ._token_provenance import (
+    SerializerBinding,
+    TokenizerBinding,
+    derive_serializer_provenance,
+    derive_tokenizer_provenance,
+    derive_tokenizer_sha256,
+)
 from .split_loaders import iter_materialized_records
 from .split_materialize import exclusive_write
 from .split_schema import (
@@ -25,9 +32,15 @@ from .split_validation import validate_split_manifest
 
 @dataclass(frozen=True)
 class TokenStatisticsDerivation:
-    tokenizer: TokenizerLike
-    serializer: Serializer
+    tokenizer: TokenizerBinding
+    serializer: SerializerBinding
     spec: TokenStatisticsSpec
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tokenizer, TokenizerBinding):
+            raise TypeError("tokenizer must be a TokenizerBinding")
+        if not isinstance(self.serializer, SerializerBinding):
+            raise TypeError("serializer must be a SerializerBinding")
 
 
 def write_token_statistics(
@@ -37,11 +50,12 @@ def write_token_statistics(
 ) -> TokenStatistics:
     """Write model-specific statistics without mutating canonical split identity."""
 
+    spec = _verified_spec(derivation)
     path = Path(manifest_path).expanduser().resolve(strict=True)
     manifest = validate_split_manifest(path)
-    spec = derivation.spec
     counter = _TokenCounter(derivation.tokenizer, derivation.serializer, spec.context_limit)
     split_stats = {split: counter.for_split(path, manifest, split) for split in SPLIT_NAMES}
+    spec = _verified_spec(derivation)
     statistics = TokenStatistics(
         split_manifest_sha256=sha256_file(path),
         source_split_sha256={split: manifest.splits[split].sha256 for split in SPLIT_NAMES},
@@ -53,6 +67,42 @@ def write_token_statistics(
         canonical_json_bytes(statistics.model_dump(mode="json")) + b"\n",
     )
     return statistics
+
+
+def _verified_spec(derivation: TokenStatisticsDerivation) -> TokenStatisticsSpec:
+    tokenizer_id, tokenizer_revision = derive_tokenizer_provenance(
+        derivation.tokenizer.implementation
+    )
+    serializer_id, serializer_version, serializer_sha256 = derive_serializer_provenance(
+        derivation.serializer.implementation
+    )
+    tokenizer_sha256 = derive_tokenizer_sha256(derivation.tokenizer.implementation)
+    bound_provenance = {
+        "tokenizer_id": tokenizer_id,
+        "tokenizer_revision": tokenizer_revision,
+        "tokenizer_sha256": tokenizer_sha256,
+        "serializer_id": serializer_id,
+        "serializer_version": serializer_version,
+        "serializer_sha256": serializer_sha256,
+    }
+    binding_provenance = {
+        "tokenizer_id": derivation.tokenizer.tokenizer_id,
+        "tokenizer_revision": derivation.tokenizer.tokenizer_revision,
+        "tokenizer_sha256": derivation.tokenizer.tokenizer_sha256,
+        "serializer_id": derivation.serializer.serializer_id,
+        "serializer_version": derivation.serializer.serializer_version,
+        "serializer_sha256": derivation.serializer.serializer_sha256,
+    }
+    for provenance_field, bound_value in bound_provenance.items():
+        if binding_provenance[provenance_field] != bound_value:
+            raise ValueError(f"{provenance_field} changed after the callable provenance was bound")
+        declared_value = getattr(derivation.spec, provenance_field)
+        if declared_value != bound_value:
+            raise ValueError(
+                f"{provenance_field} does not match the bound callable provenance: "
+                f"declared {declared_value!r}, bound {bound_value!r}"
+            )
+    return derivation.spec.model_copy(update=bound_provenance)
 
 
 @dataclass(frozen=True)

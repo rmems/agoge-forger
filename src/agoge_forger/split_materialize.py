@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ from .split_schema import (
     canonical_json_bytes,
     sha256_bytes,
     sha256_file,
+    validate_repository_relative_path,
 )
 
 
@@ -30,6 +31,26 @@ class SourceRecord:
     row: dict[str, Any]
     raw_line: bytes
     member: SplitMember
+
+
+@dataclass
+class TrainingRepresentationTracker:
+    """Track one model-independent training representation across streams."""
+
+    first: tuple[str, str] | None = None
+
+    def observe(self, row: Mapping[str, Any], coordinate: str) -> None:
+        representation = _training_representation(row, coordinate)
+        if self.first is None:
+            self.first = (representation, coordinate)
+            return
+        if representation != self.first[0]:
+            raise ValueError(
+                "source mixes model-dependent training representations: "
+                f"{self.first[0]} at {self.first[1]} and "
+                f"{representation} at {coordinate}; freeze one representation "
+                "per split snapshot"
+            )
 
 
 @dataclass(frozen=True)
@@ -65,14 +86,24 @@ class _UnionFind:
             self.parent[right_root] = left_root
 
 
-def read_source_records(source_path: Path, identity: CanonicalIdentityPolicy) -> list[SourceRecord]:
-    records: list[SourceRecord] = []
+def iter_source_records(
+    source_path: Path,
+    identity: CanonicalIdentityPolicy,
+    *,
+    source_coordinate_path: str,
+    representation_tracker: TrainingRepresentationTracker | None = None,
+) -> Iterator[SourceRecord]:
+    """Yield source records while enforcing complete-source invariants."""
+
+    coordinate_path = validate_repository_relative_path(source_coordinate_path)
     seen_ids: dict[str, str] = {}
+    tracker = representation_tracker or TrainingRepresentationTracker()
+    record_count = 0
     with source_path.open("rb") as handle:
         for line_number, raw_line in enumerate(handle, 1):
             if not raw_line.strip():
                 continue
-            coordinate = f"{source_path.name}:{line_number}"
+            coordinate = f"{coordinate_path}:{line_number}"
             row = _decode_source_row(raw_line, coordinate)
             record = _build_source_record(
                 _SourceLine(
@@ -84,10 +115,42 @@ def read_source_records(source_path: Path, identity: CanonicalIdentityPolicy) ->
                 identity,
             )
             _reject_duplicate_identity(record.member, seen_ids)
-            records.append(record)
-    if not records:
+            if identity.content_hash_policy == "normalized-training-payload-v1":
+                tracker.observe(row, coordinate)
+            record_count += 1
+            yield record
+    if record_count == 0:
         raise ValueError(f"source contains no JSONL records: {source_path}")
-    return records
+
+
+def read_source_records(
+    source_path: Path,
+    identity: CanonicalIdentityPolicy,
+    *,
+    source_coordinate_path: str,
+) -> list[SourceRecord]:
+    """Materialize :func:`iter_source_records` for assignment and validation."""
+
+    return list(
+        iter_source_records(
+            source_path,
+            identity,
+            source_coordinate_path=source_coordinate_path,
+        )
+    )
+
+
+def _training_representation(row: Mapping[str, Any], coordinate: str) -> str:
+    representations = tuple(field for field in ("text", "messages", "instruction") if field in row)
+    if len(representations) > 1:
+        rendered = ", ".join(representations)
+        raise ValueError(
+            f"{coordinate}: source row declares multiple training representations: {rendered}"
+        )
+    if representations:
+        return representations[0]
+    # Keep normalize_row's existing missing-payload diagnostic as the canonical error.
+    return "unknown"
 
 
 def _decode_source_row(raw_line: bytes, coordinate: str) -> dict[str, Any]:
@@ -266,57 +329,75 @@ def _sort_and_require_nonempty(
 def leakage_audit(
     assignments: Mapping[SplitName, Sequence[int]], records: Sequence[SourceRecord]
 ) -> LeakageAudit:
-    counts = {
-        "exact_content_cross_split": _cross_split_count(
-            assignments, records, lambda record: record.member.content_sha256
-        ),
-        "canonical_id_cross_split": _cross_split_count(
-            assignments, records, lambda record: record.member.canonical_id
-        ),
-        "source_coordinate_cross_split": _cross_split_count(
-            assignments, records, lambda record: record.member.source_coordinate
-        ),
-        "lineage_cross_split": _cross_split_count(
-            assignments, records, lambda record: record.member.lineage_id
-        ),
-        "declared_group_cross_split": _cross_split_count(
-            assignments, records, lambda record: record.member.group_id
-        ),
-    }
-    if any(counts.values()):
-        raise ValueError(f"deterministic leakage audit failed: {counts}")
-    return LeakageAudit(
-        exact_content_cross_split=counts["exact_content_cross_split"],
-        canonical_id_cross_split=counts["canonical_id_cross_split"],
-        source_coordinate_cross_split=counts["source_coordinate_cross_split"],
-        lineage_cross_split=counts["lineage_cross_split"],
-        declared_group_cross_split=counts["declared_group_cross_split"],
-        deterministic_guarantees=(
-            "canonical JSON content hashes do not cross splits",
-            "canonical IDs do not cross splits",
-            "source coordinates do not cross splits",
-            "lineage IDs do not cross splits",
-            "declared group IDs do not cross splits",
-        ),
-    )
-
-
-def _cross_split_count(
-    assignments: Mapping[SplitName, Sequence[int]],
-    records: Sequence[SourceRecord],
-    key: Callable[[SourceRecord], str | None],
-) -> int:
-    owners: dict[str, SplitName] = {}
-    collisions: set[str] = set()
+    builder = LeakageAuditBuilder()
     for split, indexes in assignments.items():
         for index in indexes:
-            value = key(records[index])
+            builder.observe(split, records[index].member)
+    return builder.result()
+
+
+@dataclass
+class LeakageAuditBuilder:
+    """Incrementally compute the canonical deterministic leakage audit."""
+
+    owners: dict[str, dict[str, SplitName]] = field(
+        default_factory=lambda: {
+            "content": {},
+            "canonical": {},
+            "coordinate": {},
+            "lineage": {},
+            "group": {},
+        }
+    )
+    collisions: dict[str, set[str]] = field(
+        default_factory=lambda: {
+            "content": set(),
+            "canonical": set(),
+            "coordinate": set(),
+            "lineage": set(),
+            "group": set(),
+        }
+    )
+
+    def observe(self, split: SplitName, member: SplitMember) -> None:
+        values = {
+            "content": member.content_sha256,
+            "canonical": member.canonical_id,
+            "coordinate": member.source_coordinate,
+            "lineage": member.lineage_id,
+            "group": member.group_id,
+        }
+        for kind, value in values.items():
             if value is None:
                 continue
-            previous = owners.setdefault(value, split)
+            previous = self.owners[kind].setdefault(value, split)
             if previous != split:
-                collisions.add(value)
-    return len(collisions)
+                self.collisions[kind].add(value)
+
+    def result(self) -> LeakageAudit:
+        counts = {
+            "exact_content_cross_split": len(self.collisions["content"]),
+            "canonical_id_cross_split": len(self.collisions["canonical"]),
+            "source_coordinate_cross_split": len(self.collisions["coordinate"]),
+            "lineage_cross_split": len(self.collisions["lineage"]),
+            "declared_group_cross_split": len(self.collisions["group"]),
+        }
+        if any(counts.values()):
+            raise ValueError(f"deterministic leakage audit failed: {counts}")
+        return LeakageAudit(
+            exact_content_cross_split=counts["exact_content_cross_split"],
+            canonical_id_cross_split=counts["canonical_id_cross_split"],
+            source_coordinate_cross_split=counts["source_coordinate_cross_split"],
+            lineage_cross_split=counts["lineage_cross_split"],
+            declared_group_cross_split=counts["declared_group_cross_split"],
+            deterministic_guarantees=(
+                "canonical JSON content hashes do not cross splits",
+                "canonical IDs do not cross splits",
+                "source coordinates do not cross splits",
+                "lineage IDs do not cross splits",
+                "declared group IDs do not cross splits",
+            ),
+        )
 
 
 def materialize_split(
@@ -334,7 +415,11 @@ def materialize_split(
             "exact-content hashing"
         )
     _validate_materialization_paths(source, destination)
-    records = read_source_records(source, spec.canonical_identity)
+    records = read_source_records(
+        source,
+        spec.canonical_identity,
+        source_coordinate_path=spec.source_path,
+    )
     assignments = assign_records(records, spec)
     artifacts, payloads = _build_artifacts(assignments, records)
     manifest = _build_manifest(
@@ -382,7 +467,7 @@ def _source_file(
         repository=spec.source_repository,
         revision=spec.source_revision,
         dataset_version=spec.dataset_version,
-        path=source.name,
+        path=spec.source_path,
         sha256=sha256_file(source),
         record_count=record_count,
     )

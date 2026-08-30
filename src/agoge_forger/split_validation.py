@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-from collections.abc import Sequence
+import os
+import stat
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
-from .split_materialize import SourceRecord, assign_records, leakage_audit, read_source_records
+from .split_materialize import (
+    LeakageAuditBuilder,
+    SourceRecord,
+    TrainingRepresentationTracker,
+    assign_records,
+    iter_source_records,
+    read_source_records,
+)
 from .split_schema import (
     SPLIT_NAMES,
     SplitArtifact,
     SplitManifest,
     SplitMaterializationSpec,
-    SplitMember,
     SplitName,
     sha256_file,
 )
@@ -36,11 +48,18 @@ def validate_split_manifest(
     manifest = load_split_manifest(path)
     if source_path is not None:
         _validate_source(manifest, Path(source_path).expanduser().resolve(strict=True))
-    observed = {
-        split: _validate_artifact(path, split, artifact, manifest)
-        for split, artifact in manifest.splits.items()
-    }
-    audit = _audit_observed(observed)
+    audit_builder = LeakageAuditBuilder()
+    representation_tracker = TrainingRepresentationTracker()
+    for split, artifact in manifest.splits.items():
+        _validate_artifact(
+            path,
+            split,
+            artifact,
+            manifest,
+            audit_builder,
+            representation_tracker,
+        )
+    audit = audit_builder.result()
     _require_equal(
         audit,
         manifest.leakage_audit,
@@ -56,7 +75,11 @@ def _validate_source(manifest: SplitManifest, source: Path) -> None:
         manifest.source.sha256,
         f"source SHA-256 mismatch: expected {manifest.source.sha256}, found {actual_source_sha}",
     )
-    records = read_source_records(source, manifest.canonical_identity)
+    records = read_source_records(
+        source,
+        manifest.canonical_identity,
+        source_coordinate_path=manifest.source.path,
+    )
     _require_expected_ownership(manifest, records)
     source_members = {record.member.canonical_id: record.member for record in records}
     manifest_members = {
@@ -76,6 +99,7 @@ def _require_expected_ownership(manifest: SplitManifest, records: list[SourceRec
         source_repository=manifest.source.repository,
         source_revision=manifest.source.revision,
         dataset_version=manifest.source.dataset_version,
+        source_path=manifest.source.path,
         split_policy=manifest.split_policy,
         canonical_identity=manifest.canonical_identity,
     )
@@ -100,60 +124,153 @@ def _validate_artifact(
     split: SplitName,
     artifact: SplitArtifact,
     manifest: SplitManifest,
-) -> list[SourceRecord]:
-    artifact_path = resolve_split_path(manifest_path, artifact)
-    _require_artifact_digest(split, artifact, artifact_path)
-    records = read_source_records(artifact_path, manifest.canonical_identity)
-    _require_equal(len(records), artifact.record_count, f"{split} record count mismatch")
-    actual_members = _materialized_members(records, artifact.members)
-    _require_equal(
-        actual_members,
-        list(artifact.members),
-        f"{split} membership metadata does not match materialized records",
-    )
-    return [
-        SourceRecord(row=record.row, raw_line=record.raw_line, member=artifact.members[index])
-        for index, record in enumerate(records)
-    ]
-
-
-def _require_artifact_digest(split: SplitName, artifact: SplitArtifact, path: Path) -> None:
-    actual_digest = sha256_file(path)
-    _require_equal(
-        actual_digest,
-        artifact.sha256,
-        f"{split} digest mismatch: expected {artifact.sha256}, found {actual_digest}",
-    )
-
-
-def _materialized_members(
-    records: Sequence[SourceRecord], expected: Sequence[SplitMember]
-) -> list[SplitMember]:
-    return [
-        record.member.model_copy(
-            update={
-                "source_coordinate": expected[index].source_coordinate,
-                "raw_line_sha256": expected[index].raw_line_sha256,
-            }
+    audit: LeakageAuditBuilder,
+    representation_tracker: TrainingRepresentationTracker,
+) -> None:
+    with verified_split_snapshot(manifest_path, split, artifact) as snapshot_path:
+        count = 0
+        membership_mismatch = False
+        records = iter_source_records(
+            snapshot_path,
+            manifest.canonical_identity,
+            source_coordinate_path=artifact.path,
+            representation_tracker=representation_tracker,
         )
-        for index, record in enumerate(records)
-    ]
+        for count, record in enumerate(records, 1):
+            if count > artifact.record_count:
+                continue
+            expected = artifact.members[count - 1]
+            actual = record.member.model_copy(
+                update={
+                    "source_coordinate": expected.source_coordinate,
+                    "raw_line_sha256": expected.raw_line_sha256,
+                }
+            )
+            if actual != expected:
+                membership_mismatch = True
+            else:
+                audit.observe(split, actual)
+    _require_equal(count, artifact.record_count, f"{split} record count mismatch")
+    if membership_mismatch:
+        raise ValueError(f"{split} membership metadata does not match materialized records")
 
 
-def _audit_observed(observed: dict[SplitName, list[SourceRecord]]):
-    flattened: list[SourceRecord] = []
-    remapped: dict[SplitName, list[int]] = {name: [] for name in SPLIT_NAMES}
-    for split in SPLIT_NAMES:
-        for record in observed[split]:
-            remapped[split].append(len(flattened))
-            flattened.append(record)
-    return leakage_audit(remapped, flattened)
+@contextmanager
+def verified_split_snapshot(
+    manifest_path: Path,
+    split: SplitName,
+    artifact: SplitArtifact,
+) -> Iterator[Path]:
+    """Yield a digest-verified snapshot while pinning the declared artifact path."""
+
+    path = resolve_split_path(manifest_path, artifact)
+    try:
+        descriptor = _open_split_descriptor(manifest_path.parent.resolve(), artifact.path)
+    except OSError as exc:
+        raise ValueError(
+            f"{split} artifact could not be opened without following a symlink"
+        ) from exc
+    try:
+        initial = _artifact_identity(os.fstat(descriptor), split)
+        _require_stable_artifact(path, descriptor, initial, split)
+        snapshot_descriptor, snapshot_name = tempfile.mkstemp(
+            prefix=f"agoge-{split}-snapshot-", suffix=".jsonl"
+        )
+        snapshot_path = Path(snapshot_name)
+        try:
+            digest = _copy_artifact_snapshot(descriptor, snapshot_descriptor)
+            _require_stable_artifact(path, descriptor, initial, split)
+            _require_equal(
+                digest,
+                artifact.sha256,
+                f"{split} digest mismatch: expected {artifact.sha256}, found {digest}",
+            )
+            try:
+                yield snapshot_path
+            finally:
+                _require_stable_artifact(path, descriptor, initial, split)
+        finally:
+            snapshot_path.unlink(missing_ok=True)
+    finally:
+        os.close(descriptor)
+
+
+def _open_split_descriptor(root: Path, relative_path: str) -> int:
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | no_follow | close_on_exec
+    file_flags = os.O_RDONLY | no_follow | close_on_exec
+    directory_descriptor = os.open(root, directory_flags)
+    try:
+        components = relative_path.split("/")
+        for component in components[:-1]:
+            next_descriptor = os.open(
+                component,
+                directory_flags,
+                dir_fd=directory_descriptor,
+            )
+            os.close(directory_descriptor)
+            directory_descriptor = next_descriptor
+        return os.open(components[-1], file_flags, dir_fd=directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
+@dataclass(frozen=True)
+class _ArtifactIdentity:
+    device: int
+    inode: int
+    mode: int
+    size: int
+    modified_ns: int
+    changed_ns: int
+
+
+def _artifact_identity(value: os.stat_result, split: SplitName) -> _ArtifactIdentity:
+    if not stat.S_ISREG(value.st_mode):
+        raise ValueError(f"{split} artifact must be a regular file")
+    return _ArtifactIdentity(
+        device=value.st_dev,
+        inode=value.st_ino,
+        mode=value.st_mode,
+        size=value.st_size,
+        modified_ns=value.st_mtime_ns,
+        changed_ns=value.st_ctime_ns,
+    )
+
+
+def _require_stable_artifact(
+    path: Path,
+    descriptor: int,
+    initial: _ArtifactIdentity,
+    split: SplitName,
+) -> None:
+    current_descriptor = _artifact_identity(os.fstat(descriptor), split)
+    try:
+        current_path = _artifact_identity(os.stat(path, follow_symlinks=False), split)
+    except OSError as exc:
+        raise ValueError(f"{split} artifact changed while it was being validated") from exc
+    if current_descriptor != initial or current_path != initial:
+        raise ValueError(f"{split} artifact changed while it was being validated")
+
+
+def _copy_artifact_snapshot(descriptor: int, snapshot_descriptor: int) -> str:
+    digest = hashlib.sha256()
+    with (
+        os.fdopen(os.dup(descriptor), "rb") as source,
+        os.fdopen(snapshot_descriptor, "wb") as target,
+    ):
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+            target.write(chunk)
+    return digest.hexdigest()
 
 
 def resolve_split_path(manifest_path: Path, artifact: SplitArtifact) -> Path:
     root = manifest_path.parent.resolve()
-    candidate = (root / artifact.path).resolve(strict=True)
-    if candidate != root and root not in candidate.parents:
+    candidate = root / artifact.path
+    resolved = candidate.resolve(strict=True)
+    if resolved != root and root not in resolved.parents:
         raise ValueError(f"split artifact escapes manifest directory: {artifact.path}")
     return candidate
 

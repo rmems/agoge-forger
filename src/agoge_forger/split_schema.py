@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SPLIT_MANIFEST_VERSION: Literal["agoge.split-manifest.v1"] = "agoge.split-manifest.v1"
 SPLIT_ALGORITHM_VERSION: Literal["sha256-atomic-bucket-v1"] = "sha256-atomic-bucket-v1"
@@ -32,6 +32,11 @@ class SourceFile(FrozenModel):
     path: str = Field(min_length=1)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     record_count: int = Field(ge=1)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return validate_repository_relative_path(value)
 
 
 class CanonicalIdentityPolicy(FrozenModel):
@@ -72,8 +77,14 @@ class SplitMaterializationSpec(FrozenModel):
     source_repository: str = Field(min_length=1)
     source_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     dataset_version: str = Field(min_length=1)
+    source_path: str = Field(min_length=1)
     split_policy: SplitPolicy
     canonical_identity: CanonicalIdentityPolicy = Field(default_factory=_new_identity_policy)
+
+    @field_validator("source_path")
+    @classmethod
+    def validate_source_path(cls, value: str) -> str:
+        return validate_repository_relative_path(value)
 
 
 class SplitMember(FrozenModel):
@@ -91,6 +102,11 @@ class SplitArtifact(FrozenModel):
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     record_count: int = Field(ge=1)
     members: tuple[SplitMember, ...]
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return validate_repository_relative_path(value)
 
     @model_validator(mode="after")
     def count_members(self) -> SplitArtifact:
@@ -126,6 +142,7 @@ class TokenStatisticsPolicy(FrozenModel):
         "model_revision",
         "tokenizer_id",
         "tokenizer_revision",
+        "tokenizer_sha256",
         "serializer_id",
         "serializer_version",
         "serializer_sha256",
@@ -183,6 +200,7 @@ class TokenStatisticsSpec(FrozenModel):
     model_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     tokenizer_id: str = Field(min_length=1)
     tokenizer_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
+    tokenizer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     serializer_id: str = Field(min_length=1)
     serializer_version: str = Field(min_length=1)
     serializer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -197,6 +215,7 @@ class TokenStatistics(FrozenModel):
     model_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     tokenizer_id: str = Field(min_length=1)
     tokenizer_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
+    tokenizer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     serializer_id: str = Field(min_length=1)
     serializer_version: str = Field(min_length=1)
     serializer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -222,6 +241,27 @@ def canonical_json_bytes(value: Any) -> bytes:
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
+
+
+def validate_repository_relative_path(value: str) -> str:
+    """Require one canonical, portable path confined to a repository root."""
+
+    if value != value.strip() or any(ord(character) < 32 for character in value):
+        raise ValueError(
+            "repository-relative path must not contain surrounding whitespace or control characters"
+        )
+    if "\\" in value:
+        raise ValueError("repository-relative path must use POSIX '/' separators")
+    posix_path = PurePosixPath(value)
+    windows_path = PureWindowsPath(value)
+    if posix_path.is_absolute() or windows_path.is_absolute() or windows_path.drive:
+        raise ValueError("repository-relative path must not be absolute or use a drive prefix")
+    if ".." in posix_path.parts:
+        raise ValueError("repository-relative path must not escape the repository root")
+    canonical = posix_path.as_posix()
+    if canonical in {"", "."} or canonical != value:
+        raise ValueError("repository-relative path must be a canonical POSIX path")
+    return value
 
 
 def sha256_bytes(value: bytes) -> str:

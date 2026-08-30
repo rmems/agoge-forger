@@ -8,8 +8,10 @@ from pydantic import ValidationError
 
 from agoge_forger.split_contract import (
     SPLIT_NAMES,
+    SerializerBinding,
     SplitMaterializationSpec,
     SplitPolicy,
+    TokenizerBinding,
     TokenStatisticsDerivation,
     TokenStatisticsSpec,
     canonical_json_bytes,
@@ -40,6 +42,7 @@ def _materialize(source: Path, output: Path):
         source_repository="rmems/synthetic-factory",
         source_revision="0123456789abcdef0123456789abcdef01234567",
         dataset_version="curated-sft-v1",
+        source_path="data/curated.jsonl",
         split_policy=SplitPolicy(
             seed=20260830,
             salt="agoge-issue-99-v1",
@@ -60,6 +63,8 @@ def test_one_command_materializes_repeatable_three_way_split(tmp_path):
         "scripts/freeze_split.py",
         "--source",
         str(source),
+        "--source-path",
+        "data/curated.jsonl",
         "--output-dir",
         str(first),
         "--source-repository",
@@ -220,7 +225,7 @@ def test_ancillary_metadata_cannot_split_identical_training_content(tmp_path):
     assert first_split == second_split
 
 
-def test_equivalent_supported_formats_share_training_content_identity(tmp_path):
+def test_mixed_training_representations_fail_closed(tmp_path):
     source = tmp_path / "curated.jsonl"
     output = tmp_path / "frozen"
     _write_source(source)
@@ -253,14 +258,9 @@ def test_equivalent_supported_formats_share_training_content_identity(tmp_path):
     )
     source.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in rows))
 
-    manifest = _materialize(source, output)
-    members = {
-        member.canonical_id: (split, member.content_sha256)
-        for split, artifact in manifest.splits.items()
-        for member in artifact.members
-    }
-    for left, right in ((rows[0], rows[1]), (rows[2], rows[3])):
-        assert members[left["canonical_id"]] == members[right["canonical_id"]]
+    with pytest.raises(ValueError, match="mixes model-dependent training representations"):
+        _materialize(source, output)
+    assert not output.exists()
 
 
 def test_v1_manifest_omitting_legacy_content_policy_keeps_legacy_semantics(tmp_path):
@@ -316,13 +316,35 @@ def test_lineage_and_declared_group_membership_remain_atomic(tmp_path):
 
 
 class CharacterTokenizer:
+    name_or_path = "fake/character-tokenizer"
+    _commit_hash = "b" * 40
+
     def __call__(self, text: str):
         return {"input_ids": list(text.encode("utf-8"))}
 
 
 class WordPieceTokenizer:
+    name_or_path = "fake/word-piece-tokenizer"
+    _commit_hash = "d" * 40
+
     def __call__(self, text: str):
         return [piece for word in text.split() for piece in (word[:2], word[2:]) if piece]
+
+
+def plain_text_serializer(row):
+    return str(row["text"])
+
+
+plain_text_serializer.serializer_id = "plain-text"
+plain_text_serializer.serializer_version = "1"
+
+
+def tagged_uppercase_serializer(row):
+    return f"<instruction>\n{row['text'].upper()}\n</instruction>"
+
+
+tagged_uppercase_serializer.serializer_id = "tagged-uppercase"
+tagged_uppercase_serializer.serializer_version = "9"
 
 
 def test_materially_distinct_tokenizer_and_serializer_stats_do_not_change_splits(tmp_path):
@@ -333,39 +355,45 @@ def test_materially_distinct_tokenizer_and_serializer_stats_do_not_change_splits
     manifest_path = output / "split_manifest.json"
     manifest_before = manifest_path.read_bytes()
     split_digests = {name: manifest.splits[name].sha256 for name in SPLIT_NAMES}
+    character_tokenizer = TokenizerBinding(implementation=CharacterTokenizer())
+    plain_serializer = SerializerBinding(implementation=plain_text_serializer)
 
     character_stats = write_token_statistics(
         manifest_path,
         output / "character-token-stats.json",
         TokenStatisticsDerivation(
-            tokenizer=CharacterTokenizer(),
-            serializer=lambda row: str(row["text"]),
+            tokenizer=character_tokenizer,
+            serializer=plain_serializer,
             spec=TokenStatisticsSpec(
                 model_id="fake/model-family-a",
                 model_revision="a" * 40,
-                tokenizer_id="fake/character-tokenizer",
-                tokenizer_revision="b" * 40,
-                serializer_id="plain-text",
-                serializer_version="1",
-                serializer_sha256="a" * 64,
+                tokenizer_id=character_tokenizer.tokenizer_id,
+                tokenizer_revision=character_tokenizer.tokenizer_revision,
+                tokenizer_sha256=character_tokenizer.tokenizer_sha256,
+                serializer_id=plain_serializer.serializer_id,
+                serializer_version=plain_serializer.serializer_version,
+                serializer_sha256=plain_serializer.serializer_sha256,
                 context_limit=64,
             ),
         ),
     )
+    word_tokenizer = TokenizerBinding(implementation=WordPieceTokenizer())
+    tagged_serializer = SerializerBinding(implementation=tagged_uppercase_serializer)
     word_stats = write_token_statistics(
         manifest_path,
         output / "word-token-stats.json",
         TokenStatisticsDerivation(
-            tokenizer=WordPieceTokenizer(),
-            serializer=lambda row: f"<instruction>\n{row['text'].upper()}\n</instruction>",
+            tokenizer=word_tokenizer,
+            serializer=tagged_serializer,
             spec=TokenStatisticsSpec(
                 model_id="fake/model-family-b",
                 model_revision="c" * 40,
-                tokenizer_id="fake/word-piece-tokenizer",
-                tokenizer_revision="d" * 40,
-                serializer_id="tagged-uppercase",
-                serializer_version="9",
-                serializer_sha256="b" * 64,
+                tokenizer_id=word_tokenizer.tokenizer_id,
+                tokenizer_revision=word_tokenizer.tokenizer_revision,
+                tokenizer_sha256=word_tokenizer.tokenizer_sha256,
+                serializer_id=tagged_serializer.serializer_id,
+                serializer_version=tagged_serializer.serializer_version,
+                serializer_sha256=tagged_serializer.serializer_sha256,
                 context_limit=16,
             ),
         ),
@@ -376,6 +404,9 @@ def test_materially_distinct_tokenizer_and_serializer_stats_do_not_change_splits
     assert manifest_path.read_bytes() == manifest_before
     assert character_stats.splits["train"].total_tokens != word_stats.splits["train"].total_tokens
     assert character_stats.tokenizer_revision != word_stats.tokenizer_revision
+    assert character_stats.tokenizer_sha256 == character_tokenizer.tokenizer_sha256
+    assert word_stats.tokenizer_sha256 == word_tokenizer.tokenizer_sha256
+    assert character_stats.tokenizer_sha256 != word_stats.tokenizer_sha256
     assert character_stats.model_id != word_stats.model_id
     assert character_stats.serializer_sha256 != word_stats.serializer_sha256
 
@@ -390,6 +421,7 @@ def test_token_statistics_requires_immutable_revisions(field, floating_revision)
         "model_revision": "a" * 40,
         "tokenizer_id": "fake/tokenizer",
         "tokenizer_revision": "b" * 40,
+        "tokenizer_sha256": "d" * 64,
         "serializer_id": "plain-text",
         "serializer_version": "1",
         "serializer_sha256": "c" * 64,

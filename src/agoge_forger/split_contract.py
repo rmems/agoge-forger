@@ -5,6 +5,7 @@ implementation is separated by responsibility so materialization, validation,
 and derivative token statistics can evolve without duplicating that schema.
 """
 
+from ._token_provenance import SerializerBinding, TokenizerBinding
 from .split_loaders import iter_frozen_records, load_frozen_dataset
 from .split_materialize import materialize_split
 from .split_schema import (
@@ -38,6 +39,7 @@ __all__ = [
     "TOKEN_STATS_VERSION",
     "CanonicalIdentityPolicy",
     "LeakageAudit",
+    "SerializerBinding",
     "SourceFile",
     "SplitArtifact",
     "SplitManifest",
@@ -49,6 +51,7 @@ __all__ = [
     "TokenStatistics",
     "TokenStatisticsDerivation",
     "TokenStatisticsSpec",
+    "TokenizerBinding",
     "canonical_json_bytes",
     "iter_frozen_records",
     "load_frozen_dataset",

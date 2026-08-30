@@ -11,13 +11,17 @@ from datasets import Dataset  # type: ignore[attr-defined]
 
 from .datasets import normalize_row
 from .split_schema import SplitManifest, SplitName
-from .split_validation import resolve_split_path, validate_split_manifest
+from .split_validation import validate_split_manifest, verified_split_snapshot
 
 
 def iter_materialized_records(
     path: Path, manifest: SplitManifest, split: SplitName
 ) -> Iterator[dict[str, Any]]:
-    artifact_path = resolve_split_path(path, manifest.splits[split])
+    with verified_split_snapshot(path, split, manifest.splits[split]) as artifact_path:
+        yield from _iter_snapshot_records(artifact_path, split)
+
+
+def _iter_snapshot_records(artifact_path: Path, split: SplitName) -> Iterator[dict[str, Any]]:
     with artifact_path.open("r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
