@@ -267,13 +267,26 @@ def _require_portable_path_text(value: str) -> None:
 
 
 def _require_relative_path(posix_path: PurePosixPath, windows_path: PureWindowsPath) -> None:
+    _require_posix_relative_path(posix_path)
+    _require_windows_relative_path(windows_path)
+    _require_no_parent_traversal(posix_path)
+
+
+def _require_posix_relative_path(posix_path: PurePosixPath) -> None:
     absolute_error = "repository-relative path must not be absolute or use a drive prefix"
     if posix_path.is_absolute():
         raise ValueError(absolute_error)
+
+
+def _require_windows_relative_path(windows_path: PureWindowsPath) -> None:
+    absolute_error = "repository-relative path must not be absolute or use a drive prefix"
     if windows_path.is_absolute():
         raise ValueError(absolute_error)
     if windows_path.drive:
         raise ValueError(absolute_error)
+
+
+def _require_no_parent_traversal(posix_path: PurePosixPath) -> None:
     if ".." in posix_path.parts:
         raise ValueError("repository-relative path must not escape the repository root")
 
