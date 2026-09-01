@@ -8,7 +8,7 @@ from collections.abc import Collection
 from typing import Any
 
 from ._artifact_schema import _ADAPTER_WEIGHTS_PATH, ArtifactValidationContext, IndexedArtifacts
-from ._tensor_schema import read_verified_tensor_schema
+from ._tensor_schema import read_verified_tensor_schema, require_matching_tensor_schema
 
 
 def require_adapter_tensor_schema(
@@ -18,17 +18,11 @@ def require_adapter_tensor_schema(
 ) -> None:
     actual = read_verified_tensor_schema(indexed, {_ADAPTER_WEIGHTS_PATH})
     expected = expected_adapter_tensor_schema(adapter_config, context)
-    missing = sorted(expected.keys() - actual.keys())
-    unexpected = sorted(actual.keys() - expected.keys())
-    wrong_shapes = sorted(
-        key for key in expected.keys() & actual.keys() if expected[key] != actual[key]
+    require_matching_tensor_schema(
+        actual,
+        expected,
+        label="PEFT adapter tensor schema does not match adapter_config.json and base model",
     )
-    if any((missing, unexpected, wrong_shapes)):
-        raise ValueError(
-            "PEFT adapter tensor schema does not match adapter_config.json and base model: "
-            f"missing={missing[:5]}, unexpected={unexpected[:5]}, "
-            f"wrong_shapes={wrong_shapes[:5]}"
-        )
 
 
 def expected_adapter_tensor_schema(

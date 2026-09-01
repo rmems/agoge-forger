@@ -11,6 +11,24 @@ from safetensors import SafetensorError, safe_open
 from ._artifact_schema import ArtifactIndexEntry, IndexedArtifacts
 
 
+def require_matching_tensor_schema(
+    actual: dict[str, tuple[int, ...]],
+    expected: dict[str, tuple[int, ...]],
+    *,
+    label: str,
+) -> None:
+    missing = sorted(expected.keys() - actual.keys())
+    unexpected = sorted(actual.keys() - expected.keys())
+    wrong_shapes = sorted(
+        key for key in expected.keys() & actual.keys() if expected[key] != actual[key]
+    )
+    if any((missing, unexpected, wrong_shapes)):
+        raise ValueError(
+            f"{label}: missing={missing[:5]}, unexpected={unexpected[:5]}, "
+            f"wrong_shapes={wrong_shapes[:5]}"
+        )
+
+
 def read_verified_tensor_schema(
     indexed: IndexedArtifacts,
     weights: set[PurePosixPath],
