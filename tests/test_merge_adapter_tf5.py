@@ -60,17 +60,9 @@ def test_merge_adapter_rejects_save_safetensors_false():
         )
 
 
-@pytest.mark.parametrize("populated", [False, True])
-def test_merge_adapter_rejects_existing_output_before_model_loading(
-    tmp_path, monkeypatch, populated
-):
+def _assert_existing_merge_output_rejected(tmp_path, monkeypatch, output):
     adapter = tmp_path / "adapter"
     adapter.mkdir()
-    output = tmp_path / "merged"
-    output.mkdir()
-    leftover = output / "adapter_config.json"
-    if populated:
-        leftover.write_text("stale\n")
     load_base = MagicMock()
     monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", load_base)
 
@@ -84,6 +76,18 @@ def test_merge_adapter_rejects_existing_output_before_model_loading(
         )
 
     load_base.assert_not_called()
+
+
+@pytest.mark.parametrize("populated", [False, True])
+def test_merge_adapter_rejects_existing_output_before_model_loading(
+    tmp_path, monkeypatch, populated
+):
+    output = tmp_path / "merged"
+    output.mkdir()
+    leftover = output / "adapter_config.json"
+    if populated:
+        leftover.write_text("stale\n")
+    _assert_existing_merge_output_rejected(tmp_path, monkeypatch, output)
     if populated:
         assert leftover.read_text() == "stale\n"
     else:
@@ -91,23 +95,9 @@ def test_merge_adapter_rejects_existing_output_before_model_loading(
 
 
 def test_merge_adapter_rejects_broken_output_symlink_before_model_loading(tmp_path, monkeypatch):
-    adapter = tmp_path / "adapter"
-    adapter.mkdir()
     output = tmp_path / "merged"
     output.symlink_to(tmp_path / "missing", target_is_directory=True)
-    load_base = MagicMock()
-    monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", load_base)
-
-    with pytest.raises(FileExistsError, match="must not already exist"):
-        merge_adapter(
-            "example/base",
-            str(adapter),
-            str(output),
-            allow_unsafe=True,
-            infer_revision=False,
-        )
-
-    load_base.assert_not_called()
+    _assert_existing_merge_output_rejected(tmp_path, monkeypatch, output)
     assert output.is_symlink()
 
 
