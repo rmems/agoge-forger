@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from ._source_snapshot import copy_source_snapshot
 from .split_materialize import (
     LeakageAuditBuilder,
     SourceRecord,
@@ -26,7 +27,6 @@ from .split_schema import (
     SplitManifest,
     SplitMaterializationSpec,
     SplitName,
-    sha256_file,
 )
 
 
@@ -99,17 +99,20 @@ def _manifest_records(manifest: SplitManifest) -> list[SourceRecord]:
 
 
 def _validate_source(manifest: SplitManifest, source: Path) -> None:
-    actual_source_sha = sha256_file(source)
-    _require_equal(
-        actual_source_sha,
-        manifest.source.sha256,
-        f"source SHA-256 mismatch: expected {manifest.source.sha256}, found {actual_source_sha}",
-    )
-    records = read_source_records(
-        source,
-        manifest.canonical_identity,
-        source_coordinate_path=manifest.source.path,
-    )
+    with tempfile.TemporaryDirectory(prefix="agoge-source-validation-") as snapshot_dir:
+        snapshot = Path(snapshot_dir) / "source.jsonl"
+        actual_source_sha = copy_source_snapshot(source, snapshot)
+        _require_equal(
+            actual_source_sha,
+            manifest.source.sha256,
+            f"source SHA-256 mismatch: expected {manifest.source.sha256}, "
+            f"found {actual_source_sha}",
+        )
+        records = read_source_records(
+            snapshot,
+            manifest.canonical_identity,
+            source_coordinate_path=manifest.source.path,
+        )
     _require_expected_ownership(manifest, records)
     source_members = {record.member.canonical_id: record.member for record in records}
     manifest_members = {
@@ -201,6 +204,11 @@ def verified_split_snapshot(
     path = resolve_split_path(manifest_path, artifact)
     try:
         descriptor = _open_split_descriptor(manifest_path.parent.resolve(), artifact.path)
+    except NotImplementedError as exc:
+        raise ValueError(
+            f"{split} artifact cannot be validated safely on this platform: "
+            "os.open(dir_fd=...) is unsupported"
+        ) from exc
     except OSError as exc:
         raise ValueError(
             f"{split} artifact could not be opened without following a symlink"

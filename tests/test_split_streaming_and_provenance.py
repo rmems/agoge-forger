@@ -511,6 +511,20 @@ def test_declared_split_symlink_is_rejected(tmp_path):
         validate_split_manifest(manifest_path)
 
 
+def test_split_validation_reports_unsupported_dirfd_as_controlled_error(tmp_path, monkeypatch):
+    manifest_path, _ = _materialized_manifest(tmp_path)
+
+    def unsupported_descriptor(root, relative_path):
+        raise NotImplementedError("dir_fd unavailable")
+
+    monkeypatch.setattr(split_validation, "_open_split_descriptor", unsupported_descriptor)
+
+    with pytest.raises(ValueError, match=r"cannot be validated safely.*dir_fd") as raised:
+        validate_split_manifest(manifest_path)
+
+    assert isinstance(raised.value.__cause__, NotImplementedError)
+
+
 def test_frozen_loader_rechecks_selected_artifact_after_manifest_validation(tmp_path, monkeypatch):
     manifest_path, manifest = _materialized_manifest(tmp_path)
     artifact_path = manifest_path.parent / manifest.splits["train"].path

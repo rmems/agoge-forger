@@ -34,6 +34,15 @@ def copy_source_snapshot(source: Path, snapshot: Path) -> str:
     return digest.hexdigest()
 
 
+def nearest_existing_output_ancestor(destination: Path) -> Path:
+    candidate = destination.absolute().parent
+    while not candidate.exists():
+        candidate = candidate.parent
+    if not candidate.is_dir():
+        raise ValueError(f"output path has a non-directory ancestor: {candidate}")
+    return candidate.resolve(strict=True)
+
+
 def _file_identity(status: os.stat_result) -> _FileIdentity:
     return _FileIdentity(
         device=status.st_dev,

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
 import stat
 from pathlib import Path, PurePosixPath
-from typing import Literal, TypeGuard
+from typing import TypeGuard
 
 from safetensors import SafetensorError, safe_open
 
@@ -20,21 +19,18 @@ from ._artifact_schema import (
     _MERGED_CONFIG_PATH,
     _MERGED_WEIGHTS_INDEX_PATH,
     _MERGED_WEIGHTS_PATH,
-    ArtifactIndex,
     ArtifactIndexEntry,
     ArtifactKind,
     ArtifactProducerProvenance,
     ArtifactValidationContext,
     IndexedArtifacts,
-    _parse_artifact_index,
     _portable_artifact_path,
     _require_canonical_model_shard_set,
     _unique_json_object,
 )
+from ._artifact_snapshot import verified_artifact_snapshot
 from ._merged_model_schema import require_merged_tensor_schema
 
-ResolvedArtifact = tuple[PurePosixPath, ArtifactIndexEntry, Path]
-BundleEntryKind = Literal["directory", "file"]
 _SAFETENSORS_SUFFIX = ".safetensors"
 
 
@@ -43,90 +39,8 @@ def require_artifact_index(
     expected: str,
     context: ArtifactValidationContext,
 ) -> None:
-    index = _load_artifact_index(path, expected)
-    artifacts = _resolve_index_entries(path, index)
-    targets = tuple(target for _, _, target in artifacts)
-    _require_unique_artifact_targets(targets)
-    for _, entry, target in artifacts:
-        _require_matching_artifact(entry, target)
-    indexed = {portable: (entry, target) for portable, entry, target in artifacts}
-    _require_complete_artifact_bundle(path, targets)
-    _require_artifact_layout(context, indexed, index.producer_provenance)
-
-
-def _resolve_index_entries(index_path: Path, index: ArtifactIndex) -> tuple[ResolvedArtifact, ...]:
-    return tuple(_resolve_index_entry(index_path, entry) for entry in index.artifacts)
-
-
-def _resolve_index_entry(index_path: Path, entry: ArtifactIndexEntry) -> ResolvedArtifact:
-    return (
-        _portable_artifact_path(entry.file),
-        entry,
-        _resolve_indexed_target(index_path, entry.file),
-    )
-
-
-def _require_complete_artifact_bundle(index_path: Path, targets: tuple[Path, ...]) -> None:
-    bundle_files = _enumerate_artifact_bundle(index_path.parent, index_path)
-    omitted = bundle_files.difference(targets)
-    if omitted:
-        relative = sorted(str(path.relative_to(index_path.parent)) for path in omitted)
-        raise ValueError(f"artifact bundle contains files omitted from artifact index: {relative}")
-
-
-def _enumerate_artifact_bundle(root: Path, index_path: Path) -> set[Path]:
-    files: set[Path] = set()
-    pending = [root]
-    while pending:
-        directory = pending.pop()
-        for entry in _read_bundle_directory(directory):
-            _collect_bundle_entry(entry, index_path, files, pending)
-    return files
-
-
-def _read_bundle_directory(directory: Path) -> list[os.DirEntry[str]]:
-    try:
-        return sorted(os.scandir(directory), key=lambda entry: entry.name)
-    except OSError as exc:
-        raise ValueError(f"artifact bundle is not readable: {directory}") from exc
-
-
-def _collect_bundle_entry(
-    entry: os.DirEntry[str],
-    index_path: Path,
-    files: set[Path],
-    pending: list[Path],
-) -> None:
-    kind, candidate = _bundle_entry_kind(entry)
-    if kind == "directory":
-        pending.append(candidate)
-        return
-    _record_bundle_file(candidate, index_path, files)
-
-
-def _bundle_entry_kind(entry: os.DirEntry[str]) -> tuple[BundleEntryKind, Path]:
-    candidate = Path(entry.path)
-    metadata = _bundle_entry_metadata(entry, candidate)
-    if stat.S_ISLNK(metadata.st_mode):
-        raise ValueError(f"artifact bundle cannot contain symlinks: {candidate}")
-    if stat.S_ISDIR(metadata.st_mode):
-        return "directory", candidate
-    if stat.S_ISREG(metadata.st_mode):
-        return "file", candidate
-    raise ValueError(f"artifact bundle entry is not a regular file: {candidate}")
-
-
-def _bundle_entry_metadata(entry: os.DirEntry[str], candidate: Path) -> os.stat_result:
-    try:
-        return entry.stat(follow_symlinks=False)
-    except OSError as exc:
-        raise ValueError(f"artifact bundle entry is not readable: {candidate}") from exc
-
-
-def _record_bundle_file(candidate: Path, index_path: Path, files: set[Path]) -> None:
-    resolved = candidate.resolve(strict=True)
-    if resolved != index_path.resolve(strict=True):
-        files.add(resolved)
+    with verified_artifact_snapshot(path.parent, path, expected) as (index, snapshot):
+        _require_artifact_layout(context, snapshot, index.producer_provenance)
 
 
 def _require_artifact_layout(
@@ -477,20 +391,6 @@ def _load_verified_json(
     return value
 
 
-def _load_artifact_index(path: Path, expected: str) -> ArtifactIndex:
-    payload = _read_artifact_index(path)
-    actual = sha256_bytes(payload)
-    if actual != expected:
-        raise ValueError(
-            f"SFT artifact-index SHA-256 mismatch: expected {expected}, found {actual}"
-        )
-    return _parse_artifact_index(path, payload)
-
-
-def _read_artifact_index(path: Path) -> bytes:
-    return _read_regular_file(path, label="invalid SFT artifact index")
-
-
 def _read_regular_file(path: Path, *, label: str) -> bytes:
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -508,51 +408,6 @@ def _read_regular_file(path: Path, *, label: str) -> bytes:
     return payload
 
 
-def _resolve_indexed_target(index_path: Path, value: str) -> Path:
-    target = _resolve_artifact_entry(index_path.parent.resolve(), value)
-    if target == index_path.resolve():
-        raise ValueError("artifact index cannot list itself")
-    return target
-
-
-def _require_unique_artifact_targets(targets: tuple[Path, ...]) -> None:
-    if len(targets) != len(set(targets)):
-        raise ValueError("artifact index resolves duplicate targets")
-
-
-def _require_matching_artifact(entry: ArtifactIndexEntry, path: Path) -> None:
-    actual_size, actual_digest = _stream_artifact(path)
-    if actual_size != entry.size_bytes:
-        raise ValueError(
-            f"indexed artifact size mismatch for {entry.file}: "
-            f"expected {entry.size_bytes}, found {actual_size}"
-        )
-    if actual_digest != entry.sha256:
-        raise ValueError(
-            f"indexed artifact SHA-256 mismatch for {entry.file}: "
-            f"expected {entry.sha256}, found {actual_digest}"
-        )
-
-
-def _stream_artifact(path: Path) -> tuple[int, str]:
-    digest = hashlib.sha256()
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-        with os.fdopen(descriptor, "rb") as handle:
-            before = os.fstat(handle.fileno())
-            if not stat.S_ISREG(before.st_mode):
-                raise ValueError(f"indexed artifact is not a regular file: {path}")
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-            after = os.fstat(handle.fileno())
-    except OSError as exc:
-        raise ValueError(f"indexed artifact is not a readable file: {path}") from exc
-    if _file_identity(before) != _file_identity(after):
-        raise ValueError(f"indexed artifact changed during validation: {path}")
-    return before.st_size, digest.hexdigest()
-
-
 def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
     return (
         metadata.st_dev,
@@ -561,18 +416,3 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
         metadata.st_mtime_ns,
         metadata.st_ctime_ns,
     )
-
-
-def _resolve_artifact_entry(root: Path, value: str) -> Path:
-    portable = _portable_artifact_path(value)
-    resolved = _resolve_existing_artifact(root, portable, value)
-    if not resolved.is_relative_to(root):
-        raise ValueError(f"artifact index path escapes its directory: {value}")
-    return resolved
-
-
-def _resolve_existing_artifact(root: Path, portable: PurePosixPath, value: str) -> Path:
-    try:
-        return root.joinpath(*portable.parts).resolve(strict=True)
-    except FileNotFoundError as exc:
-        raise ValueError(f"indexed artifact does not exist: {value}") from exc

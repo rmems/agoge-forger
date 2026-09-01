@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ._source_snapshot import copy_source_snapshot
+from ._source_snapshot import copy_source_snapshot, nearest_existing_output_ancestor
 from ._split_report import manifest_bytes, render_report
 from .datasets import normalize_row
 from .split_schema import (
@@ -443,7 +443,10 @@ def materialize_split(
             "exact-content hashing"
         )
     _validate_materialization_paths(source, destination)
-    with tempfile.TemporaryDirectory(prefix="agoge-source-snapshot-") as staging_dir:
+    with tempfile.TemporaryDirectory(
+        prefix=".agoge-split-staging-",
+        dir=nearest_existing_output_ancestor(destination),
+    ) as staging_dir:
         staging = Path(staging_dir)
         source_snapshot = staging / "source.jsonl"
         source_sha256 = copy_source_snapshot(source, source_snapshot)

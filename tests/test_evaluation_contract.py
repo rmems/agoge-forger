@@ -10,7 +10,12 @@ from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from agoge_forger.eval import _artifact_validation, _merged_model_schema, _tensor_schema
+from agoge_forger.eval import (
+    _artifact_snapshot,
+    _artifact_validation,
+    _merged_model_schema,
+    _tensor_schema,
+)
 from agoge_forger.eval import contract as contract_module
 from agoge_forger.eval.contract import (
     ArtifactIndexReference,
@@ -643,6 +648,11 @@ def test_evaluation_contract_fails_if_index_disappears_during_bundle_scan(
         return original_scandir(directory)
 
     monkeypatch.setattr(os, "scandir", remove_index_before_scan)
+    monkeypatch.setattr(
+        os,
+        "supports_fd",
+        (os.supports_fd - {original_scandir}) | {remove_index_before_scan},
+    )
     with pytest.raises(FileNotFoundError):
         _build(tmp_path, manifest_path, base, sft)
 
@@ -704,29 +714,28 @@ def test_evaluation_contract_accepts_configured_merged_model_dtype(tmp_path):
     assert validate_evaluation_contract(tmp_path / "eval" / "contract.json") == written
 
 
-def test_merged_tensor_schema_keeps_only_one_verified_shard_snapshot(tmp_path, monkeypatch):
+def test_merged_tensor_schema_uses_one_verified_bundle_snapshot(tmp_path, monkeypatch):
     manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-sharded")
     _write_complete_merged_model(output_dir, sharded=True)
     merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
     original_collect = _tensor_schema.collect_tensor_schema
-    observed_snapshots = 0
+    observed_roots: set[Path] = set()
 
-    def collect_one_snapshot(path, portable, schema):
-        nonlocal observed_snapshots
+    def collect_bundle_snapshot(path, portable, schema):
         snapshots = list(path.parent.glob("*.safetensors"))
-        assert snapshots == [path]
-        observed_snapshots += 1
+        assert path in snapshots
+        observed_roots.add(path.parent)
         original_collect(path, portable, schema)
 
     monkeypatch.setattr(
         _tensor_schema,
         "collect_tensor_schema",
-        collect_one_snapshot,
+        collect_bundle_snapshot,
     )
 
     _build(tmp_path, manifest_path, base, merged_sft)
 
-    assert observed_snapshots > 1
+    assert len(observed_roots) == 1
 
 
 def test_evaluation_contract_rejects_incomplete_merged_model_state(tmp_path):
@@ -779,33 +788,83 @@ def test_ignored_model_save_keys_are_literal_not_patterns():
     assert expected == {"layerX0Yweight": _tensor_schema.TensorSchemaEntry((1,), "F32")}
 
 
-def test_merged_tensor_schema_rechecks_the_inspected_snapshot(tmp_path, monkeypatch):
+def test_artifact_regular_replacement_during_schema_validation_fails_closed(tmp_path, monkeypatch):
     manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-race")
     _write_complete_merged_model(output_dir, sharded=False)
     weights_path = output_dir / "model.safetensors"
-    valid_replacement = tmp_path / "valid-model.safetensors"
-    shutil.copy2(weights_path, valid_replacement)
-    _write_safetensors(weights_path, keys=("unrelated.weight",))
-    raced_sft = _with_artifact(sft, output_dir, kind="merged_model")
-    original_require_matching = _artifact_validation._require_matching_artifact
+    replacement = tmp_path / "identical-model.safetensors"
+    shutil.copy2(weights_path, replacement)
+    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
+    original_layout = _artifact_validation._require_artifact_layout
     replaced = False
 
-    def verify_then_replace(entry, target):
+    def replace_before_layout(context, indexed, provenance):
         nonlocal replaced
-        original_require_matching(entry, target)
-        if target == weights_path and not replaced:
-            os.replace(valid_replacement, weights_path)
-            replaced = True
+        snapshot_paths = [path for _, path in indexed.values()]
+        assert all(not path.is_relative_to(output_dir) for path in snapshot_paths)
+        snapshot_roots = {
+            path.parents[len(portable.parts) - 1] for portable, (_, path) in indexed.items()
+        }
+        assert len(snapshot_roots) == 1
+        os.replace(replacement, weights_path)
+        replaced = True
+        return original_layout(context, indexed, provenance)
 
     monkeypatch.setattr(
         _artifact_validation,
-        "_require_matching_artifact",
-        verify_then_replace,
+        "_require_artifact_layout",
+        replace_before_layout,
     )
 
     _assert_build_rejected(
-        (tmp_path, manifest_path, base, raced_sft),
-        "changed before tensor schema validation",
+        (tmp_path, manifest_path, base, merged_sft),
+        "artifact bundle changed",
+    )
+    assert replaced
+
+
+def test_artifact_validation_reports_unsupported_descriptor_traversal(tmp_path, monkeypatch):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-platform")
+    _write_complete_merged_model(output_dir, sharded=False)
+    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
+    monkeypatch.setattr(
+        _artifact_snapshot.os,
+        "supports_fd",
+        _artifact_snapshot.os.supports_fd - {_artifact_snapshot.os.scandir},
+    )
+
+    _assert_build_rejected(
+        (tmp_path, manifest_path, base, merged_sft),
+        "cannot be validated safely on this platform",
+    )
+
+
+def test_artifact_weight_symlink_swap_during_schema_validation_fails_closed(tmp_path, monkeypatch):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-symlink-race")
+    _write_complete_merged_model(output_dir, sharded=False)
+    weights_path = output_dir / "model.safetensors"
+    identical = tmp_path / "identical-model.safetensors"
+    shutil.copy2(weights_path, identical)
+    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
+    original_layout = _artifact_validation._require_artifact_layout
+    replaced = False
+
+    def replace_before_layout(context, indexed, provenance):
+        nonlocal replaced
+        weights_path.unlink()
+        weights_path.symlink_to(identical)
+        replaced = True
+        return original_layout(context, indexed, provenance)
+
+    monkeypatch.setattr(
+        _artifact_validation,
+        "_require_artifact_layout",
+        replace_before_layout,
+    )
+
+    _assert_build_rejected(
+        (tmp_path, manifest_path, base, merged_sft),
+        "artifact bundle cannot contain symlinks|artifact bundle changed",
     )
     assert replaced
 

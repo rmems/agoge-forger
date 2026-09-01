@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
-import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 
 from safetensors import SafetensorError, safe_open
 
-from ._artifact_schema import ArtifactIndexEntry, IndexedArtifacts
+from ._artifact_schema import IndexedArtifacts
 
 
 class TensorSchemaEntry(NamedTuple):
@@ -39,7 +37,7 @@ _TORCH_TO_SAFETENSORS_DTYPE = {
 }
 
 
-def safetensors_dtype(dtype: object) -> str:
+def safetensors_dtype(dtype: Any) -> str:
     try:
         return _TORCH_TO_SAFETENSORS_DTYPE[str(dtype)]
     except KeyError as exc:
@@ -77,36 +75,10 @@ def read_verified_tensor_schema(
     weights: set[PurePosixPath],
 ) -> dict[str, TensorSchemaEntry]:
     schema: dict[str, TensorSchemaEntry] = {}
-    with tempfile.TemporaryDirectory(prefix="agoge-tensor-schema-") as snapshot_dir:
-        for index, portable in enumerate(sorted(weights)):
-            entry, path = indexed[portable]
-            snapshot = Path(snapshot_dir) / f"{index:05d}.safetensors"
-            copy_verified_tensor_snapshot(entry, path, snapshot, portable)
-            try:
-                collect_tensor_schema(snapshot, portable, schema)
-            finally:
-                snapshot.unlink(missing_ok=True)
+    for portable in sorted(weights):
+        _, path = indexed[portable]
+        collect_tensor_schema(path, portable, schema)
     return schema
-
-
-def copy_verified_tensor_snapshot(
-    entry: ArtifactIndexEntry,
-    source: Path,
-    snapshot: Path,
-    portable: PurePosixPath,
-) -> None:
-    digest = hashlib.sha256()
-    size = 0
-    try:
-        with source.open("rb") as source_handle, snapshot.open("xb") as snapshot_handle:
-            for chunk in iter(lambda: source_handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-                size += len(chunk)
-                snapshot_handle.write(chunk)
-    except OSError as exc:
-        raise ValueError(f"invalid safetensors artifact: {portable}") from exc
-    if size != entry.size_bytes or digest.hexdigest() != entry.sha256:
-        raise ValueError(f"indexed artifact changed before tensor schema validation: {portable}")
 
 
 def collect_tensor_schema(

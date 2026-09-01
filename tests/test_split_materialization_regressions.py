@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agoge_forger import split_materialize
+from agoge_forger import split_materialize, split_validation
 from agoge_forger.datasets import normalize_row
 from agoge_forger.split_contract import (
     CanonicalIdentityPolicy,
@@ -255,6 +255,28 @@ def test_materialization_hashes_the_same_source_snapshot_it_splits(
         validate_split_manifest(output / "split_manifest.json", source_path=source)
 
 
+def test_source_validation_hashes_and_parses_one_snapshot(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.jsonl"
+    output = tmp_path / "snapshot"
+    _write_rows(source, _text_rows())
+    manifest = materialize_split(source, output, _spec())
+    replacement = tmp_path / "replacement.jsonl"
+    replacement_rows = [
+        {**row, "text": f"Replacement row {index}"} for index, row in enumerate(_text_rows())
+    ]
+    _write_rows(replacement, replacement_rows)
+    original_read = split_validation.read_source_records
+
+    def read_then_replace(snapshot, *args, **kwargs):
+        assert snapshot != source
+        os.replace(replacement, source)
+        return original_read(snapshot, *args, **kwargs)
+
+    monkeypatch.setattr(split_validation, "read_source_records", read_then_replace)
+
+    assert validate_split_manifest(output / "split_manifest.json", source_path=source) == manifest
+
+
 def test_materialization_rejects_source_changed_while_snapshotting(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -303,6 +325,28 @@ def test_materialization_rejects_source_changed_while_snapshotting(
 
     assert mutated
     assert not output.exists()
+
+
+def test_materialization_stages_on_output_filesystem(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.jsonl"
+    output = tmp_path / "missing-parent" / "snapshot"
+    _write_rows(source, _text_rows())
+    original_copy = split_materialize.copy_source_snapshot
+    observed_staging: list[Path] = []
+
+    def capture_staging(source_path, snapshot_path):
+        staging = snapshot_path.parent
+        observed_staging.append(staging)
+        assert staging.parent == tmp_path
+        assert staging.stat().st_dev == tmp_path.stat().st_dev
+        return original_copy(source_path, snapshot_path)
+
+    monkeypatch.setattr(split_materialize, "copy_source_snapshot", capture_staging)
+
+    materialize_split(source, output, _spec())
+
+    assert len(observed_staging) == 1
+    assert not observed_staging[0].exists()
 
 
 def test_materialization_assigns_metadata_without_retaining_source_payloads(
