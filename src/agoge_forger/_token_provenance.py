@@ -30,6 +30,7 @@ _TOKENIZER_RUNTIME_FIELDS = (
     "truncation_side",
 )
 _PURE_BUILTINS = frozenset({"bool", "float", "int", "len", "list", "str"})
+_TOKENIZER_IMPLEMENTATION_LABEL = "tokenizer implementation"
 
 
 @dataclass(frozen=True)
@@ -299,9 +300,9 @@ def _class_code(value: type[Any]) -> dict[str, Any]:
 
 def _class_member_code(value: Any) -> Any:
     if inspect.isfunction(value):
-        return _pure_function_code(value, "tokenizer implementation")
+        return _pure_function_code(value, _TOKENIZER_IMPLEMENTATION_LABEL)
     if isinstance(value, (staticmethod, classmethod)):
-        return _pure_function_code(value.__func__, "tokenizer implementation")
+        return _pure_function_code(value.__func__, _TOKENIZER_IMPLEMENTATION_LABEL)
     if isinstance(value, property):
         return _property_code(value)
     return None
@@ -310,7 +311,7 @@ def _class_member_code(value: Any) -> Any:
 def _property_code(value: property) -> dict[str, Any]:
     accessors = {"get": value.fget, "set": value.fset, "delete": value.fdel}
     return {
-        name: _pure_function_code(accessor, "tokenizer implementation")
+        name: _pure_function_code(accessor, _TOKENIZER_IMPLEMENTATION_LABEL)
         for name, accessor in accessors.items()
         if accessor is not None
     }

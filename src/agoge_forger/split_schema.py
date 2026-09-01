@@ -14,6 +14,7 @@ SPLIT_MANIFEST_VERSION: Literal["agoge.split-manifest.v1"] = "agoge.split-manife
 SPLIT_ALGORITHM_VERSION: Literal["sha256-atomic-bucket-v1"] = "sha256-atomic-bucket-v1"
 TOKEN_STATS_VERSION: Literal["agoge.token-stats.v1"] = "agoge.token-stats.v1"
 IMMUTABLE_REVISION_PATTERN = r"^[0-9a-f]{40,64}$"
+_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 SplitName = Literal["train", "validation", "held_out"]
 SPLIT_NAMES: tuple[SplitName, ...] = ("train", "validation", "held_out")
@@ -30,7 +31,7 @@ class SourceFile(FrozenModel):
     revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     dataset_version: str = Field(min_length=1)
     path: str = Field(min_length=1)
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    sha256: str = Field(pattern=_SHA256_PATTERN)
     record_count: int = Field(ge=1)
 
     @field_validator("path")
@@ -92,14 +93,14 @@ class SplitMember(FrozenModel):
     lineage_id: str = Field(min_length=1)
     group_id: str | None = None
     source_coordinate: str = Field(min_length=1)
-    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    raw_line_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    materialized_line_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_sha256: str = Field(pattern=_SHA256_PATTERN)
+    raw_line_sha256: str = Field(pattern=_SHA256_PATTERN)
+    materialized_line_sha256: str = Field(pattern=_SHA256_PATTERN)
 
 
 class SplitArtifact(FrozenModel):
     path: str = Field(min_length=1)
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    sha256: str = Field(pattern=_SHA256_PATTERN)
     record_count: int = Field(ge=1)
     members: tuple[SplitMember, ...]
 
@@ -200,25 +201,25 @@ class TokenStatisticsSpec(FrozenModel):
     model_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     tokenizer_id: str = Field(min_length=1)
     tokenizer_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
-    tokenizer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    tokenizer_sha256: str = Field(pattern=_SHA256_PATTERN)
     serializer_id: str = Field(min_length=1)
     serializer_version: str = Field(min_length=1)
-    serializer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    serializer_sha256: str = Field(pattern=_SHA256_PATTERN)
     context_limit: int | None = Field(default=None, ge=1)
 
 
 class TokenStatistics(FrozenModel):
     schema_version: Literal["agoge.token-stats.v1"] = TOKEN_STATS_VERSION
-    split_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    split_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
     source_split_sha256: dict[SplitName, str]
     model_id: str = Field(min_length=1)
     model_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
     tokenizer_id: str = Field(min_length=1)
     tokenizer_revision: str = Field(pattern=IMMUTABLE_REVISION_PATTERN)
-    tokenizer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    tokenizer_sha256: str = Field(pattern=_SHA256_PATTERN)
     serializer_id: str = Field(min_length=1)
     serializer_version: str = Field(min_length=1)
-    serializer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    serializer_sha256: str = Field(pattern=_SHA256_PATTERN)
     context_limit: int | None = Field(default=None, ge=1)
     splits: dict[SplitName, TokenStatSplit]
 

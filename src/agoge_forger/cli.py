@@ -28,6 +28,7 @@ from .train.lora import train_lora as _train_lora
 from .train.qlora import train_qlora as _train_qlora
 
 app = typer.Typer(help="Agoge Forger CLI")
+_IMMUTABLE_REVISION_HELP = "Immutable Hugging Face revision"
 
 
 @app.command()
@@ -45,7 +46,7 @@ def check_torch():
 @app.command()
 def inspect_model(
     model_id: str = typer.Option(..., help="Hugging Face model ID"),
-    revision: str | None = typer.Option(None, help="Immutable Hugging Face revision"),
+    revision: str | None = typer.Option(None, help=_IMMUTABLE_REVISION_HELP),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
 ):
     """Inspect model architecture (loads weights)."""
@@ -55,7 +56,7 @@ def inspect_model(
 @app.command()
 def model_metadata(
     model_id: str = typer.Option(..., help="Hugging Face model ID"),
-    revision: str | None = typer.Option(None, help="Immutable Hugging Face revision"),
+    revision: str | None = typer.Option(None, help=_IMMUTABLE_REVISION_HELP),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
 ):
     """Inspect model metadata without loading weights."""
@@ -67,7 +68,7 @@ def model_metadata(
 def inspect_lora_targets(
     model_id: str = typer.Option(..., help="Hugging Face model ID"),
     out: str = typer.Option(None, help="Output JSON path"),
-    revision: str | None = typer.Option(None, help="Immutable Hugging Face revision"),
+    revision: str | None = typer.Option(None, help=_IMMUTABLE_REVISION_HELP),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
 ):
     """Inspect model for potential LoRA targets."""

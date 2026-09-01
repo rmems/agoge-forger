@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ArtifactKind = Literal["peft_adapter", "merged_model"]
 
@@ -69,7 +69,7 @@ def _parse_artifact_index(path: Path, payload: bytes) -> ArtifactIndex:
         return ArtifactIndex.model_validate(
             json.loads(payload, object_pairs_hook=_unique_json_object)
         )
-    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, ValueError) as exc:
+    except ValueError as exc:
         raise ValueError(f"invalid SFT artifact index: {path}") from exc
 
 

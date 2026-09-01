@@ -34,6 +34,7 @@ _require_artifact_index = _artifact_validation._require_artifact_index
 EVALUATION_CONTRACT_VERSION: Literal["agoge.evaluation-contract.v1"] = (
     "agoge.evaluation-contract.v1"
 )
+_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 COMPARABLE_ARM_FIELDS = (
     "model_repository",
     "model_revision",
@@ -67,8 +68,8 @@ class EvaluationArm(FrozenEvaluationModel):
     tokenizer_revision: str = Field(pattern=r"^[0-9a-f]{40,64}$")
     serializer_id: str = Field(min_length=1)
     serializer_version: str = Field(min_length=1)
-    serializer_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    logical_task_set_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    serializer_sha256: str = Field(pattern=_SHA256_PATTERN)
+    logical_task_set_sha256: str = Field(pattern=_SHA256_PATTERN)
     context_window: int = Field(ge=1)
     truncation_policy: Literal["reject", "mark_unsupported", "left", "right"]
     decoding: DecodingContract
@@ -86,10 +87,10 @@ class EvaluationArm(FrozenEvaluationModel):
 class PairedEvaluationContract(FrozenEvaluationModel):
     schema_version: Literal["agoge.evaluation-contract.v1"] = EVALUATION_CONTRACT_VERSION
     split_manifest_path: str = Field(min_length=1)
-    split_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    held_out_split_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    split_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
+    held_out_split_sha256: str = Field(pattern=_SHA256_PATTERN)
     logical_task_ids: tuple[str, ...] = Field(min_length=1)
-    logical_task_set_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    logical_task_set_sha256: str = Field(pattern=_SHA256_PATTERN)
     base: EvaluationArm
     sft: EvaluationArm
 

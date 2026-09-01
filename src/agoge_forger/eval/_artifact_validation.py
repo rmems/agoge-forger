@@ -33,6 +33,7 @@ from ._artifact_schema import (
 
 ResolvedArtifact = tuple[PurePosixPath, ArtifactIndexEntry, Path]
 BundleEntryKind = Literal["directory", "file"]
+_SAFETENSORS_SUFFIX = ".safetensors"
 
 
 def _require_artifact_index(
@@ -178,7 +179,7 @@ def _require_peft_root_weights(indexed: IndexedArtifacts) -> None:
 
 
 def _is_root_safetensor(path: PurePosixPath) -> bool:
-    return len(path.parts) == 1 and path.suffix == ".safetensors"
+    return len(path.parts) == 1 and path.suffix == _SAFETENSORS_SUFFIX
 
 
 def _require_no_merged_weights(indexed: IndexedArtifacts) -> None:
@@ -189,7 +190,7 @@ def _require_no_merged_weights(indexed: IndexedArtifacts) -> None:
 
 def _is_merged_weight_path(path: PurePosixPath) -> bool:
     return path == _MERGED_WEIGHTS_INDEX_PATH or (
-        path.name.startswith("model") and path.suffix == ".safetensors"
+        path.name.startswith("model") and path.suffix == _SAFETENSORS_SUFFIX
     )
 
 
@@ -235,7 +236,7 @@ def _require_merged_model_layout(
     has_single = _MERGED_WEIGHTS_PATH in indexed
     has_sharded = _MERGED_WEIGHTS_INDEX_PATH in indexed
     _require_single_or_sharded_weights(has_single, has_sharded)
-    model_weights = {path for path in indexed if path.suffix == ".safetensors"}
+    model_weights = {path for path in indexed if path.suffix == _SAFETENSORS_SUFFIX}
     if has_single:
         _require_unsharded_model_weights(model_weights)
         return
@@ -359,7 +360,7 @@ def _require_model_shard_path(value: object) -> PurePosixPath:
     path = _portable_artifact_path(value)
     if value != path.as_posix():
         raise ValueError("merged-model weight_map shard paths must be canonical")
-    if path.suffix != ".safetensors":
+    if path.suffix != _SAFETENSORS_SUFFIX:
         raise ValueError("merged-model weight_map must reference safetensors shards only")
     return path
 
@@ -409,7 +410,7 @@ def _is_unsafe_weight_path(path: PurePosixPath) -> bool:
 
 
 def _is_unexpected_peft_safetensors(path: PurePosixPath) -> bool:
-    if path.suffix != ".safetensors" or path == _ADAPTER_WEIGHTS_PATH:
+    if path.suffix != _SAFETENSORS_SUFFIX or path == _ADAPTER_WEIGHTS_PATH:
         return False
     return not (
         len(path.parts) == 2
@@ -420,7 +421,7 @@ def _is_unexpected_peft_safetensors(path: PurePosixPath) -> bool:
 
 def _require_valid_safetensors(indexed: IndexedArtifacts) -> None:
     for portable, (_, path) in indexed.items():
-        if portable.suffix == ".safetensors":
+        if portable.suffix == _SAFETENSORS_SUFFIX:
             _read_safetensor_keys(path, portable)
 
 
@@ -464,7 +465,7 @@ def _load_verified_json(
         raise ValueError(f"{label} changed after artifact validation: {path}")
     try:
         value = json.loads(payload, object_pairs_hook=_unique_json_object)
-    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+    except ValueError as exc:
         raise ValueError(f"invalid {label}: {path}") from exc
     if not isinstance(value, dict):
         raise TypeError(f"invalid {label}: expected a JSON object")
