@@ -1,4 +1,4 @@
-"""Atomic, no-clobber directory publication on Linux."""
+"""Atomic, no-clobber filesystem publication on Linux."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def _renameat2():
     except AttributeError as exc:
         raise OSError(
             errno.ENOTSUP,
-            "atomic no-replace directory publication is unsupported on this platform",
+            "atomic no-replace publication is unsupported on this platform",
         ) from exc
 
 

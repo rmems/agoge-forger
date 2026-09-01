@@ -56,6 +56,29 @@ def test_merge_adapter_rejects_save_safetensors_false():
         )
 
 
+def test_merge_adapter_rejects_nonempty_output_before_model_loading(tmp_path, monkeypatch):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    output = tmp_path / "merged"
+    output.mkdir()
+    leftover = output / "adapter_config.json"
+    leftover.write_text("stale\n")
+    load_base = MagicMock()
+    monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", load_base)
+
+    with pytest.raises(FileExistsError, match="must be empty"):
+        merge_adapter(
+            "example/base",
+            str(adapter),
+            str(output),
+            allow_unsafe=True,
+            infer_revision=False,
+        )
+
+    load_base.assert_not_called()
+    assert leftover.read_text() == "stale\n"
+
+
 def test_merge_uses_verified_snapshot_and_propagates_provenance(tmp_path, monkeypatch):
     adapter = tmp_path / "adapter"
     adapter.mkdir()

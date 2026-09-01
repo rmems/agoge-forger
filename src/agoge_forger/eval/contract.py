@@ -7,13 +7,12 @@ model loading, inference, scoring, or result generation.
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from .._atomic_directory import rename_noreplace, require_rename_noreplace_support
+from .._atomic_file import publish_bytes_noreplace, write_fsynced_bytes
 from .._strict_json import decode_json_object
 from ..split_contract import (
     SplitManifest,
@@ -227,26 +226,16 @@ def build_evaluation_contract(
 
 
 def _publish_contract(destination: Path, payload: bytes) -> None:
-    require_rename_noreplace_support()
-    with tempfile.TemporaryDirectory(
-        prefix=f".{destination.name}.",
-        dir=destination.parent,
-    ) as staging_dir:
-        staged = Path(staging_dir) / destination.name
-        _write_contract_payload(staged, payload)
-        try:
-            rename_noreplace(staged, destination)
-        except FileExistsError as exc:
-            raise FileExistsError(
-                f"refusing to overwrite evaluation contract: {destination}"
-            ) from exc
+    publish_bytes_noreplace(
+        destination,
+        payload,
+        refusal="refusing to overwrite evaluation contract",
+        writer=_write_contract_payload,
+    )
 
 
 def _write_contract_payload(path: Path, payload: bytes) -> None:
-    with path.open("xb") as handle:
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
+    write_fsynced_bytes(path, payload)
 
 
 def _normalize_sft_artifact(

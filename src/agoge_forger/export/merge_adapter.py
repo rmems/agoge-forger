@@ -91,6 +91,7 @@ def merge_adapter(
         revision = infer_base_revision_from_adapter(adapter_path)
 
     with _merge_source(adapter_path, base_model_id, revision, allow_unsafe) as source:
+        safe_out_dir = _require_empty_output_directory(out_dir)
         effective_revision = (
             source.provenance.revision if source.provenance is not None else revision
         )
@@ -112,7 +113,7 @@ def merge_adapter(
             model,
             tokenizer,
             _MergedOutputRequest(
-                out_dir,
+                str(safe_out_dir),
                 max_shard_size,
                 allow_unsafe,
                 source.provenance,
@@ -147,7 +148,7 @@ def _save_merged_output(
 ) -> None:
     logger.info("Merging weights...")
     merged_model = model.merge_and_unload()
-    safe_out_dir = resolve_output_directory(request.out_dir)
+    safe_out_dir = _require_empty_output_directory(request.out_dir)
     logger.info(f"Saving merged model to {safe_out_dir}")
     merged_model.save_pretrained(
         str(safe_out_dir),
@@ -163,6 +164,13 @@ def _save_merged_output(
         ),
     )
     logger.info(f"Artifact index written to {index_path}")
+
+
+def _require_empty_output_directory(out_dir: str) -> Path:
+    safe_out_dir = resolve_output_directory(out_dir)
+    if any(safe_out_dir.iterdir()):
+        raise FileExistsError(f"merged-model output directory must be empty: {safe_out_dir}")
+    return safe_out_dir
 
 
 def export_final_model(

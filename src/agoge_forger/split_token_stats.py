@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ._atomic_file import publish_bytes_noreplace, write_fsynced_bytes
 from ._token_provenance import (
     SerializerBinding,
     TokenizerBinding,
@@ -15,7 +16,6 @@ from ._token_provenance import (
     derive_tokenizer_sha256,
 )
 from .split_loaders import iter_materialized_records
-from .split_materialize import exclusive_write
 from .split_schema import (
     SPLIT_NAMES,
     Serializer,
@@ -63,11 +63,17 @@ def write_token_statistics(
         splits=split_stats,
         **spec.model_dump(),
     )
-    exclusive_write(
+    publish_bytes_noreplace(
         Path(output_path).expanduser(),
         canonical_json_bytes(statistics.model_dump(mode="json")) + b"\n",
+        refusal="refusing to overwrite frozen artifact",
+        writer=_write_token_statistics_payload,
     )
     return statistics
+
+
+def _write_token_statistics_payload(path: Path, payload: bytes) -> None:
+    write_fsynced_bytes(path, payload)
 
 
 def _verified_spec(derivation: TokenStatisticsDerivation) -> TokenStatisticsSpec:

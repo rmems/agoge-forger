@@ -199,25 +199,49 @@ def _fast_tokenizer_state(
 
 
 def _fast_tokenizer_class_implementations(tokenizer_type: type[Any]) -> dict[str, Any]:
+    hierarchy = tokenizer_type.__mro__
+    custom_bases = {
+        base
+        for base in hierarchy[: hierarchy.index(PreTrainedTokenizerFast)]
+        if not _is_shipped_transformers_class(base)
+    }
     return {
-        _class_identifier(base): {
-            name: code
-            for name, member in vars(base).items()
-            if (code := _runtime_member_code(member)) is not None
-        }
-        for base in tokenizer_type.__mro__
+        _class_identifier(base): _fast_class_implementation(base, base in custom_bases)
+        for base in hierarchy
         if base is not object
     }
 
 
-def _runtime_member_code(value: Any) -> Any:
+def _is_shipped_transformers_class(value: type[Any]) -> bool:
+    module = inspect.getmodule(value)
+    return (
+        module is not None
+        and module.__name__.startswith("transformers.")
+        and getattr(module, value.__name__, None) is value
+    )
+
+
+def _fast_class_implementation(base: type[Any], require_independent: bool) -> dict[str, Any]:
+    payload = {
+        "code": {
+            name: code
+            for name, member in vars(base).items()
+            if (code := _runtime_member_code(member, require_independent, base)) is not None
+        }
+    }
+    if require_independent:
+        payload["state"] = _class_state(base)
+    return payload
+
+
+def _runtime_member_code(value: Any, require_independent: bool, owner: type[Any]) -> Any:
     if inspect.isfunction(value):
-        return _code_payload(value.__code__)
+        return _runtime_function_code(value, require_independent, owner)
     if isinstance(value, (staticmethod, classmethod)):
-        return _code_payload(value.__func__.__code__)
+        return _runtime_function_code(value.__func__, require_independent, owner)
     if isinstance(value, property):
         return {
-            name: _code_payload(accessor.__code__)
+            name: _runtime_function_code(accessor, require_independent, owner)
             for name, accessor in {
                 "get": value.fget,
                 "set": value.fset,
@@ -226,6 +250,43 @@ def _runtime_member_code(value: Any) -> Any:
             if accessor is not None
         }
     return None
+
+
+def _runtime_function_code(
+    function: Callable[..., Any], require_independent: bool, owner: type[Any]
+) -> Any:
+    if require_independent:
+        _require_bound_custom_method(function, owner)
+        _require_no_external_dependencies(
+            function,
+            _TOKENIZER_IMPLEMENTATION_LABEL,
+            extra_pure_builtins=frozenset({"super"}),
+        )
+    return _code_payload(function.__code__)
+
+
+def _require_bound_custom_method(function: Callable[..., Any], owner: type[Any]) -> None:
+    _require_bound_class_closure(function, owner)
+    _require_no_behavioral_defaults(function)
+
+
+def _require_bound_class_closure(function: Callable[..., Any], owner: type[Any]) -> None:
+    free_variables = set(function.__code__.co_freevars)
+    if free_variables - {"__class__"}:
+        raise ValueError(f"{_TOKENIZER_IMPLEMENTATION_LABEL} must not depend on closure state")
+    if "__class__" in free_variables and _closure_value(function, "__class__") is not owner:
+        raise ValueError(f"{_TOKENIZER_IMPLEMENTATION_LABEL} has an unbound class closure")
+
+
+def _require_no_behavioral_defaults(function: Callable[..., Any]) -> None:
+    if function.__defaults__ or function.__kwdefaults__:
+        raise ValueError(f"{_TOKENIZER_IMPLEMENTATION_LABEL} must not depend on defaults")
+
+
+def _closure_value(function: Callable[..., Any], name: str) -> Any:
+    closure = function.__closure__ or ()
+    values = dict(zip(function.__code__.co_freevars, closure, strict=True))
+    return values[name].cell_contents
 
 
 def _fast_tokenizer_backend_state(backend_to_str: Callable[[], Any]) -> str:
@@ -343,6 +404,8 @@ def _property_code(value: property) -> dict[str, Any]:
 
 
 def _pure_function_code(function: Callable[..., Any], label: str) -> dict[str, Any]:
+    if set(function.__code__.co_freevars) - {"__class__"}:
+        raise ValueError(f"{label} must not depend on closure state")
     _require_no_external_dependencies(function, label)
     return _code_payload(function.__code__)
 
@@ -352,9 +415,13 @@ def _class_state(value: type[Any]) -> dict[str, Any]:
 
 
 def _is_class_state(name: str, value: Any) -> bool:
-    if name.startswith("__") or _class_member_code(value) is not None:
+    if name.startswith("__") or _is_code_member(value):
         return False
     return not inspect.isdatadescriptor(value)
+
+
+def _is_code_member(value: Any) -> bool:
+    return inspect.isfunction(value) or isinstance(value, (staticmethod, classmethod, property))
 
 
 def _tokenizer_slot_state(tokenizer: TokenizerLike) -> dict[str, Any]:
@@ -409,11 +476,16 @@ def _require_serializer_independence(serializer: Serializer) -> None:
     _require_no_external_dependencies(serializer, "serializer implementation")
 
 
-def _require_no_external_dependencies(function: Callable[..., Any], label: str) -> None:
+def _require_no_external_dependencies(
+    function: Callable[..., Any],
+    label: str,
+    *,
+    extra_pure_builtins: frozenset[str] = frozenset(),
+) -> None:
     dependencies = _global_dependencies(function)
     if dependencies:
         raise ValueError(f"{label} must not depend on module globals: {dependencies!r}")
-    unsafe_builtins = _unsafe_builtin_dependencies(function)
+    unsafe_builtins = _unsafe_builtin_dependencies(function, extra_pure_builtins)
     if unsafe_builtins:
         raise ValueError(f"{label} uses unsafe builtins: {unsafe_builtins!r}")
 
@@ -426,12 +498,15 @@ def _global_dependencies(function: Callable[..., Any]) -> list[str]:
     )
 
 
-def _unsafe_builtin_dependencies(function: Callable[..., Any]) -> list[str]:
+def _unsafe_builtin_dependencies(
+    function: Callable[..., Any], extra_pure_builtins: frozenset[str]
+) -> list[str]:
     builtin_names = vars(builtins)
+    allowed = _PURE_BUILTINS | extra_pure_builtins
     return sorted(
         name
         for name in _recursive_code_names(function.__code__)
-        if (name == "__builtins__" or name in builtin_names) and name not in _PURE_BUILTINS
+        if (name == "__builtins__" or name in builtin_names) and name not in allowed
     )
 
 

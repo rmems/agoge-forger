@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
-from transformers import PreTrainedTokenizerFast
+from transformers import GPT2TokenizerFast, PreTrainedTokenizerFast
 
 from agoge_forger import split_loaders, split_token_stats, split_validation
 from agoge_forger.split_contract import (
@@ -31,6 +31,7 @@ TOKENIZER_REVISION = "a" * 40
 SERIALIZER_ID = "messages-v1"
 SERIALIZER_VERSION = "1"
 GLOBAL_TOKENIZER_MODE = "bytes"
+FAST_TOKENIZER_MODE = "backend"
 
 
 class _Tokenizer:
@@ -111,6 +112,22 @@ class _FastShapedTokenizer:
 
     def __call__(self, text: str):
         return list(text.encode()) if self.mode == "bytes" else [999]
+
+
+class _GlobalDependentFastTokenizer(PreTrainedTokenizerFast):
+    def _encode_plus(self, *args, **kwargs):
+        if FAST_TOKENIZER_MODE == "backend":
+            return super()._encode_plus(*args, **kwargs)
+        return {"input_ids": [999]}
+
+
+class _ClassStateFastTokenizer(PreTrainedTokenizerFast):
+    MODE = "backend"
+
+    def _encode_plus(self, *args, **kwargs):
+        if __class__.MODE == "backend":
+            return super()._encode_plus(*args, **kwargs)
+        return {"input_ids": [999]}
 
 
 def _serializer(row):
@@ -241,6 +258,50 @@ def test_fast_shaped_non_hugging_face_tokenizer_cannot_hide_instance_state():
         TokenizerBinding(implementation=_FastShapedTokenizer("bytes"))
 
 
+def test_hugging_face_fast_subclass_rejects_module_global_behavior():
+    tokenizer = _fast_tokenizer(
+        {"[UNK]": 0, "global": 1},
+        tokenizer_type=_GlobalDependentFastTokenizer,
+    )
+
+    with pytest.raises(ValueError, match="module globals"):
+        TokenizerBinding(implementation=tokenizer)
+
+
+def test_hugging_face_fast_subclass_rejects_closure_behavior():
+    mode = "backend"
+
+    class ClosureDependentFastTokenizer(PreTrainedTokenizerFast):
+        def _encode_plus(self, *args, **kwargs):
+            if mode == "backend":
+                return super()._encode_plus(*args, **kwargs)
+            return {"input_ids": [999]}
+
+    tokenizer = _fast_tokenizer(
+        {"[UNK]": 0, "closure": 1},
+        tokenizer_type=ClosureDependentFastTokenizer,
+    )
+
+    with pytest.raises(ValueError, match="closure state"):
+        TokenizerBinding(implementation=tokenizer)
+
+
+def test_hugging_face_fast_subclass_binds_class_state():
+    tokenizer = _fast_tokenizer(
+        {"[UNK]": 0, "class-state": 1},
+        tokenizer_type=_ClassStateFastTokenizer,
+    )
+    first = TokenizerBinding(implementation=tokenizer)
+
+    _ClassStateFastTokenizer.MODE = "alternate"
+    try:
+        second = TokenizerBinding(implementation=tokenizer)
+    finally:
+        _ClassStateFastTokenizer.MODE = "backend"
+
+    assert first.tokenizer_sha256 != second.tokenizer_sha256
+
+
 def test_serializer_rejects_dynamic_import_builtin():
     with pytest.raises(ValueError, match="unsafe builtins"):
         SerializerBinding(implementation=_environment_serializer)
@@ -280,10 +341,8 @@ def test_hugging_face_fast_state_and_model_specific_subclasses_are_bound(monkeyp
 
     assert subclass.tokenizer_sha256 != first.tokenizer_sha256
 
-    original_encode = HiddenFastTokenizer._encode_plus
-
     def changed_encode(self, *args, **kwargs):
-        return original_encode(self, *args, **kwargs)
+        return {"input_ids": [7]}
 
     monkeypatch.setattr(HiddenFastTokenizer, "_encode_plus", changed_encode)
     changed_subclass = TokenizerBinding(
@@ -293,6 +352,17 @@ def test_hugging_face_fast_state_and_model_specific_subclasses_are_bound(monkeyp
     )
 
     assert changed_subclass.tokenizer_sha256 != subclass.tokenizer_sha256
+
+
+def test_shipped_transformers_fast_subclass_can_be_bound():
+    tokenizer = _fast_tokenizer(
+        {"[UNK]": 0, "shipped": 1},
+        tokenizer_type=GPT2TokenizerFast,
+    )
+
+    binding = TokenizerBinding(implementation=tokenizer)
+
+    assert len(binding.tokenizer_sha256) == 64
 
 
 def test_tokenizer_binding_fingerprints_materially_distinct_callables():
@@ -394,6 +464,28 @@ def test_token_statistics_hashes_the_manifest_snapshot_it_counted(tmp_path, monk
     assert replaced
     assert statistics.split_manifest_sha256 == sha256_bytes(original_snapshot)
     assert statistics.split_manifest_sha256 != sha256_bytes(manifest_path.read_bytes())
+
+
+def test_token_statistics_cleans_partial_staging_after_write_failure(tmp_path, monkeypatch):
+    manifest_path, _ = _materialized_manifest(tmp_path)
+    output = tmp_path / "token-statistics.json"
+
+    def fail_after_partial_write(path, payload):
+        path.write_bytes(payload[:8])
+        raise OSError("synthetic token-statistics write failure")
+
+    monkeypatch.setattr(
+        split_token_stats,
+        "_write_token_statistics_payload",
+        fail_after_partial_write,
+        raising=False,
+    )
+
+    with pytest.raises(OSError, match="synthetic token-statistics write failure"):
+        write_token_statistics(manifest_path, output, _derivation())
+
+    assert not output.exists()
+    assert not list(tmp_path.glob(".token-statistics.json.*"))
 
 
 def test_token_counter_aggregates_large_splits_without_retaining_lengths(monkeypatch):
