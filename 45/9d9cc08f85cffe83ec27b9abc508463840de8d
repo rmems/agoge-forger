@@ -1,0 +1,48 @@
+tests/test_merge_adapter_tf5.py
+  s_9d02230d0ab6ec::t_df90e917cd37b1 12
+  s_9d02230d0ab6ec::t_93d7230b1a4311 93
+  s_9d02230d0ab6ec::t_34a40d214fa227 24,26,91-92,114-131
+  s_9d02230d0ab6ec::t_802c07656e9365 63-66,72-73,77,87-90,132
+  s_9d02230d0ab6ec::t_46b78f3cfc05d8 94-113
+  s_9d02230d0ab6ec::t_e4b728bcce49e9 10,133-160
+src/agoge_forger/path_safety.py
+  s_9d02230d0ab6ec::t_802c07656e9365 36,44-48
+  s_9d02230d0ab6ec::t_46b78f3cfc05d8 42-43
+src/agoge_forger/cli.py
+  s_9d02230d0ab6ec::t_802c07656e9365 147,181
+  s_9d02230d0ab6ec::t_e697c7bef60c18 21
+  s_9d02230d0ab6ec::t_58ae303bfdc838 32-33,50,52,60,62,71,74,97,127,178,210,282,289
+src/agoge_forger/train/trainer.py
+  s_9d02230d0ab6ec::t_7e719416558483 221,262-265
+  s_9d02230d0ab6ec::t_59954556ddaed2 266-276
+src/agoge_forger/artifacts/safetensors_io.py
+  s_9d02230d0ab6ec::t_802c07656e9365 83,99-102
+src/agoge_forger/export/merge_adapter.py
+  s_9d02230d0ab6ec::t_802c07656e9365 20,97,154-155,175,182,184,187-189
+  s_9d02230d0ab6ec::t_89fe90c33bddb4 2
+  s_9d02230d0ab6ec::t_febcd7e4d17f67 1,186
+  s_9d02230d0ab6ec::t_e4b728bcce49e9 185
+  s_9d02230d0ab6ec::t_7e719416558483 10,156-174,176-178,183
+tests/test_trainer_revision.py
+  s_9d02230d0ab6ec::t_622d04f6892756 179
+  s_9d02230d0ab6ec::t_34a40d214fa227 177-178,180-198
+tests/test_path_safety.py
+  s_9d02230d0ab6ec::t_802c07656e9365 3-7,27-31
+  s_9d02230d0ab6ec::t_46b78f3cfc05d8 34-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "459d9cc08f85cffe83ec27b9abc508463840de8d",
+  "prompts": {},
+  "sessions": {
+    "s_9d02230d0ab6ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05c12-f51c-7140-a693-33864d1c4551",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
