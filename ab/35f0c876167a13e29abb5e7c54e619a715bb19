@@ -1,0 +1,33 @@
+src/agoge_forger/split_schema.py
+  s_9d02230d0ab6ec::t_385de2d0e52d45 17,34,96-98,103,204,207,213,219,222
+.qlty/.gitignore
+  s_9d02230d0ab6ec::t_385de2d0e52d45 1-7
+src/agoge_forger/eval/_artifact_schema.py
+  s_9d02230d0ab6ec::t_619fbbb6965907 11,72
+.qlty/qlty.toml
+  s_9d02230d0ab6ec::t_e37dd45a14fcb9 1-91
+src/agoge_forger/eval/_artifact_validation.py
+  s_9d02230d0ab6ec::t_385de2d0e52d45 36,182,193,239,363,413,424,468
+src/agoge_forger/eval/contract.py
+  s_9d02230d0ab6ec::t_385de2d0e52d45 37,71-72,90-91,93
+src/agoge_forger/_token_provenance.py
+  s_9d02230d0ab6ec::t_385de2d0e52d45 33,303,305,314
+src/agoge_forger/cli.py
+  s_9d02230d0ab6ec::t_385de2d0e52d45 31,49,59,71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ab35f0c876167a13e29abb5e7c54e619a715bb19",
+  "prompts": {},
+  "sessions": {
+    "s_9d02230d0ab6ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05c12-f51c-7140-a693-33864d1c4551",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
