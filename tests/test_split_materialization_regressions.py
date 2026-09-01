@@ -212,6 +212,47 @@ def test_streaming_source_reader_rejects_duplicate_ids_when_exhausted(tmp_path: 
         next(records)
 
 
+@pytest.mark.parametrize("field", ["canonical_id", "lineage_id", "group_id", "text"])
+def test_streaming_source_reader_rejects_duplicate_json_keys(tmp_path: Path, field: str) -> None:
+    source = tmp_path / "duplicate-key.jsonl"
+    source.write_text(
+        f'{{"canonical_id":"sample","lineage_id":"lineage","group_id":"group",'
+        f'"text":"payload",'
+        f'"{field}":"ambiguous"}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"{SOURCE_PATH}:1: duplicate JSON object key '{field}'",
+    ):
+        list(
+            iter_source_records(
+                source,
+                CanonicalIdentityPolicy(content_hash_policy="normalized-training-payload-v1"),
+                source_coordinate_path=SOURCE_PATH,
+            )
+        )
+
+
+def test_streaming_source_reader_rejects_nested_duplicate_json_keys(tmp_path: Path) -> None:
+    source = tmp_path / "nested-duplicate-key.jsonl"
+    source.write_text(
+        '{"canonical_id":"sample","lineage_id":"lineage","text":"payload",'
+        '"metadata":{"license":"first","license":"second"}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate JSON object key 'license'"):
+        list(
+            iter_source_records(
+                source,
+                CanonicalIdentityPolicy(content_hash_policy="normalized-training-payload-v1"),
+                source_coordinate_path=SOURCE_PATH,
+            )
+        )
+
+
 def test_streaming_source_reader_rejects_an_empty_source(tmp_path: Path) -> None:
     source = tmp_path / "empty.jsonl"
     source.write_text("\n \n", encoding="utf-8")
@@ -347,6 +388,67 @@ def test_materialization_stages_on_output_filesystem(tmp_path: Path, monkeypatch
 
     assert len(observed_staging) == 1
     assert not observed_staging[0].exists()
+
+
+def test_materialization_does_not_publish_partial_snapshot_on_write_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source.jsonl"
+    output = tmp_path / "snapshot"
+    _write_rows(source, _text_rows())
+    original_write_metadata = split_materialize._write_snapshot_metadata
+
+    def fail_after_manifest(destination, manifest):
+        split_materialize.exclusive_write(
+            destination / "split_manifest.json",
+            split_materialize.manifest_bytes(manifest),
+        )
+        raise OSError("synthetic metadata write failure")
+
+    monkeypatch.setattr(split_materialize, "_write_snapshot_metadata", fail_after_manifest)
+    with pytest.raises(OSError, match="synthetic metadata write failure"):
+        materialize_split(source, output, _spec())
+
+    assert not output.exists()
+    monkeypatch.setattr(split_materialize, "_write_snapshot_metadata", original_write_metadata)
+    manifest = materialize_split(source, output, _spec())
+    assert validate_split_manifest(output / "split_manifest.json") == manifest
+
+
+def test_materialization_does_not_replace_dangling_destination_symlink(tmp_path: Path) -> None:
+    source = tmp_path / "source.jsonl"
+    output = tmp_path / "snapshot"
+    _write_rows(source, _text_rows())
+    output.symlink_to(tmp_path / "missing-target", target_is_directory=True)
+
+    with pytest.raises(FileExistsError, match="output path already exists"):
+        materialize_split(source, output, _spec())
+
+    assert output.is_symlink()
+
+
+def test_materialization_does_not_replace_concurrently_created_destination(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source.jsonl"
+    output = tmp_path / "snapshot"
+    _write_rows(source, _text_rows())
+    original_write_metadata = split_materialize._write_snapshot_metadata
+
+    def create_destination_after_writes(destination, manifest):
+        original_write_metadata(destination, manifest)
+        output.mkdir()
+
+    monkeypatch.setattr(
+        split_materialize,
+        "_write_snapshot_metadata",
+        create_destination_after_writes,
+    )
+    with pytest.raises(FileExistsError, match="output path already exists"):
+        materialize_split(source, output, _spec())
+
+    assert output.is_dir()
+    assert not any(output.iterdir())
 
 
 def test_materialization_assigns_metadata_without_retaining_source_payloads(

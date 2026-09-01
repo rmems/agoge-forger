@@ -7,22 +7,22 @@ from safetensors.torch import load_file, save_file
 
 from agoge_forger.eval.contract import ArtifactIndexReference, build_evaluation_contract
 from agoge_forger.split_contract import canonical_json_bytes, sha256_file
-from tests.peft_adapter_fixtures import write_complete_adapter_model
-from tests.test_evaluation_contract import (
-    _artifact_case,
-    _assert_build_rejected,
-    _case,
-    _provenance,
-    _with_artifact,
-    _write_invalid_merged_layout,
+from tests.evaluation_contract_cases import (
+    artifact_case,
+    assert_build_rejected,
+    evaluation_case,
+    model_provenance,
+    with_artifact,
+    write_invalid_merged_layout,
 )
+from tests.peft_adapter_fixtures import write_complete_adapter_model
 
 pytestmark = pytest.mark.usefixtures("cached_test_base_config")
 
 
 @pytest.mark.parametrize("mutation", ["missing", "unexpected", "wrong-shape", "wrong-dtype"])
 def test_evaluation_contract_rejects_adapter_tensor_schema_drift(tmp_path, mutation):
-    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, f"adapter-{mutation}")
+    manifest_path, base, sft, output_dir = artifact_case(tmp_path, f"adapter-{mutation}")
     write_complete_adapter_model(output_dir)
     weights_path = output_dir / "adapter_model.safetensors"
     tensors = load_file(weights_path)
@@ -36,9 +36,9 @@ def test_evaluation_contract_rejects_adapter_tensor_schema_drift(tmp_path, mutat
     else:
         tensors[first_key] = torch.zeros(tensors[first_key].shape, dtype=torch.uint8)
     save_file(tensors, weights_path)
-    drifted_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
+    drifted_sft = with_artifact(sft, output_dir, kind="peft_adapter")
 
-    _assert_build_rejected(
+    assert_build_rejected(
         (tmp_path, manifest_path, base, drifted_sft),
         "PEFT adapter tensor schema",
     )
@@ -69,19 +69,19 @@ def test_evaluation_contract_rejects_adapter_tensor_schema_drift(tmp_path, mutat
 def test_evaluation_contract_rejects_invalid_merged_model_layout(
     tmp_path, variant, error_type, expected_error
 ):
-    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged")
-    _write_invalid_merged_layout(output_dir, variant)
+    manifest_path, base, sft, output_dir = artifact_case(tmp_path, "merged")
+    write_invalid_merged_layout(output_dir, variant)
     provenance = {
         "provenance-missing": False,
-        "provenance-repository": _provenance("example/other-model"),
-        "provenance-revision": _provenance(revision="4" * 40),
+        "provenance-repository": model_provenance("example/other-model"),
+        "provenance-revision": model_provenance(revision="4" * 40),
     }.get(variant)
-    merged_sft = _with_artifact(sft, output_dir, kind="merged_model", provenance=provenance)
-    _assert_build_rejected((tmp_path, manifest_path, base, merged_sft), expected_error, error_type)
+    merged_sft = with_artifact(sft, output_dir, kind="merged_model", provenance=provenance)
+    assert_build_rejected((tmp_path, manifest_path, base, merged_sft), expected_error, error_type)
 
 
 def test_evaluation_contract_rejects_contract_inside_artifact_bundle(tmp_path):
-    manifest_path, _, base, sft = _case(tmp_path)
+    manifest_path, _, base, sft = evaluation_case(tmp_path)
     contract_path = tmp_path / "adapter" / "contract.json"
 
     with pytest.raises(ValueError, match="cannot be written inside its artifact bundle"):
@@ -95,7 +95,7 @@ def test_evaluation_contract_rejects_contract_inside_artifact_bundle(tmp_path):
 
 
 def test_evaluation_contract_rejects_artifact_index_path_escape(tmp_path):
-    manifest_path, _, base, sft = _case(tmp_path)
+    manifest_path, _, base, sft = evaluation_case(tmp_path)
     assert sft.artifact is not None
     artifact_index = Path(sft.artifact.artifact_index_path)
     outside = tmp_path / "outside.safetensors"
@@ -126,17 +126,17 @@ def test_evaluation_contract_rejects_artifact_index_path_escape(tmp_path):
     )
     contract_path = tmp_path / "eval" / "contract.json"
 
-    _assert_build_rejected((tmp_path, manifest_path, base, escaped_sft), "must stay relative")
+    assert_build_rejected((tmp_path, manifest_path, base, escaped_sft), "must stay relative")
     assert not contract_path.exists()
 
 
 def test_evaluation_contract_revalidates_copied_arms_before_writing(tmp_path):
-    manifest_path, _, base, sft = _case(tmp_path)
+    manifest_path, _, base, sft = evaluation_case(tmp_path)
     invalid_base = base.model_copy(update={"context_window": 0})
     invalid_sft = sft.model_copy(update={"context_window": 0})
     contract_path = tmp_path / "eval" / "contract.json"
 
-    _assert_build_rejected(
+    assert_build_rejected(
         (tmp_path, manifest_path, invalid_base, invalid_sft),
         "context_window",
         ValidationError,
