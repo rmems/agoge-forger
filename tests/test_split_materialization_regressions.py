@@ -255,6 +255,56 @@ def test_materialization_hashes_the_same_source_snapshot_it_splits(
         validate_split_manifest(output / "split_manifest.json", source_path=source)
 
 
+def test_materialization_rejects_source_changed_while_snapshotting(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source.jsonl"
+    output = tmp_path / "snapshot"
+    _write_rows(source, _text_rows())
+    original_open = Path.open
+    mutated = False
+
+    class MutatingReader:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def fileno(self):
+            return self.handle.fileno()
+
+        def read(self, size=-1):
+            nonlocal mutated
+            chunk = self.handle.read(size)
+            if not mutated:
+                mutated = True
+                with original_open(source, "r+b") as writer:
+                    writer.seek(0)
+                    writer.write(b" ")
+                    writer.flush()
+                    os.fsync(writer.fileno())
+            return chunk
+
+    def open_and_mutate(path, mode="r", *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        if path == source and mode == "rb":
+            return MutatingReader(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", open_and_mutate)
+
+    with pytest.raises(ValueError, match="source changed while creating immutable snapshot"):
+        materialize_split(source, output, _spec())
+
+    assert mutated
+    assert not output.exists()
+
+
 def test_materialization_assigns_metadata_without_retaining_source_payloads(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -14,20 +14,18 @@ source record must contain:
 
 - `canonical_id`: globally stable sample identity;
 - `lineage_id`: identity shared by variants that must remain together; and
-- training content accepted by Agoge, such as `text`, `messages`, or
-  `instruction`/`output`.
+- pre-rendered `text`: the exact model-independent training content.
 
 `group_id` is optional. When present, the complete group remains atomic. Exact
 canonical content, lineage, and declared-group relationships are transitively
 joined before split assignment. Identity field names can be overridden for a
 versioned source that already has equivalent fields.
 
-A frozen source must use exactly one training-content representation: `text`,
-`messages`, or `instruction`/`output`. Agoge rejects mixed representations
-because a tokenizer-specific chat template can make a `messages` row equivalent
-to a `text` row even though model-independent fallback rendering cannot prove
-that equivalence. Keeping one representation per snapshot makes canonical split
-membership independent of the eventual model, tokenizer, and serializer.
+A new frozen source must use pre-rendered `text`. Agoge rejects `messages` and
+`instruction`/`output` rows because downstream tokenizer templates and
+serializers can render them differently. Binding the exact rendered text before
+split assignment keeps canonical content identity and split membership
+independent of the eventual model, tokenizer, and serializer.
 
 ## Materialize one frozen snapshot
 
