@@ -11,7 +11,7 @@
 | Synthetic prefs | Grok 11.8k (hold until traj-pref contract) | UltraFeedback / HelpSteer2 named by DR, not factory-ingested |
 | Synthetic safety / multi-agent | Grok hold | — |
 | Real issue→patch (ours) | Prometheus 32, no split | none in train |
-| Public Python SWE gym | none on disk | R2E-Gym-V1 |
+| Public Python SWE gym | none on disk | R2E-Gym-Subset |
 | Public single-file commits | none on disk | CommitPackFT spice |
 | Eval execution board | none implemented in-repo | Multi-SWE Rust 10/239 |
 | First-party freeze | Theseus / worktrees-hives / xai-dissect: 0 executable F2P boards | — |
@@ -43,7 +43,7 @@
 
 ## Contamination / overlap map
 
-```
+```text
 OUT OF TRAIN (locked)
   SWE-bench family, HumanEval / HumanEvalPack, LiveCodeBench (as train)
 

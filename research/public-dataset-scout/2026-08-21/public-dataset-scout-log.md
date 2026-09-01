@@ -1,3 +1,5 @@
+# Public Dataset Scout research log
+
 Ranked list is ready. REAL\_ONLY is still empty.
 
 Python can unlock without Rust: license-filtered [SWE-rebench](https://huggingface.co/datasets/nebius/SWE-rebench) (27,878, CC-BY-4.0 with a per-row license field) and [SWE-Gym](https://huggingface.co/datasets/SWE-Gym/SWE-Gym) (2,438, MIT/Apache). R2E-Gym-V1 and CommitPackFT stay as already accepted compose, spice only on the rust slice.

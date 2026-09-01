@@ -10,9 +10,9 @@
 - Public sets join **only at compose**, never factory `outputs/raw/`. Never rehost raw on Hub.
 - **SWE-bench / Verified / HumanEval: out of train.**
 - **Eval board:** Multi-SWE-bench Rust, 10 repos / 239 instances. Do not filter the board to clean train.
-- **Train denylist:** those 10 + Prometheus sources (`corinth-canal`, `grok-ozempic`, `myelin-accelerator`, `Limen-Neural/axon-encoder`) + first-party freeze (`Theseus-Quarry`, `worktrees-hives`, `xai-dissect`) + GPL / no-SPDX locals.
+- **Train denylist:** those 10 + Prometheus sources (`corinth-canal`, `grok-ozempic`, `myelin-accelerator`, `Limen-Neural/axon-encoder`) + first-party freeze (`Theseus-Quarry`, `worktrees-hives`, `xai-dissect`) + GPL / no-SPDX locals + BUSL / FSL-1.1-MIT / Elastic-2.0 entries.
 - Multi-SWE Rust 10: `BurntSushi/ripgrep`, `clap-rs/clap`, `nushell/nushell`, `rayon-rs/rayon`, `serde-rs/serde`, `sharkdp/bat`, `sharkdp/fd`, `tokio-rs/bytes`, `tokio-rs/tokio`, `tokio-rs/tracing`.
-- Already accepted compose: **R2E-Gym-V1** (Apache-2.0), **CommitPackFT** (MIT, spice only after denylist).
+- Already accepted compose: **R2E-Gym-Subset** (Apache-2.0, 4,578 rows), **CommitPackFT** (MIT, spice only after denylist).
 - Prometheus **32 unique PRs** are **neither-until-split**. **REAL_ONLY is empty.**
 - Hidden CoT / `thought` / `internal_reasoning` is never training material.
 - Never recommend a set solely because it is large.
@@ -23,7 +23,7 @@ Scores 1–5. Product is the rank key. Assume denylist + license filter at compo
 
 | Rank | Dataset | n (verified) | License | Task | Code | PR/issue | REAL_ONLY | Eval | Signal | Legal | Real | Comp | Product | Decision |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A0 | `R2E-Gym/R2E-Gym-V1` | 8,101 | Apache-2.0 | SWE-Gen commit→env | patch + docker | commit, no issue URL | 2 | 2 | 4 | 5 | 4 | 3 | 240 | **Accepted.** Python gym. No Rust. Prefer `R2E-Gym-Subset` (4,578) if SWE-bench-repo leak matters. |
+| A0 | `R2E-Gym/R2E-Gym-Subset` | 4,578 | Apache-2.0 | SWE-Gen commit→env | patch + docker | commit, no issue URL | 2 | 2 | 4 | 5 | 4 | 3 | 240 | **Accepted fallback.** V1 lacks an evidenced instance-level sympy exclusion and resulting non-overlap count. Python gym. No Rust. |
 | A0 | `bigcode/commitpackft` | 702,062 (rust 2,996) | MIT + per-sample | commit + 1 file | snippet pair | commit only | 1 | 0 | 2 | 4 | 2 | 2 | 32 | **Accepted spice.** Drop AGPL/LGPL/`unknown`. Rust slice is **not** REAL_ONLY. Known ∩ eval: clap, serde, fd, tokio = 173/239. |
 | 1 | `nebius/SWE-rebench` | 27,878 | CC-BY-4.0 + `license_name` | issue→patch + docker | patch + test_patch | instance_id + issue text | 4 | 4 | 5 | 4 | 5 | 4 | 400 | **Best Python REAL_ONLY unlock.** Filter Apache/MIT/BSD. Check ∩ SWE-bench 12 before compose. Does **not** unlock Rust. |
 | 2 | `SWE-Gym/SWE-Gym` | 2,438 (11 Python repos) | HF MIT / GitHub Apache-2.0 | issue→patch + env | patch + test_patch | yes | 4 | 2 | 4 | 4 | 5 | 4 | 320 | **Clean small Python gym.** Complements R2E. Raw 64,689 has no env. Trajectories carry model ToS. |
@@ -88,6 +88,7 @@ Pre-registered idea (Eval Architect Q2, not pinned): CPT-disjoint 66-instance Mu
 ## Required fields (high-signal rows)
 
 ### `nebius/SWE-rebench` — rank 1 Python REAL_ONLY
+
 - **source:** Badertdinov et al. 2025, arXiv 2505.20411
 - **schema:** instance_id, base_commit, patch, test_patch, problem_statement, repo, FAIL_TO_PASS / PASS_TO_PASS / …, license_name, docker_image
 - **redistribution:** CC-BY-4.0 packaging; honor `license_name`
@@ -97,12 +98,14 @@ Pre-registered idea (Eval Architect Q2, not pinned): CPT-disjoint 66-instance Mu
 - **overlap benches:** must check `repo` vs SWE-bench 12 + Multi-SWE 10 (Python, so Rust 10 likely empty)
 
 ### `SWE-Gym/SWE-Gym` — rank 2
+
 - **source:** Pan et al. 2024, arXiv 2412.21139
 - **schema:** instance_id, patch, test_patch, problem_statement, repo, base_commit, PASS_TO_PASS, FAIL_TO_PASS
 - **per-repo license:** not in schema (UNKNOWN)
 - **Prometheus:** same family; instance UNKNOWN
 
 ### `user2f86/rustbench` — blocked REAL_ONLY Rust
+
 - **source:** arXiv 2602.22764 (2026); 34 repos; harness `GhabiX/Rust-SWE-Bench`
 - **schema:** SWE-bench protocol (instance_id, repo, pull_number, issue_numbers, patch, test_patch, FAIL_TO_PASS, …)
 - **redistribution / training-use:** UNKNOWN until SPDX
@@ -110,6 +113,7 @@ Pre-registered idea (Eval Architect Q2, not pinned): CPT-disjoint 66-instance Mu
 - **Prometheus:** same family; instance UNKNOWN
 
 ### `lca-ci-builds-repair` — best real DevOps
+
 - **source:** Bogomolov et al., Long Code Arena, arXiv 2406.11612
 - **schema:** language, repo_owner, repo_name, workflow, logs, diff, sha_fail, sha_success, commit_link
 - **redistribution:** source licenses claimed permissive; compilation SPDX UNKNOWN
@@ -124,4 +128,4 @@ Pre-registered idea (Eval Architect Q2, not pinned): CPT-disjoint 66-instance Mu
 5. **Do not** ingest SWE-bench*, HumanEval*, Multi-SWE-bench, SWE-bench Pro, Stack v2, unfiltered stack-v3-devops, SWE-Factory code, facebook SWE-RL.
 6. Prometheus 32 stay neither-until-split.
 
-Cite paths: `/workspace/swe-candidates.md`, `/workspace/devops-candidates.md`, `/workspace/prometheus-coverage.md`, `/workspace/gap-map.md`.
+Cite path: `research/public-dataset-scout/2026-08-21/gap-map.md`. External provenance (not committed in this repository): `swe-candidates.md`, `devops-candidates.md`, `prometheus-coverage.md`.
