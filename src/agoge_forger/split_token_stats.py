@@ -113,18 +113,24 @@ class _TokenCounter:
     context_limit: int | None
 
     def for_split(self, manifest_path: Path, manifest: Any, split: SplitName) -> TokenStatSplit:
-        lengths = [
-            len(_extract_token_ids(self.tokenizer, _render(self.serializer, row)))
-            for row in iter_materialized_records(manifest_path, manifest, split)
-        ]
-        truncated = (
-            sum(length > self.context_limit for length in lengths) if self.context_limit else 0
-        )
+        record_count = total_tokens = truncated = 0
+        minimum_tokens: int | None = None
+        maximum_tokens = 0
+        for row in iter_materialized_records(manifest_path, manifest, split):
+            length = len(_extract_token_ids(self.tokenizer, _render(self.serializer, row)))
+            record_count += 1
+            total_tokens += length
+            minimum_tokens = length if minimum_tokens is None else min(minimum_tokens, length)
+            maximum_tokens = max(maximum_tokens, length)
+            if self.context_limit is not None and length > self.context_limit:
+                truncated += 1
+        if minimum_tokens is None:
+            raise ValueError(f"frozen {split} split contains no records")
         return TokenStatSplit(
-            record_count=len(lengths),
-            total_tokens=sum(lengths),
-            minimum_tokens=min(lengths),
-            maximum_tokens=max(lengths),
+            record_count=record_count,
+            total_tokens=total_tokens,
+            minimum_tokens=minimum_tokens,
+            maximum_tokens=maximum_tokens,
             truncated_records=truncated,
         )
 

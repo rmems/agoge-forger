@@ -173,6 +173,33 @@ def test_evaluation_contract_serializes_before_creating_file(tmp_path, monkeypat
     assert not contract_path.exists()
 
 
+def test_evaluation_contract_cleans_partial_staging_after_write_failure(tmp_path, monkeypatch):
+    manifest_path, _, base, sft = evaluation_case(tmp_path)
+    contract_path = tmp_path / "eval" / "contract.json"
+
+    def fail_after_partial_write(path, payload):
+        path.write_bytes(payload[:8])
+        raise OSError("synthetic contract write failure")
+
+    monkeypatch.setattr(
+        contract_module,
+        "_write_contract_payload",
+        fail_after_partial_write,
+        raising=False,
+    )
+
+    with pytest.raises(OSError, match="synthetic contract write failure"):
+        build_evaluation_contract(
+            manifest_path=manifest_path,
+            contract_path=contract_path,
+            base=base,
+            sft=sft,
+        )
+
+    assert not contract_path.exists()
+    assert not any(contract_path.parent.iterdir())
+
+
 def test_evaluation_contract_requires_immutable_model_and_tokenizer_revisions(tmp_path):
     _, _, base, _ = evaluation_case(tmp_path)
 

@@ -191,6 +191,11 @@ class TokenStatSplit(FrozenModel):
     def validate_bounds(self) -> TokenStatSplit:
         if self.minimum_tokens > self.maximum_tokens:
             raise ValueError("minimum_tokens cannot exceed maximum_tokens")
+        remaining_records = self.record_count - 1
+        minimum_total = self.maximum_tokens + self.minimum_tokens * remaining_records
+        maximum_total = self.minimum_tokens + self.maximum_tokens * remaining_records
+        if not minimum_total <= self.total_tokens <= maximum_total:
+            raise ValueError("total_tokens is inconsistent with record_count and token bounds")
         if self.truncated_records > self.record_count:
             raise ValueError("truncated_records cannot exceed record_count")
         return self

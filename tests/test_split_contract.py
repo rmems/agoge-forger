@@ -153,6 +153,32 @@ def test_frozen_dataset_cache_identity_changes_with_manifest_and_split_digests(
     assert captured[0]["request"].split_sha256 != captured[1]["request"].split_sha256
 
 
+def test_frozen_training_dataset_projects_away_heterogeneous_metadata(tmp_path, monkeypatch):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    rows = [
+        {
+            "canonical_id": f"sample-{index:03d}",
+            "lineage_id": f"lineage-{index:03d}",
+            "text": f"Training row {index}",
+            "metadata": index if index % 2 else {"source": index},
+        }
+        for index in range(30)
+    ]
+    source.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in rows))
+    _materialize(source, output)
+
+    def from_generator(generate, *, gen_kwargs):
+        return list(generate(**gen_kwargs))
+
+    monkeypatch.setattr("agoge_forger.split_loaders.Dataset.from_generator", from_generator)
+
+    dataset = load_frozen_dataset(output / "split_manifest.json", "train")
+
+    assert dataset
+    assert all(set(row) == {"text"} for row in dataset)
+
+
 def test_source_and_materialized_mutations_are_detected(tmp_path):
     source = tmp_path / "curated.jsonl"
     output = tmp_path / "frozen"

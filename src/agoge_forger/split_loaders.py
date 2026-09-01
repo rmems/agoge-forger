@@ -121,4 +121,5 @@ def _generate_frozen_records(request: _FrozenDatasetRequest) -> Iterator[dict[st
         raise ValueError("frozen dataset split digest changed after cache identity was established")
     records = iter_materialized_records(path, manifest, request.split)
     for index, row in enumerate(records, 1):
-        yield normalize_row(row, tokenizer=request.tokenizer, index=index)
+        normalized = normalize_row(row, tokenizer=request.tokenizer, index=index)
+        yield {"text": normalized["text"]}

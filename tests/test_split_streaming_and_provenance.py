@@ -1,5 +1,6 @@
 import json
 import os
+import tracemalloc
 import weakref
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from agoge_forger.split_contract import (
     TokenizerBinding,
     TokenStatisticsDerivation,
     TokenStatisticsSpec,
+    TokenStatSplit,
     canonical_json_bytes,
     iter_frozen_records,
     materialize_split,
@@ -392,6 +394,48 @@ def test_token_statistics_hashes_the_manifest_snapshot_it_counted(tmp_path, monk
     assert replaced
     assert statistics.split_manifest_sha256 == sha256_bytes(original_snapshot)
     assert statistics.split_manifest_sha256 != sha256_bytes(manifest_path.read_bytes())
+
+
+def test_token_counter_aggregates_large_splits_without_retaining_lengths(monkeypatch):
+    record_count = 100_000
+
+    def records(*_args):
+        for index in range(record_count):
+            yield {"text": str(index + 300)}
+
+    monkeypatch.setattr(split_token_stats, "iter_materialized_records", records)
+    counter = split_token_stats._TokenCounter(
+        tokenizer=lambda text: range(int(text)),
+        serializer=lambda row: row["text"],
+        context_limit=50_000,
+    )
+
+    tracemalloc.start()
+    try:
+        statistics = counter.for_split(Path("manifest.json"), object(), "train")
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert statistics.record_count == record_count
+    assert statistics.minimum_tokens == 300
+    assert statistics.maximum_tokens == record_count + 299
+    assert peak_bytes < 1_000_000
+
+
+@pytest.mark.parametrize(
+    "total_tokens",
+    [19, 20, 40, 41],
+)
+def test_token_stat_split_rejects_totals_outside_declared_bounds(total_tokens):
+    with pytest.raises(ValueError, match="total_tokens"):
+        TokenStatSplit(
+            record_count=2,
+            total_tokens=total_tokens,
+            minimum_tokens=10,
+            maximum_tokens=20,
+            truncated_records=0,
+        )
 
 
 def test_serializer_provenance_is_rederived_at_write_time(tmp_path, monkeypatch):
