@@ -71,11 +71,13 @@ atomic no-replace directory publication. The capability is checked before any
 source or payload staging begins. Validation on platforms without safe
 descriptor-relative traversal fails with a controlled diagnostic.
 
-Validation normally creates short-lived verified copies beside the manifest
-and optional source so they remain on the same filesystem. For read-only
-snapshot mounts, set `AGOGE_VALIDATION_STAGING_DIR` to an existing writable
-directory. Validation removes those temporary copies after use; it never edits
-the frozen snapshot.
+Validation normally creates short-lived verified copies beside the manifest,
+optional source, and model artifact bundle so they remain on the same
+filesystem. For read-only snapshot or artifact mounts, set
+`AGOGE_VALIDATION_STAGING_DIR` to an existing writable directory. Validation
+removes those temporary copies after use; it never edits the frozen inputs.
+When validating an adapter or merged-model bundle, provision staging capacity
+for all files named by its artifact index.
 
 `validate_split_manifest(path, source_path=...)` verifies the source SHA-256,
 the complete source-to-member mapping (using the recorded repository-relative

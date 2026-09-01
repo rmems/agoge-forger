@@ -213,3 +213,18 @@ def test_evaluation_contract_rejects_absolute_artifact_reference(tmp_path, refer
 
     with pytest.raises(ValidationError, match="portable relative paths"):
         validate_evaluation_contract(contract_path)
+
+
+def test_evaluation_contract_rejects_duplicate_json_keys(tmp_path):
+    manifest_path, _, base, sft = evaluation_case(tmp_path)
+    contract_path = tmp_path / "eval" / "contract.json"
+    build_contract(tmp_path, manifest_path, base, sft)
+    payload = contract_path.read_bytes().replace(
+        b"{",
+        b'{"schema_version":"agoge.evaluation-contract.v1",',
+        1,
+    )
+    contract_path.write_bytes(payload)
+
+    with pytest.raises(ValueError, match="invalid evaluation contract JSON"):
+        validate_evaluation_contract(contract_path)

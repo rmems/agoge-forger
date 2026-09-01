@@ -6,13 +6,13 @@ model loading, inference, scoring, or result generation.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from .._strict_json import decode_json_object
 from ..split_contract import (
     SplitManifest,
     canonical_json_bytes,
@@ -143,8 +143,12 @@ def held_out_task_ids(manifest: SplitManifest) -> tuple[str, ...]:
 def load_evaluation_contract(contract_path: str | Path) -> PairedEvaluationContract:
     path = Path(contract_path).expanduser().resolve(strict=True)
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        value = decode_json_object(
+            path.read_bytes(),
+            str(path),
+            object_label="evaluation contract",
+        )
+    except ValueError as exc:
         raise ValueError(f"invalid evaluation contract JSON: {path}") from exc
     return PairedEvaluationContract.model_validate(value)
 

@@ -97,6 +97,19 @@ uv run agoge export-final-model \
   --out-dir merged/<run_name>
 ```
 
+That command applies directly to frozen, evaluation-eligible runs whose
+adapter index carries producer provenance. An ordinary `dataset_path` run is a
+legacy, unprovenanced artifact; exporting one requires the explicit
+`--allow-unsafe-serialization` flag and the result is not eligible for paired
+evaluation claims.
+
+```bash
+uv run agoge export-final-model \
+  --run-dir adapters/<legacy_run_name> \
+  --out-dir merged/<legacy_run_name> \
+  --allow-unsafe-serialization
+```
+
 `checkpoint-*` directories are trainer recovery snapshots.
 
 The adapter saved at `adapters/<run_name>` is the LoRA output for continued PEFT work.

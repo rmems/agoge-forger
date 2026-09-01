@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from .._validation_staging import validation_directory, validation_staging_dir
 from ._artifact_schema import (
     ArtifactIndex,
     ArtifactIndexEntry,
@@ -48,15 +48,22 @@ def verified_artifact_snapshot(
     indexed = _indexed_artifacts(root, index)
     _require_complete_index(initial, set(indexed) | {index_relative})
 
-    with tempfile.TemporaryDirectory(
-        prefix=".agoge-artifact-snapshot-", dir=root.parent
-    ) as snapshot_dir:
+    staging_parent = _artifact_staging_parent(root)
+    with validation_directory(".agoge-artifact-snapshot-", staging_parent) as snapshot_dir:
         snapshot_indexed = _copy_snapshot(
             _SnapshotPlan(root, index_relative, expected_index_sha256, indexed),
-            Path(snapshot_dir),
+            snapshot_dir,
         )
         yield index, snapshot_indexed
         _require_bundle_unchanged(root, initial)
+
+
+def _artifact_staging_parent(root: Path) -> Path:
+    staging = validation_staging_dir(root.parent)
+    resolved_root = root.resolve()
+    if staging == resolved_root or staging.is_relative_to(resolved_root):
+        raise ValueError("validation staging must be outside the artifact bundle")
+    return staging
 
 
 def _read_verified_index(root: Path, index_relative: PurePosixPath, expected_digest: str) -> bytes:

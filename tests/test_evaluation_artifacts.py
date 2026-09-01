@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import shutil
@@ -8,7 +9,9 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
+from agoge_forger import _validation_staging
 from agoge_forger.eval import (
+    _artifact_snapshot,
     _artifact_validation,
     _descriptor_bundle,
     _merged_model_schema,
@@ -332,6 +335,75 @@ def test_merged_tensor_schema_uses_one_verified_bundle_snapshot(tmp_path, monkey
 
     assert len(observed_roots) == 1
     assert next(iter(observed_roots)).parent == output_dir.parent
+
+
+def test_artifact_validation_accepts_configured_writable_staging(tmp_path, monkeypatch):
+    _, _, sft, output_dir = artifact_case(tmp_path, "merged-read-only")
+    write_complete_merged_model(output_dir, sharded=False)
+    merged_sft = with_artifact(sft, output_dir, kind="merged_model")
+    staging = tmp_path / "writable-staging"
+    staging.mkdir()
+    monkeypatch.setenv("AGOGE_VALIDATION_STAGING_DIR", str(staging))
+    assert merged_sft.artifact is not None
+    artifact_index = Path(merged_sft.artifact.artifact_index_path)
+
+    with _artifact_snapshot.verified_artifact_snapshot(
+        output_dir,
+        artifact_index,
+        merged_sft.artifact.artifact_index_sha256,
+    ) as (_, indexed):
+        assert all(path.is_relative_to(staging) for _, path in indexed.values())
+
+    assert list(staging.iterdir()) == []
+
+
+def test_artifact_validation_rejects_staging_inside_bundle(tmp_path, monkeypatch):
+    _, _, sft, output_dir = artifact_case(tmp_path, "merged-contained-staging")
+    write_complete_merged_model(output_dir, sharded=False)
+    merged_sft = with_artifact(sft, output_dir, kind="merged_model")
+    staging = output_dir / "staging"
+    staging.mkdir()
+    monkeypatch.setenv("AGOGE_VALIDATION_STAGING_DIR", str(staging))
+    assert merged_sft.artifact is not None
+
+    with (
+        pytest.raises(ValueError, match="outside the artifact bundle"),
+        _artifact_snapshot.verified_artifact_snapshot(
+            output_dir,
+            Path(merged_sft.artifact.artifact_index_path),
+            merged_sft.artifact.artifact_index_sha256,
+        ),
+    ):
+        pytest.fail("contained staging must fail before yielding")
+
+
+def test_artifact_validation_reports_read_only_staging(tmp_path, monkeypatch):
+    _, _, sft, output_dir = artifact_case(tmp_path, "merged-read-only-error")
+    write_complete_merged_model(output_dir, sharded=False)
+    merged_sft = with_artifact(sft, output_dir, kind="merged_model")
+    assert merged_sft.artifact is not None
+
+    def read_only_staging(*args, **kwargs):
+        raise OSError(errno.EROFS, "read-only filesystem")
+
+    monkeypatch.setattr(
+        _validation_staging.tempfile,
+        "TemporaryDirectory",
+        read_only_staging,
+    )
+
+    with (
+        pytest.raises(ValueError, match="set AGOGE_VALIDATION_STAGING_DIR") as raised,
+        _artifact_snapshot.verified_artifact_snapshot(
+            output_dir,
+            Path(merged_sft.artifact.artifact_index_path),
+            merged_sft.artifact.artifact_index_sha256,
+        ),
+    ):
+        pytest.fail("read-only staging must fail before yielding")
+
+    assert isinstance(raised.value.__cause__, OSError)
+    assert raised.value.__cause__.errno == errno.EROFS
 
 
 def test_evaluation_contract_rejects_incomplete_merged_model_state(tmp_path):

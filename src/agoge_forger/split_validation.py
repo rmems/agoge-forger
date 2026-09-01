@@ -13,6 +13,11 @@ from pathlib import Path
 
 from ._source_snapshot import copy_source_snapshot
 from ._strict_json import decode_json_object
+from ._validation_staging import (
+    unwritable_staging_error,
+    validation_directory,
+    validation_staging_dir,
+)
 from .split_materialize import (
     LeakageAuditBuilder,
     SourceRecord,
@@ -99,14 +104,8 @@ def _manifest_records(manifest: SplitManifest) -> list[SourceRecord]:
 
 
 def _validate_source(manifest: SplitManifest, source: Path) -> None:
-    try:
-        staging = tempfile.TemporaryDirectory(
-            prefix=".agoge-source-validation-", dir=_validation_staging_dir(source.parent)
-        )
-    except PermissionError as exc:
-        raise _unwritable_staging_error() from exc
-    with staging as snapshot_dir:
-        snapshot = Path(snapshot_dir) / "source.jsonl"
+    with validation_directory(".agoge-source-validation-", source.parent) as snapshot_dir:
+        snapshot = snapshot_dir / "source.jsonl"
         actual_source_sha = copy_source_snapshot(source, snapshot)
         _require_equal(
             actual_source_sha,
@@ -226,10 +225,10 @@ def verified_split_snapshot(
             snapshot_descriptor, snapshot_name = tempfile.mkstemp(
                 prefix=f"agoge-{split}-snapshot-",
                 suffix=".jsonl",
-                dir=_validation_staging_dir(manifest_path.parent),
+                dir=validation_staging_dir(manifest_path.parent),
             )
         except PermissionError as exc:
-            raise _unwritable_staging_error() from exc
+            raise unwritable_staging_error() from exc
         snapshot_path = Path(snapshot_name)
         try:
             digest = _copy_artifact_snapshot(descriptor, snapshot_descriptor)
@@ -247,23 +246,6 @@ def verified_split_snapshot(
             snapshot_path.unlink(missing_ok=True)
     finally:
         os.close(descriptor)
-
-
-def _validation_staging_dir(preferred: Path) -> Path:
-    configured = os.environ.get("AGOGE_VALIDATION_STAGING_DIR")
-    if configured is None:
-        return preferred
-    path = Path(configured).expanduser().resolve(strict=True)
-    if not path.is_dir():
-        raise ValueError(f"validation staging path must be a directory: {path}")
-    return path
-
-
-def _unwritable_staging_error() -> ValueError:
-    return ValueError(
-        "validation staging is not writable; set AGOGE_VALIDATION_STAGING_DIR "
-        "to an existing writable directory"
-    )
 
 
 def _open_split_descriptor(root: Path, relative_path: str) -> int:
