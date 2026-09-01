@@ -8,7 +8,7 @@ from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from transformers import PreTrainedTokenizerFast
 
-from agoge_forger import split_loaders, split_validation
+from agoge_forger import split_loaders, split_token_stats, split_validation
 from agoge_forger.split_contract import (
     SerializerBinding,
     SplitMaterializationSpec,
@@ -347,6 +347,37 @@ def test_tokenizer_state_is_rederived_after_counting_before_output(tmp_path):
         )
 
     assert not output.exists()
+
+
+def test_token_statistics_hashes_the_manifest_snapshot_it_counted(tmp_path, monkeypatch):
+    manifest_path, _ = _materialized_manifest(tmp_path)
+    original_snapshot = manifest_path.read_bytes()
+    replacement_payload = json.loads(original_snapshot)
+    replacement_payload["source"]["dataset_version"] = "replaced-v2"
+    replacement_path = tmp_path / "replacement-manifest.json"
+    replacement_path.write_bytes(canonical_json_bytes(replacement_payload) + b"\n")
+    original_for_split = split_token_stats._TokenCounter.for_split
+    replaced = False
+
+    def count_then_replace(self, path, manifest, split):
+        nonlocal replaced
+        result = original_for_split(self, path, manifest, split)
+        if not replaced:
+            os.replace(replacement_path, manifest_path)
+            replaced = True
+        return result
+
+    monkeypatch.setattr(split_token_stats._TokenCounter, "for_split", count_then_replace)
+
+    statistics = write_token_statistics(
+        manifest_path,
+        tmp_path / "token-statistics.json",
+        _derivation(),
+    )
+
+    assert replaced
+    assert statistics.split_manifest_sha256 == sha256_bytes(original_snapshot)
+    assert statistics.split_manifest_sha256 != sha256_bytes(manifest_path.read_bytes())
 
 
 def test_serializer_provenance_is_rederived_at_write_time(tmp_path, monkeypatch):

@@ -1,10 +1,15 @@
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
+import torch
 from pydantic import ValidationError
+from safetensors.torch import load_file, save_file
+from transformers import LlamaConfig, LlamaForCausalLM
 
+from agoge_forger.eval import _artifact_validation
 from agoge_forger.eval import contract as contract_module
 from agoge_forger.eval.contract import (
     ArtifactIndexReference,
@@ -116,6 +121,22 @@ def _provenance(
 def _write_merged_config(output_dir: Path, payload: dict[str, str] | None = None) -> None:
     complete = {"model_type": "llama"} if payload is None else payload
     (output_dir / "config.json").write_bytes(canonical_json_bytes(complete) + b"\n")
+
+
+def _write_complete_merged_model(
+    output_dir: Path, *, sharded: bool, tie_word_embeddings: bool = False
+) -> None:
+    config = LlamaConfig(
+        vocab_size=16,
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        tie_word_embeddings=tie_word_embeddings,
+    )
+    model = LlamaForCausalLM(config)
+    model.save_pretrained(output_dir, max_shard_size="1KB" if sharded else "1GB")
 
 
 def _refresh_contract_artifact_digest(contract_path: Path, artifact_index: Path) -> None:
@@ -619,28 +640,7 @@ def test_evaluation_contract_revalidates_peft_provenance(tmp_path):
 @pytest.mark.parametrize("layout", ["single", "sharded"])
 def test_evaluation_contract_accepts_valid_merged_model_layouts(tmp_path, layout):
     manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged")
-    _write_merged_config(output_dir)
-    if layout == "single":
-        _write_safetensors(output_dir / "model.safetensors")
-    else:
-        first = "model-00001-of-00002.safetensors"
-        second = "model-00002-of-00002.safetensors"
-        _write_safetensors(
-            output_dir / first,
-            keys=("layer.0.weight", "layer.0.bias"),
-        )
-        _write_safetensors(output_dir / second, value=1, keys=("layer.1.weight",))
-        _write_shard_index(
-            output_dir,
-            {
-                "metadata": {"total_size": 2},
-                "weight_map": {
-                    "layer.0.weight": first,
-                    "layer.0.bias": first,
-                    "layer.1.weight": second,
-                },
-            },
-        )
+    _write_complete_merged_model(output_dir, sharded=layout == "sharded")
     merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
     contract_path = tmp_path / "eval" / "contract.json"
 
@@ -649,6 +649,149 @@ def test_evaluation_contract_accepts_valid_merged_model_layouts(tmp_path, layout
     assert validate_evaluation_contract(contract_path) == written
     assert written.sft.artifact is not None
     assert written.sft.artifact.kind == "merged_model"
+
+
+def test_merged_tensor_schema_keeps_only_one_verified_shard_snapshot(tmp_path, monkeypatch):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-sharded")
+    _write_complete_merged_model(output_dir, sharded=True)
+    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
+    original_collect = _artifact_validation._collect_tensor_schema
+    observed_snapshots = 0
+
+    def collect_one_snapshot(path, portable, schema):
+        nonlocal observed_snapshots
+        snapshots = list(path.parent.glob("*.safetensors"))
+        assert snapshots == [path]
+        observed_snapshots += 1
+        original_collect(path, portable, schema)
+
+    monkeypatch.setattr(
+        _artifact_validation,
+        "_collect_tensor_schema",
+        collect_one_snapshot,
+    )
+
+    _build(tmp_path, manifest_path, base, merged_sft)
+
+    assert observed_snapshots > 1
+
+
+def test_evaluation_contract_rejects_incomplete_merged_model_state(tmp_path):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-incomplete")
+    _write_merged_config(
+        output_dir,
+        {
+            "model_type": "llama",
+            "vocab_size": 16,
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 2,
+        },
+    )
+    _write_safetensors(output_dir / "model.safetensors", keys=("unrelated.weight",))
+    incomplete_sft = _with_artifact(sft, output_dir, kind="merged_model")
+
+    _assert_build_rejected(
+        (tmp_path, manifest_path, base, incomplete_sft),
+        "merged-model tensor schema",
+    )
+
+
+def test_evaluation_contract_rejects_unsupported_merged_architecture_offline(tmp_path):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-unsupported")
+    _write_merged_config(output_dir, {"model_type": "remote_custom_model"})
+    _write_safetensors(output_dir / "model.safetensors")
+    unsupported_sft = _with_artifact(sft, output_dir, kind="merged_model")
+
+    _assert_build_rejected(
+        (tmp_path, manifest_path, base, unsupported_sft),
+        "local, remote-code-disabled causal LM schema",
+    )
+
+
+def test_ignored_model_save_keys_are_literal_not_patterns():
+    class ModelWithIgnoredKey:
+        _keys_to_ignore_on_save = ("layer.0.weight",)
+        all_tied_weights_keys = None
+
+    expected = {
+        "layer.0.weight": (1,),
+        "layerX0Yweight": (1,),
+    }
+
+    _artifact_validation._drop_omitted_model_keys(expected, ModelWithIgnoredKey())
+
+    assert expected == {"layerX0Yweight": (1,)}
+
+
+def test_merged_tensor_schema_rechecks_the_inspected_snapshot(tmp_path, monkeypatch):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-race")
+    _write_complete_merged_model(output_dir, sharded=False)
+    weights_path = output_dir / "model.safetensors"
+    valid_replacement = tmp_path / "valid-model.safetensors"
+    shutil.copy2(weights_path, valid_replacement)
+    _write_safetensors(weights_path, keys=("unrelated.weight",))
+    raced_sft = _with_artifact(sft, output_dir, kind="merged_model")
+    original_require_matching = _artifact_validation._require_matching_artifact
+    replaced = False
+
+    def verify_then_replace(entry, target):
+        nonlocal replaced
+        original_require_matching(entry, target)
+        if target == weights_path and not replaced:
+            os.replace(valid_replacement, weights_path)
+            replaced = True
+
+    monkeypatch.setattr(
+        _artifact_validation,
+        "_require_matching_artifact",
+        verify_then_replace,
+    )
+
+    _assert_build_rejected(
+        (tmp_path, manifest_path, base, raced_sft),
+        "changed before tensor schema validation",
+    )
+    assert replaced
+
+
+def test_evaluation_contract_accepts_omitted_tied_embedding_alias(tmp_path):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-tied")
+    _write_complete_merged_model(output_dir, sharded=False, tie_word_embeddings=True)
+    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
+
+    written = _build(tmp_path, manifest_path, base, merged_sft)
+
+    assert validate_evaluation_contract(tmp_path / "eval" / "contract.json") == written
+
+
+@pytest.mark.parametrize("mutation", ["missing", "unexpected", "wrong-shape", "config-drift"])
+def test_evaluation_contract_rejects_merged_model_tensor_schema_drift(tmp_path, mutation):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, f"merged-{mutation}")
+    _write_complete_merged_model(output_dir, sharded=False)
+    weights_path = output_dir / "model.safetensors"
+    if mutation == "config-drift":
+        config = json.loads((output_dir / "config.json").read_bytes())
+        config["num_hidden_layers"] = 2
+        (output_dir / "config.json").write_bytes(canonical_json_bytes(config) + b"\n")
+    else:
+        tensors = load_file(weights_path)
+        first_key = next(iter(tensors))
+        if mutation == "missing":
+            tensors.pop(first_key)
+        elif mutation == "unexpected":
+            tensors["unexpected.weight"] = torch.zeros((1, 1))
+        else:
+            tensors[first_key] = torch.zeros((1,))
+        save_file(tensors, weights_path)
+    drifted_sft = _with_artifact(sft, output_dir, kind="merged_model")
+
+    _assert_build_rejected(
+        (tmp_path, manifest_path, base, drifted_sft),
+        "merged-model tensor schema",
+    )
 
 
 @pytest.mark.parametrize(

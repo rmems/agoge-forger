@@ -25,9 +25,9 @@ from .split_schema import (
     TokenStatisticsSpec,
     TokenStatSplit,
     canonical_json_bytes,
-    sha256_file,
+    sha256_bytes,
 )
-from .split_validation import validate_split_manifest
+from .split_validation import validate_split_manifest_snapshot
 
 
 @dataclass(frozen=True)
@@ -52,12 +52,13 @@ def write_token_statistics(
 
     spec = _verified_spec(derivation)
     path = Path(manifest_path).expanduser().resolve(strict=True)
-    manifest = validate_split_manifest(path)
+    manifest_snapshot = path.read_bytes()
+    manifest = validate_split_manifest_snapshot(path, manifest_snapshot)
     counter = _TokenCounter(derivation.tokenizer, derivation.serializer, spec.context_limit)
     split_stats = {split: counter.for_split(path, manifest, split) for split in SPLIT_NAMES}
     spec = _verified_spec(derivation)
     statistics = TokenStatistics(
-        split_manifest_sha256=sha256_file(path),
+        split_manifest_sha256=sha256_bytes(manifest_snapshot),
         source_split_sha256={split: manifest.splits[split].sha256 for split in SPLIT_NAMES},
         splits=split_stats,
         **spec.model_dump(),

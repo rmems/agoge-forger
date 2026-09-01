@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from agoge_forger import split_materialize
 from agoge_forger.datasets import normalize_row
 from agoge_forger.split_contract import (
     CanonicalIdentityPolicy,
@@ -206,3 +208,55 @@ def test_streaming_source_reader_rejects_an_empty_source(tmp_path: Path) -> None
                 source_coordinate_path=SOURCE_PATH,
             )
         )
+
+
+def test_materialization_hashes_the_same_source_snapshot_it_splits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source.jsonl"
+    output = tmp_path / "snapshot"
+    _write_rows(source, _text_rows())
+    original_payload = source.read_bytes()
+    replacement_rows = [
+        {**row, "text": f"Replacement row {index}"} for index, row in enumerate(_text_rows())
+    ]
+    replacement_payload = b"".join(canonical_json_bytes(row) + b"\n" for row in replacement_rows)
+    replacement = tmp_path / "replacement.jsonl"
+    replacement.write_bytes(replacement_payload)
+    original_iter = split_materialize.iter_source_records
+
+    def iterate_then_replace(*args, **kwargs):
+        yield from original_iter(*args, **kwargs)
+        os.replace(replacement, source)
+
+    monkeypatch.setattr(split_materialize, "iter_source_records", iterate_then_replace)
+
+    manifest = materialize_split(source, output, _spec())
+
+    assert manifest.source.sha256 == split_materialize.sha256_bytes(original_payload)
+    assert validate_split_manifest(output / "split_manifest.json") == manifest
+    with pytest.raises(ValueError, match="source SHA-256 mismatch"):
+        validate_split_manifest(output / "split_manifest.json", source_path=source)
+
+
+def test_materialization_assigns_metadata_without_retaining_source_payloads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source.jsonl"
+    output = tmp_path / "snapshot"
+    _write_rows(source, _text_rows())
+    original_assign = split_materialize.assign_records
+    observed_metadata_only = False
+
+    def assert_metadata_only(records, spec):
+        nonlocal observed_metadata_only
+        assert all(record.row == {} and record.raw_line == b"" for record in records)
+        observed_metadata_only = True
+        return original_assign(records, spec)
+
+    monkeypatch.setattr(split_materialize, "assign_records", assert_metadata_only)
+
+    manifest = materialize_split(source, output, _spec())
+
+    assert observed_metadata_only
+    assert validate_split_manifest(output / "split_manifest.json") == manifest

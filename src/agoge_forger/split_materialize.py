@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +24,6 @@ from .split_schema import (
     SplitName,
     canonical_json_bytes,
     sha256_bytes,
-    sha256_file,
     validate_repository_relative_path,
 )
 
@@ -31,6 +33,14 @@ class SourceRecord:
     row: dict[str, Any]
     raw_line: bytes
     member: SplitMember
+
+
+@dataclass(frozen=True)
+class _SplitWritePlan:
+    assignments: Mapping[SplitName, Sequence[int]]
+    records: Sequence[SourceRecord]
+    payloads: io.BufferedRandom
+    payload_spans: Sequence[tuple[int, int]]
 
 
 @dataclass
@@ -417,20 +427,25 @@ def materialize_split(
             "exact-content hashing"
         )
     _validate_materialization_paths(source, destination)
-    records = read_source_records(
-        source,
-        spec.canonical_identity,
-        source_coordinate_path=spec.source_path,
-    )
-    assignments = assign_records(records, spec)
-    artifacts, payloads = _build_artifacts(assignments, records)
-    manifest = _build_manifest(
-        _source_file(source, spec, len(records)),
-        spec,
-        artifacts,
-        leakage_audit(assignments, records),
-    )
-    _write_snapshot(destination, manifest, payloads)
+    with tempfile.TemporaryDirectory(prefix="agoge-source-snapshot-") as staging_dir:
+        staging = Path(staging_dir)
+        source_snapshot = staging / "source.jsonl"
+        source_sha256 = _copy_source_snapshot(source, source_snapshot)
+        with (staging / "canonical-payloads.bin").open("w+b") as payloads:
+            records, payload_spans = _stage_source_records(source_snapshot, spec, payloads)
+            assignments = assign_records(records, spec)
+            destination.mkdir(parents=True, exist_ok=False)
+            artifacts = _write_split_artifacts(
+                destination,
+                _SplitWritePlan(assignments, records, payloads, payload_spans),
+            )
+            manifest = _build_manifest(
+                _source_file(source_sha256, spec, len(records)),
+                spec,
+                artifacts,
+                leakage_audit(assignments, records),
+            )
+            _write_snapshot_metadata(destination, manifest)
     return manifest
 
 
@@ -443,25 +458,77 @@ def _validate_materialization_paths(source: Path, destination: Path) -> None:
         raise ValueError(f"source must be a file: {source}")
 
 
-def _build_artifacts(
-    assignments: Mapping[SplitName, Sequence[int]], records: Sequence[SourceRecord]
-) -> tuple[dict[SplitName, SplitArtifact], dict[SplitName, bytes]]:
-    artifacts: dict[SplitName, SplitArtifact] = {}
-    payloads: dict[SplitName, bytes] = {}
-    for split, indexes in assignments.items():
-        payload = b"".join(canonical_json_bytes(records[index].row) + b"\n" for index in indexes)
-        payloads[split] = payload
-        artifacts[split] = SplitArtifact(
-            path=f"splits/{split}.jsonl",
-            sha256=sha256_bytes(payload),
-            record_count=len(indexes),
-            members=tuple(records[index].member for index in indexes),
+def _copy_source_snapshot(source: Path, snapshot: Path) -> str:
+    digest = hashlib.sha256()
+    with source.open("rb") as source_handle, snapshot.open("xb") as snapshot_handle:
+        for chunk in iter(lambda: source_handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            snapshot_handle.write(chunk)
+    return digest.hexdigest()
+
+
+def _stage_source_records(
+    source_snapshot: Path,
+    spec: SplitMaterializationSpec,
+    payloads: io.BufferedRandom,
+) -> tuple[list[SourceRecord], list[tuple[int, int]]]:
+    records: list[SourceRecord] = []
+    spans: list[tuple[int, int]] = []
+    for record in iter_source_records(
+        source_snapshot,
+        spec.canonical_identity,
+        source_coordinate_path=spec.source_path,
+    ):
+        line = canonical_json_bytes(record.row) + b"\n"
+        offset = payloads.tell()
+        payloads.write(line)
+        spans.append((offset, len(line)))
+        records.append(
+            SourceRecord(
+                row={},
+                raw_line=b"",
+                member=record.member,
+            )
         )
-    return artifacts, payloads
+    payloads.flush()
+    return records, spans
+
+
+def _write_split_artifacts(
+    destination: Path,
+    plan: _SplitWritePlan,
+) -> dict[SplitName, SplitArtifact]:
+    artifacts: dict[SplitName, SplitArtifact] = {}
+    for split, indexes in plan.assignments.items():
+        relative_path = f"splits/{split}.jsonl"
+        artifact_path = destination / relative_path
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256()
+        try:
+            with artifact_path.open("xb") as handle:
+                for index in indexes:
+                    offset, length = plan.payload_spans[index]
+                    plan.payloads.seek(offset)
+                    line = plan.payloads.read(length)
+                    if len(line) != length:
+                        raise OSError("staged canonical split payload was truncated")
+                    digest.update(line)
+                    handle.write(line)
+        except FileExistsError as exc:
+            raise FileExistsError(
+                f"refusing to overwrite frozen artifact: {artifact_path}"
+            ) from exc
+        artifacts[split] = SplitArtifact(
+            path=relative_path,
+            sha256=digest.hexdigest(),
+            record_count=len(indexes),
+            members=tuple(plan.records[index].member for index in indexes),
+        )
+    return artifacts
 
 
 def _source_file(
-    source: Path,
+    source_sha256: str,
     spec: SplitMaterializationSpec,
     record_count: int,
 ) -> SourceFile:
@@ -470,7 +537,7 @@ def _source_file(
         revision=spec.source_revision,
         dataset_version=spec.dataset_version,
         path=spec.source_path,
-        sha256=sha256_file(source),
+        sha256=source_sha256,
         record_count=record_count,
     )
 
@@ -494,14 +561,10 @@ def _build_manifest(
     )
 
 
-def _write_snapshot(
+def _write_snapshot_metadata(
     destination: Path,
     manifest: SplitManifest,
-    payloads: Mapping[SplitName, bytes],
 ) -> None:
-    destination.mkdir(parents=True, exist_ok=False)
-    for split, payload in payloads.items():
-        exclusive_write(destination / manifest.splits[split].path, payload)
     exclusive_write(destination / "split_manifest.json", _manifest_bytes(manifest))
     exclusive_write(destination / "split_report.md", _render_report(manifest).encode("utf-8"))
 
