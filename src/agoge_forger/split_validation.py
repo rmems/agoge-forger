@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import stat
 import tempfile
@@ -13,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ._source_snapshot import copy_source_snapshot
+from ._strict_json import decode_json_object
 from .split_materialize import (
     LeakageAuditBuilder,
     SourceRecord,
@@ -37,8 +37,8 @@ def load_split_manifest(manifest_path: str | Path) -> SplitManifest:
 
 def _load_split_manifest_snapshot(content: bytes, path: Path) -> SplitManifest:
     try:
-        value = json.loads(content)
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        value = decode_json_object(content, str(path), object_label="split manifest")
+    except ValueError as exc:
         raise ValueError(f"invalid split manifest JSON: {path}") from exc
     return SplitManifest.model_validate(value)
 
@@ -99,9 +99,13 @@ def _manifest_records(manifest: SplitManifest) -> list[SourceRecord]:
 
 
 def _validate_source(manifest: SplitManifest, source: Path) -> None:
-    with tempfile.TemporaryDirectory(
-        prefix=".agoge-source-validation-", dir=source.parent
-    ) as snapshot_dir:
+    try:
+        staging = tempfile.TemporaryDirectory(
+            prefix=".agoge-source-validation-", dir=_validation_staging_dir(source.parent)
+        )
+    except PermissionError as exc:
+        raise _unwritable_staging_error() from exc
+    with staging as snapshot_dir:
         snapshot = Path(snapshot_dir) / "source.jsonl"
         actual_source_sha = copy_source_snapshot(source, snapshot)
         _require_equal(
@@ -218,11 +222,14 @@ def verified_split_snapshot(
     try:
         initial = _artifact_identity(os.fstat(descriptor), split)
         _require_stable_artifact(path, descriptor, initial, split)
-        snapshot_descriptor, snapshot_name = tempfile.mkstemp(
-            prefix=f"agoge-{split}-snapshot-",
-            suffix=".jsonl",
-            dir=manifest_path.parent,
-        )
+        try:
+            snapshot_descriptor, snapshot_name = tempfile.mkstemp(
+                prefix=f"agoge-{split}-snapshot-",
+                suffix=".jsonl",
+                dir=_validation_staging_dir(manifest_path.parent),
+            )
+        except PermissionError as exc:
+            raise _unwritable_staging_error() from exc
         snapshot_path = Path(snapshot_name)
         try:
             digest = _copy_artifact_snapshot(descriptor, snapshot_descriptor)
@@ -240,6 +247,23 @@ def verified_split_snapshot(
             snapshot_path.unlink(missing_ok=True)
     finally:
         os.close(descriptor)
+
+
+def _validation_staging_dir(preferred: Path) -> Path:
+    configured = os.environ.get("AGOGE_VALIDATION_STAGING_DIR")
+    if configured is None:
+        return preferred
+    path = Path(configured).expanduser().resolve(strict=True)
+    if not path.is_dir():
+        raise ValueError(f"validation staging path must be a directory: {path}")
+    return path
+
+
+def _unwritable_staging_error() -> ValueError:
+    return ValueError(
+        "validation staging is not writable; set AGOGE_VALIDATION_STAGING_DIR "
+        "to an existing writable directory"
+    )
 
 
 def _open_split_descriptor(root: Path, relative_path: str) -> int:

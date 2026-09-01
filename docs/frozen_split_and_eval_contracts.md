@@ -71,6 +71,12 @@ atomic no-replace directory publication. The capability is checked before any
 source or payload staging begins. Validation on platforms without safe
 descriptor-relative traversal fails with a controlled diagnostic.
 
+Validation normally creates short-lived verified copies beside the manifest
+and optional source so they remain on the same filesystem. For read-only
+snapshot mounts, set `AGOGE_VALIDATION_STAGING_DIR` to an existing writable
+directory. Validation removes those temporary copies after use; it never edits
+the frozen snapshot.
+
 `validate_split_manifest(path, source_path=...)` verifies the source SHA-256,
 the complete source-to-member mapping (using the recorded repository-relative
 path for source coordinates), every materialized split digest and count, and all
@@ -86,7 +92,9 @@ cannot silently reuse stale Arrow membership.
 
 For evaluation-eligible training, configure `split_manifest_path` together with
 `split_name: train` instead of `dataset_path`, and pin `revision` to a lowercase
-40-64 character commit digest. The trainer records the exact manifest and
+40-64 character commit digest. Frozen mode requires `dataset_text_field: text`
+and a Hub repository identifier for `model_id`; mutable local model directories
+are not evaluation eligible. The trainer records the exact manifest and
 training-split digests in `artifact_index.json`. Ordinary `dataset_path` runs
 remain supported but intentionally produce no claim that held-out records were
 excluded. Frozen-mode checkpoint resume is rejected until checkpoints carry
@@ -117,7 +125,8 @@ identity/hash, decoding settings, context window, truncation policy, or scoring
 version. Artifact validation additionally requires both adapter and merged SFT
 bundles to prove they were produced from that exact manifest's `train`
 artifact. Contract-relative paths use POSIX separators for relocation between
-Windows and Unix systems.
+Windows and Unix systems, and absolute or drive-prefixed references are
+rejected during schema validation.
 
 This foundation does not load a model, run inference, choose a checkpoint,
 score generations, or create claim-bearing results. Those #100 capabilities

@@ -19,6 +19,9 @@ _MERGED_WEIGHTS_PATH = PurePosixPath("model.safetensors")
 _MERGED_WEIGHTS_INDEX_PATH = PurePosixPath("model.safetensors.index.json")
 _MODEL_SHARD_PATTERN = re.compile(r"^model-(\d{5})-of-(\d{5})\.safetensors$")
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
+_PORTABLE_CONTRACT_REFERENCE_ERROR = (
+    "evaluation contract references must be portable relative paths"
+)
 
 
 class FrozenEvaluationModel(BaseModel):
@@ -68,6 +71,25 @@ class ArtifactValidationContext:
 
 
 IndexedArtifacts = dict[PurePosixPath, tuple[ArtifactIndexEntry, Path]]
+
+
+def portable_contract_reference(value: str) -> str:
+    if _is_nonportable_contract_reference(value):
+        raise ValueError(_PORTABLE_CONTRACT_REFERENCE_ERROR)
+    return value
+
+
+def _is_nonportable_contract_reference(value: str) -> bool:
+    portable = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    return any(
+        (
+            "\\" in value,
+            portable.is_absolute(),
+            windows.is_absolute(),
+            bool(windows.drive),
+        )
+    )
 
 
 def _parse_artifact_index(path: Path, payload: bytes) -> ArtifactIndex:

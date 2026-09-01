@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from ..split_contract import (
     SplitManifest,
@@ -28,6 +28,7 @@ ArtifactKind = _artifact_schema.ArtifactKind
 ArtifactValidationContext = _artifact_schema.ArtifactValidationContext
 FrozenEvaluationModel = _artifact_schema.FrozenEvaluationModel
 IndexedArtifacts = _artifact_schema.IndexedArtifacts
+portable_contract_reference = _artifact_schema.portable_contract_reference
 require_artifact_index = _artifact_validation.require_artifact_index
 
 EVALUATION_CONTRACT_VERSION: Literal["agoge.evaluation-contract.v1"] = (
@@ -93,11 +94,18 @@ class PairedEvaluationContract(FrozenEvaluationModel):
     base: EvaluationArm
     sft: EvaluationArm
 
+    @field_validator("split_manifest_path")
+    @classmethod
+    def require_relative_manifest_path(cls, value: str) -> str:
+        return portable_contract_reference(value)
+
     @model_validator(mode="after")
     def require_pair_comparability(self) -> PairedEvaluationContract:
         _require_arm_roles(self.base, self.sft)
         _require_task_identity(self)
         _require_no_arm_drift(self.base, self.sft)
+        if self.sft.artifact is not None:
+            portable_contract_reference(self.sft.artifact.artifact_index_path)
         return self
 
 

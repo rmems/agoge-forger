@@ -542,6 +542,70 @@ def test_split_validation_stages_snapshot_beside_manifest(tmp_path, monkeypatch)
     assert set(observed_directories) == {manifest_path.parent}
 
 
+def test_split_validation_accepts_configured_writable_staging(tmp_path, monkeypatch):
+    manifest_path, _ = _materialized_manifest(tmp_path)
+    staging = tmp_path / "writable-staging"
+    staging.mkdir()
+    original_mkstemp = split_validation.tempfile.mkstemp
+    original_temporary_directory = split_validation.tempfile.TemporaryDirectory
+    observed_file_directories = []
+    observed_source_directories = []
+
+    def configured_staging(*args, **kwargs):
+        observed_file_directories.append(kwargs.get("dir"))
+        return original_mkstemp(*args, **kwargs)
+
+    def configured_source_staging(*args, **kwargs):
+        observed_source_directories.append(kwargs.get("dir"))
+        return original_temporary_directory(*args, **kwargs)
+
+    monkeypatch.setenv("AGOGE_VALIDATION_STAGING_DIR", str(staging))
+    monkeypatch.setattr(split_validation.tempfile, "mkstemp", configured_staging)
+    monkeypatch.setattr(
+        split_validation.tempfile,
+        "TemporaryDirectory",
+        configured_source_staging,
+    )
+
+    validate_split_manifest(manifest_path, source_path=tmp_path / "source.jsonl")
+
+    assert set(observed_file_directories) == {staging}
+    assert set(observed_source_directories) == {staging}
+    assert list(staging.iterdir()) == []
+
+
+def test_split_validation_reports_unwritable_staging(tmp_path, monkeypatch):
+    manifest_path, _ = _materialized_manifest(tmp_path)
+
+    def deny_staging(*args, **kwargs):
+        raise PermissionError("read-only mount")
+
+    monkeypatch.setattr(split_validation.tempfile, "mkstemp", deny_staging)
+
+    with pytest.raises(ValueError, match="set AGOGE_VALIDATION_STAGING_DIR") as raised:
+        validate_split_manifest(manifest_path)
+
+    assert isinstance(raised.value.__cause__, PermissionError)
+
+
+@pytest.mark.parametrize("duplicate", ["schema", "nested-split"])
+def test_split_manifest_rejects_duplicate_json_keys(tmp_path, duplicate):
+    manifest_path, _ = _materialized_manifest(tmp_path)
+    payload = manifest_path.read_bytes()
+    if duplicate == "schema":
+        payload = payload.replace(
+            b"{",
+            b'{"schema_version":"agoge.split-manifest.v1",',
+            1,
+        )
+    else:
+        payload = payload.replace(b'"held_out":{', b'"held_out":{},"held_out":{', 1)
+    manifest_path.write_bytes(payload)
+
+    with pytest.raises(ValueError, match="invalid split manifest JSON"):
+        validate_split_manifest(manifest_path)
+
+
 def test_frozen_loader_rechecks_selected_artifact_after_manifest_validation(tmp_path, monkeypatch):
     manifest_path, manifest = _materialized_manifest(tmp_path)
     artifact_path = manifest_path.parent / manifest.splits["train"].path

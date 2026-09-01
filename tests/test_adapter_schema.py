@@ -50,6 +50,22 @@ def test_adapter_schema_fails_closed_when_base_config_is_not_cached(monkeypatch)
         _adapter_schema.expected_adapter_tensor_schema(config, context)
 
 
+def test_adapter_schema_accepts_compatible_older_peft_version():
+    config = LoraConfig(
+        r=2,
+        target_modules=["q_proj"],
+        task_type="CAUSAL_LM",
+        base_model_name_or_path="example/base",
+        revision="a" * 40,
+    ).to_dict()
+    config["peft_version"] = "0.0.0"
+
+    validated = _adapter_schema._validated_lora_config(config)
+
+    assert validated.r == 2
+    assert validated.target_modules == {"q_proj"}
+
+
 @pytest.mark.parametrize(
     ("targets", "trainable_tokens", "expected"),
     [

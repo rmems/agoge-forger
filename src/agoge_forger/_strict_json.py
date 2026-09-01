@@ -12,11 +12,16 @@ class DuplicateJsonKey(ValueError):
         super().__init__(key)
 
 
-def decode_json_object(raw: bytes, coordinate: str) -> dict[str, Any]:
+def decode_json_object(
+    raw: bytes,
+    coordinate: str,
+    *,
+    object_label: str = "source row",
+) -> dict[str, Any]:
     decoded = _decode_utf8(raw, coordinate)
     value = _load_unique_json(decoded, coordinate)
     if not isinstance(value, dict):
-        raise ValueError(f"{coordinate}: source row must be a JSON object")  # noqa: TRY004
+        raise ValueError(f"{coordinate}: {object_label} must be a JSON object")  # noqa: TRY004
     return value
 
 

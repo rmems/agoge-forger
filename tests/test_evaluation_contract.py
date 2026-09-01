@@ -188,3 +188,28 @@ def test_contract_references_are_serialized_with_posix_separators(monkeypatch):
     monkeypatch.setattr(contract_module.os.path, "relpath", lambda path, anchor: r"..\bundle\x")
 
     assert contract_module._portable_relative_path(Path("x"), Path("y")) == "../bundle/x"
+
+
+def test_evaluation_contract_rejects_absolute_manifest_reference(tmp_path):
+    manifest_path, _, base, sft = evaluation_case(tmp_path)
+    contract_path = tmp_path / "eval" / "contract.json"
+    build_contract(tmp_path, manifest_path, base, sft)
+    payload = json.loads(contract_path.read_bytes())
+    payload["split_manifest_path"] = str(manifest_path)
+    contract_path.write_bytes(canonical_json_bytes(payload) + b"\n")
+
+    with pytest.raises(ValidationError, match="portable relative paths"):
+        validate_evaluation_contract(contract_path)
+
+
+@pytest.mark.parametrize("reference", ["/absolute/index.json", r"C:\\temp\\index.json"])
+def test_evaluation_contract_rejects_absolute_artifact_reference(tmp_path, reference):
+    manifest_path, _, base, sft = evaluation_case(tmp_path)
+    contract_path = tmp_path / "eval" / "contract.json"
+    build_contract(tmp_path, manifest_path, base, sft)
+    payload = json.loads(contract_path.read_bytes())
+    payload["sft"]["artifact"]["artifact_index_path"] = reference
+    contract_path.write_bytes(canonical_json_bytes(payload) + b"\n")
+
+    with pytest.raises(ValidationError, match="portable relative paths"):
+        validate_evaluation_contract(contract_path)

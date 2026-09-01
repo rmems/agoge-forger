@@ -157,6 +157,14 @@ def test_config_resolves_frozen_manifest_path_against_config_dir(tmp_path):
     assert config.split_name == "train"
 
 
+def test_config_rejects_non_string_dataset_path(tmp_path):
+    config_path = tmp_path / "invalid.yaml"
+    config_path.write_text("model_id: example/base\ndataset_path: 123\n")
+
+    with pytest.raises(TypeError, match="dataset input path must be a string"):
+        load_config(str(config_path))
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [

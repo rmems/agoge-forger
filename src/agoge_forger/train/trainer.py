@@ -1,15 +1,17 @@
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import torch
+from huggingface_hub.utils import HFValidationError, validate_repo_id
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
 from ..datasets import load_jsonl_dataset
-from ..eval._artifact_schema import ArtifactProducerProvenance
+from ..eval import ArtifactProducerProvenance
 from ..logging import logger
 from ..manifests import write_run_manifest
 from ..models.load import load_base_model
@@ -209,9 +211,37 @@ def _bind_frozen_training_input(config) -> FrozenSplitBinding | None:
         return None
     if config.split_name != "train":
         raise ValueError("frozen training requires split_name: train")
+    if config.dataset_text_field != "text":
+        raise ValueError("frozen training requires dataset_text_field: text")
+    _reject_local_frozen_base(config.model_id)
     _require_frozen_revision(config.revision)
     _reject_frozen_resume(config)
     return bind_frozen_split(config.split_manifest_path, "train")
+
+
+def _reject_local_frozen_base(model_id: str) -> None:
+    if _looks_like_local_model(model_id):
+        raise ValueError("evaluation eligible frozen training requires a Hub model repository")
+    try:
+        validate_repo_id(model_id)
+    except HFValidationError as exc:
+        raise ValueError(
+            "evaluation eligible frozen training requires a Hub model repository"
+        ) from exc
+
+
+def _looks_like_local_model(model_id: str) -> bool:
+    supplied = Path(model_id).expanduser()
+    windows = PureWindowsPath(model_id)
+    if supplied.is_absolute():
+        return True
+    if windows.is_absolute():
+        return True
+    if windows.drive:
+        return True
+    if model_id.startswith(("./", "../", "~")):
+        return True
+    return os.path.lexists(supplied)
 
 
 def _require_frozen_revision(revision: str | None) -> None:

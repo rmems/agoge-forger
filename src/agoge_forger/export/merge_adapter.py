@@ -6,8 +6,8 @@ from pathlib import Path
 from peft import PeftModel
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
-from ..eval._artifact_schema import ArtifactProducerProvenance
-from ..eval._artifact_validation import (
+from ..eval import (
+    ArtifactProducerProvenance,
     VerifiedAdapterSource,
     require_adapter_source_tensor_schema,
     verified_adapter_source,

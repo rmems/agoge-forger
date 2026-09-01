@@ -23,7 +23,9 @@ def require_complete_frozen_source(
 def resolve_optional_input(value: object, config_path: Path) -> str | None:
     if value is None:
         return None
-    raw_path = Path(str(value)).expanduser()
+    if not isinstance(value, str):
+        raise TypeError("dataset input path must be a string")
+    raw_path = Path(value).expanduser()
     if not raw_path.is_absolute():
         raw_path = (config_path.parent / raw_path).resolve()
     return str(resolve_existing_path(str(raw_path), must_be_file=True))

@@ -29,6 +29,17 @@ def _config(*, revision: str | None) -> ExperimentConfig:
     )
 
 
+def _frozen_config(manifest_path, **updates) -> ExperimentConfig:
+    values = {
+        "model_id": "org/model",
+        "revision": PINNED_REVISION,
+        "split_manifest_path": str(manifest_path),
+        "split_name": "train",
+    }
+    values.update(updates)
+    return ExperimentConfig(**values)
+
+
 def _patch_preflight(monkeypatch) -> None:
     monkeypatch.setattr(
         "agoge_forger.train.trainer.check_cuda_available", lambda required=True: None
@@ -93,12 +104,7 @@ def test_frozen_training_provenance_uses_exact_bound_digests(tmp_path, monkeypat
         split="train",
         split_sha256="c" * 64,
     )
-    config = ExperimentConfig(
-        model_id="org/model",
-        revision=PINNED_REVISION,
-        split_manifest_path=str(manifest_path),
-        split_name="train",
-    )
+    config = _frozen_config(manifest_path)
     monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", lambda *args: binding)
 
     actual_binding = _bind_frozen_training_input(config)
@@ -117,16 +123,53 @@ def test_frozen_training_provenance_uses_exact_bound_digests(tmp_path, monkeypat
 def test_frozen_training_rejects_unpinned_revision_before_binding(tmp_path, monkeypatch):
     manifest_path = tmp_path / "split_manifest.json"
     manifest_path.write_text("{}\n")
-    config = ExperimentConfig(
-        model_id="org/model",
-        revision="main",
-        split_manifest_path=str(manifest_path),
-        split_name="train",
-    )
+    config = _frozen_config(manifest_path, revision="main")
     bind = MagicMock()
     monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", bind)
 
     with pytest.raises(ValueError, match="immutable lowercase commit revision"):
         _bind_frozen_training_input(config)
+
+    bind.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("updates", "expected_error"),
+    [
+        ({"dataset_text_field": "body"}, "dataset_text_field: text"),
+        ({"model_id": r"C:\\models\\mutable"}, "Hub model repository"),
+        ({"model_id": r"\\server\\share\\mutable"}, "Hub model repository"),
+    ],
+)
+def test_frozen_training_rejects_nonportable_inputs_before_binding(
+    tmp_path, monkeypatch, updates, expected_error
+):
+    manifest_path = tmp_path / "split_manifest.json"
+    manifest_path.write_text("{}\n")
+    bind = MagicMock()
+    monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", bind)
+
+    with pytest.raises(ValueError, match=expected_error):
+        _bind_frozen_training_input(_frozen_config(manifest_path, **updates))
+
+    bind.assert_not_called()
+
+
+@pytest.mark.parametrize("local_kind", ["directory", "broken-symlink"])
+def test_frozen_training_rejects_existing_local_model_before_binding(
+    tmp_path, monkeypatch, local_kind
+):
+    manifest_path = tmp_path / "split_manifest.json"
+    manifest_path.write_text("{}\n")
+    model_path = tmp_path / "mutable-model"
+    if local_kind == "directory":
+        model_path.mkdir()
+    else:
+        model_path.symlink_to(tmp_path / "missing-model")
+    bind = MagicMock()
+    monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", bind)
+
+    with pytest.raises(ValueError, match="Hub model repository"):
+        _bind_frozen_training_input(_frozen_config(manifest_path, model_id=str(model_path)))
 
     bind.assert_not_called()

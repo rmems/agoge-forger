@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 import re
 from collections.abc import Collection
 from typing import Any
@@ -52,8 +51,6 @@ def _validated_lora_config(adapter_config: dict[str, object]) -> Any:
         raise ValueError("only LORA adapters are supported")
     if adapter_config.get("task_type") != "CAUSAL_LM":
         raise ValueError("only CAUSAL_LM adapters are supported")
-    if adapter_config.get("peft_version") != importlib.metadata.version("peft"):
-        raise ValueError("adapter PEFT version does not match the validator runtime")
     config_values: Any = adapter_config
     return LoraConfig(**config_values)
 
