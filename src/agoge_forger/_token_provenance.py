@@ -169,18 +169,12 @@ def derive_tokenizer_sha256(tokenizer: TokenizerLike) -> str:
     }
     backend_to_str = getattr(getattr(tokenizer, "backend_tokenizer", None), "to_str", None)
     if isinstance(tokenizer, PreTrainedTokenizerFast):
-        if not _is_exact_fast_tokenizer_type(tokenizer_type):
-            raise TypeError("fast tokenizer subclasses cannot be fingerprinted fail-closed")
         if not callable(backend_to_str):
             raise TypeError("fast tokenizer does not expose canonical backend serialization")
         payload.update(_fast_tokenizer_state(tokenizer, backend_to_str, code))
     else:
         payload.update(_python_tokenizer_payload(tokenizer, code))
     return sha256_bytes(canonical_json_bytes(payload))
-
-
-def _is_exact_fast_tokenizer_type(tokenizer_type: type[Any]) -> bool:
-    return tokenizer_type is PreTrainedTokenizerFast
 
 
 def _fast_tokenizer_state(

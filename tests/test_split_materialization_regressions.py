@@ -53,6 +53,22 @@ def _spec(source_path: str = SOURCE_PATH) -> SplitMaterializationSpec:
     )
 
 
+@pytest.mark.parametrize("field", ["canonical_id", "lineage_id", "group_id"])
+def test_materialization_rejects_noncanonical_identity_whitespace(
+    tmp_path: Path, field: str
+) -> None:
+    source = tmp_path / "download.jsonl"
+    output = tmp_path / "snapshot"
+    rows = _text_rows()
+    rows[0][field] = f" {rows[0][field]} "
+    _write_rows(source, rows)
+
+    with pytest.raises(ValueError, match=rf"identity field '{field}'.*surrounding whitespace"):
+        materialize_split(source, output, _spec())
+
+    assert not output.exists()
+
+
 class _TemplateTokenizer:
     chat_template = "pinned-test-template"
 

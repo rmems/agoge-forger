@@ -258,7 +258,7 @@ def _fast_tokenizer(vocabulary, tokenizer_type=PreTrainedTokenizerFast):
     return tokenizer
 
 
-def test_exact_hugging_face_fast_state_is_bound_and_subclasses_are_rejected():
+def test_hugging_face_fast_state_and_model_specific_subclasses_are_bound():
     first_tokenizer = _fast_tokenizer({"[UNK]": 0, "first": 1})
     first = TokenizerBinding(implementation=first_tokenizer)
     second = TokenizerBinding(implementation=_fast_tokenizer({"[UNK]": 0, "second": 1}))
@@ -271,12 +271,13 @@ def test_exact_hugging_face_fast_state_is_bound_and_subclasses_are_rejected():
     class HiddenFastTokenizer(PreTrainedTokenizerFast):
         pass
 
-    with pytest.raises(TypeError, match="subclasses"):
-        TokenizerBinding(
-            implementation=_fast_tokenizer(
-                {"[UNK]": 0, "hidden": 1}, tokenizer_type=HiddenFastTokenizer
-            )
+    subclass = TokenizerBinding(
+        implementation=_fast_tokenizer(
+            {"[UNK]": 0, "hidden": 1}, tokenizer_type=HiddenFastTokenizer
         )
+    )
+
+    assert subclass.tokenizer_sha256 != first.tokenizer_sha256
 
 
 def test_tokenizer_binding_fingerprints_materially_distinct_callables():

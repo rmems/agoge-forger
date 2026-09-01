@@ -235,7 +235,7 @@ def _required_string(row: Mapping[str, Any], field_name: str, coordinate: str) -
     value = row.get(field_name)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{coordinate}: required identity field '{field_name}' must be a string")
-    return value.strip()
+    return _canonical_identity_string(value, field_name, coordinate)
 
 
 def _optional_string(row: Mapping[str, Any], field_name: str, coordinate: str) -> str | None:
@@ -244,7 +244,15 @@ def _optional_string(row: Mapping[str, Any], field_name: str, coordinate: str) -
         return None
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{coordinate}: optional identity field '{field_name}' must be a string")
-    return value.strip()
+    return _canonical_identity_string(value, field_name, coordinate)
+
+
+def _canonical_identity_string(value: str, field_name: str, coordinate: str) -> str:
+    if value != value.strip():
+        raise ValueError(
+            f"{coordinate}: identity field '{field_name}' cannot contain surrounding whitespace"
+        )
+    return value
 
 
 def _reject_duplicate_identity(member: SplitMember, seen: dict[str, str]) -> None:

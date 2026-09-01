@@ -36,34 +36,49 @@ def expected_adapter_tensor_schema(
     context: ArtifactValidationContext,
 ) -> dict[str, tuple[int, ...]]:
     try:
-        from accelerate import init_empty_weights
-        from peft import LoraConfig, get_peft_model
-        from peft.utils import get_peft_model_state_dict
-        from transformers import AutoModelForCausalLM
-
-        if adapter_config.get("peft_type") != "LORA":
-            raise ValueError("only LORA adapters are supported")
-        if adapter_config.get("task_type") != "CAUSAL_LM":
-            raise ValueError("only CAUSAL_LM adapters are supported")
-        if adapter_config.get("peft_version") != importlib.metadata.version("peft"):
-            raise ValueError("adapter PEFT version does not match the validator runtime")
-        config = load_base_config(context.model_repository, context.model_revision)
-        config_values: Any = adapter_config
-        lora_config = LoraConfig(**config_values)
-        with init_empty_weights(include_buffers=True):
-            base = AutoModelForCausalLM.from_config(config, trust_remote_code=False)
-            base.name_or_path = context.model_repository
-            adapter = get_peft_model(base, lora_config, low_cpu_mem_usage=True)
-        state = get_peft_model_state_dict(
-            adapter,
-            adapter_name="default",
-            save_embedding_layers=saves_embedding_layers(lora_config),
-        )
-        return {name: tuple(tensor.shape) for name, tensor in state.items()}
+        lora_config = _validated_lora_config(adapter_config)
+        base_config = load_base_config(context.model_repository, context.model_revision)
+        adapter = _empty_adapter(base_config, lora_config, context.model_repository)
+        return _saved_adapter_schema(adapter, lora_config)
     except (ImportError, OSError, TypeError, ValueError, KeyError) as exc:
         raise ValueError(
             "PEFT adapter config cannot resolve a local, remote-code-disabled base schema"
         ) from exc
+
+
+def _validated_lora_config(adapter_config: dict[str, object]) -> Any:
+    from peft import LoraConfig
+
+    if adapter_config.get("peft_type") != "LORA":
+        raise ValueError("only LORA adapters are supported")
+    if adapter_config.get("task_type") != "CAUSAL_LM":
+        raise ValueError("only CAUSAL_LM adapters are supported")
+    if adapter_config.get("peft_version") != importlib.metadata.version("peft"):
+        raise ValueError("adapter PEFT version does not match the validator runtime")
+    config_values: Any = adapter_config
+    return LoraConfig(**config_values)
+
+
+def _empty_adapter(base_config: Any, lora_config: Any, repository: str) -> Any:
+    from accelerate import init_empty_weights
+    from peft import get_peft_model
+    from transformers import AutoModelForCausalLM
+
+    with init_empty_weights(include_buffers=True):
+        base = AutoModelForCausalLM.from_config(base_config, trust_remote_code=False)
+        base.name_or_path = repository
+        return get_peft_model(base, lora_config, low_cpu_mem_usage=True)
+
+
+def _saved_adapter_schema(adapter: Any, lora_config: Any) -> dict[str, tuple[int, ...]]:
+    from peft.utils import get_peft_model_state_dict
+
+    state = get_peft_model_state_dict(
+        adapter,
+        adapter_name="default",
+        save_embedding_layers=saves_embedding_layers(lora_config),
+    )
+    return {name: tuple(tensor.shape) for name, tensor in state.items()}
 
 
 def load_base_config(repository: str, revision: str) -> Any:
