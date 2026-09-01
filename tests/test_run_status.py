@@ -42,6 +42,10 @@ FINAL_ADAPTER_KEYS = {"present", "path"}
 MERGED_MODEL_KEYS = {"present", "path"}
 RESUME_KEYS = {"ready", "checkpoint_path"}
 EXPORT_KEYS = {"ready", "source_path", "source_kind"}
+SKIP_IF_ROOT = pytest.mark.skipif(
+    getattr(os, "geteuid", lambda: -1)() == 0,
+    reason="chmod-based permission denial is ineffective when running as root",
+)
 
 
 @pytest.fixture
@@ -106,6 +110,17 @@ def _make_run_dir(tmp_path, name="demo_run"):
     run_dir = tmp_path / "adapters" / name
     run_dir.mkdir(parents=True)
     return run_dir
+
+
+def _deny_read_access_or_skip(path: Path) -> None:
+    """Remove read access, or skip when the runtime bypasses mode bits."""
+    os.chmod(path, 0)
+    try:
+        path.read_bytes()
+    except PermissionError:
+        return
+    os.chmod(path, 0o644)
+    pytest.skip("chmod-based permission denial is ineffective for this process")
 
 
 # --------------------------------------------------------------------------
@@ -344,6 +359,15 @@ def test_truncated_adapter_weights_are_not_export_ready(tmp_path):
     report = build_run_status(str(run_dir))
     assert report["final_adapter"]["present"] is True
     assert report["export"]["ready"] is False
+
+
+def test_unaligned_safetensors_header_is_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    header = b"{}" + b" " * 7
+    (run_dir / "adapter_model.safetensors").write_bytes(len(header).to_bytes(8, "little") + header)
+    _write_adapter_config(run_dir)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is True
 
 
 def test_header_without_data_region_is_not_export_ready(tmp_path):
@@ -833,12 +857,13 @@ def test_dot_run_dir_finds_conventional_merged_sibling(tmp_path, monkeypatch):
     assert report["merged_model"] == {"present": True, "path": str(merged.resolve())}
 
 
+@SKIP_IF_ROOT
 def test_merged_config_permission_error_exits_one(runner, tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
     merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
     config_path = merged / "config.json"
-    os.chmod(config_path, 0)
+    _deny_read_access_or_skip(config_path)
     try:
         result = runner.invoke(app, ["run-status", str(run_dir)])
     finally:
@@ -848,11 +873,12 @@ def test_merged_config_permission_error_exits_one(runner, tmp_path):
     assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
+@SKIP_IF_ROOT
 def test_adapter_config_permission_error_exits_one(runner, tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
     config_path = run_dir / "adapter_config.json"
-    os.chmod(config_path, 0)
+    _deny_read_access_or_skip(config_path)
     try:
         result = runner.invoke(app, ["run-status", str(run_dir)])
     finally:
@@ -862,11 +888,12 @@ def test_adapter_config_permission_error_exits_one(runner, tmp_path):
     assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
+@SKIP_IF_ROOT
 def test_trainer_state_permission_error_exits_one(runner, tmp_path):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
     state_path = checkpoint_dir / "trainer_state.json"
-    os.chmod(state_path, 0)
+    _deny_read_access_or_skip(state_path)
     try:
         result = runner.invoke(app, ["run-status", str(run_dir)])
         with pytest.raises(OSError):
@@ -878,11 +905,12 @@ def test_trainer_state_permission_error_exits_one(runner, tmp_path):
     assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
+@SKIP_IF_ROOT
 def test_safetensors_permission_error_exits_one(runner, tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
     weights = run_dir / "adapter_model.safetensors"
-    os.chmod(weights, 0)
+    _deny_read_access_or_skip(weights)
     try:
         result = runner.invoke(app, ["run-status", str(run_dir)])
         with pytest.raises(OSError):

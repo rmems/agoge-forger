@@ -61,7 +61,7 @@ def _merged_config_is_object(candidate: Path) -> bool:
     if not config_path.is_file():
         return False
     try:
-        payload = json.loads(config_path.read_text())
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
     except (ValueError, json.JSONDecodeError):
         return False
     return isinstance(payload, dict)
@@ -92,7 +92,7 @@ def _has_complete_sharded_weights(candidate: Path) -> bool:
     if not index_path.is_file():
         return False
     try:
-        index = json.loads(index_path.read_text())
+        index = json.loads(index_path.read_text(encoding="utf-8"))
     except (ValueError, json.JSONDecodeError):
         return False
     weight_map = index.get("weight_map") if isinstance(index, dict) else None
@@ -214,7 +214,7 @@ def _adapter_config_usable(adapter_path: PathLike | None) -> bool:
         return False
     config_path = Path(adapter_path) / "adapter_config.json"
     try:
-        payload = json.loads(config_path.read_text())
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
     except (ValueError, json.JSONDecodeError):
         return False
     if not isinstance(payload, dict):
@@ -233,7 +233,7 @@ def _trainer_state_usable(checkpoint: PathLike | None) -> bool:
         return False
     state_path = Path(checkpoint) / "trainer_state.json"
     try:
-        payload = json.loads(state_path.read_text())
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
     except (ValueError, json.JSONDecodeError):
         return False
     return isinstance(payload, dict)
@@ -243,10 +243,8 @@ _SAFETENSORS_HEADER_MAX = 100 * 1024 * 1024
 
 
 def _safetensors_header_len_ok(header_len: int) -> bool:
-    """True when header length is aligned and within the read budget."""
+    """True when header length meets the minimum and stays within the read budget."""
     if header_len < 8:
-        return False
-    if header_len % 8 != 0:
         return False
     return header_len <= _SAFETENSORS_HEADER_MAX
 
@@ -255,10 +253,8 @@ def _is_nonbool_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _safetensors_tensor_end(entry: Any) -> int | None:
-    """Return the data-region end offset, or None if tensor metadata is invalid."""
-    if not isinstance(entry, dict):
-        return None
+def _safetensors_data_offsets_end(entry: dict[str, Any]) -> int | None:
+    """Return the validated data-region end offset."""
     offsets = entry.get("data_offsets")
     if not (isinstance(offsets, list) and len(offsets) == 2):
         return None
@@ -267,13 +263,26 @@ def _safetensors_tensor_end(entry: Any) -> int | None:
         return None
     if start < 0 or end < start:
         return None
-    dtype = entry.get("dtype")
+    return end
+
+
+def _safetensors_shape_ok(entry: dict[str, Any]) -> bool:
+    """True when shape is a list of non-negative, non-boolean integers."""
     shape = entry.get("shape")
+    return isinstance(shape, list) and all(_is_nonbool_int(dim) and dim >= 0 for dim in shape)
+
+
+def _safetensors_tensor_end(entry: Any) -> int | None:
+    """Return the data-region end offset, or None if tensor metadata is invalid."""
+    if not isinstance(entry, dict):
+        return None
+    end = _safetensors_data_offsets_end(entry)
+    if end is None:
+        return None
+    dtype = entry.get("dtype")
     if not isinstance(dtype, str) or not dtype:
         return None
-    if not isinstance(shape, list):
-        return None
-    if not all(_is_nonbool_int(dim) and dim >= 0 for dim in shape):
+    if not _safetensors_shape_ok(entry):
         return None
     return end
 
