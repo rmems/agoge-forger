@@ -99,7 +99,9 @@ def _manifest_records(manifest: SplitManifest) -> list[SourceRecord]:
 
 
 def _validate_source(manifest: SplitManifest, source: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="agoge-source-validation-") as snapshot_dir:
+    with tempfile.TemporaryDirectory(
+        prefix=".agoge-source-validation-", dir=source.parent
+    ) as snapshot_dir:
         snapshot = Path(snapshot_dir) / "source.jsonl"
         actual_source_sha = copy_source_snapshot(source, snapshot)
         _require_equal(
@@ -217,7 +219,9 @@ def verified_split_snapshot(
         initial = _artifact_identity(os.fstat(descriptor), split)
         _require_stable_artifact(path, descriptor, initial, split)
         snapshot_descriptor, snapshot_name = tempfile.mkstemp(
-            prefix=f"agoge-{split}-snapshot-", suffix=".jsonl"
+            prefix=f"agoge-{split}-snapshot-",
+            suffix=".jsonl",
+            dir=manifest_path.parent,
         )
         snapshot_path = Path(snapshot_name)
         try:

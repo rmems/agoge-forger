@@ -11,19 +11,18 @@ _AT_FDCWD = -100
 _RENAME_NOREPLACE = 1
 
 
+def require_rename_noreplace_support() -> None:
+    """Reject unsupported platforms before callers perform expensive staging."""
+
+    _renameat2()
+
+
 def rename_noreplace(source: Path, destination: Path) -> None:
     """Atomically rename *source* while refusing every existing destination."""
 
     encoded_source = _encoded_path(source)
     encoded_destination = _encoded_path(destination)
-    libc = ctypes.CDLL(None, use_errno=True)
-    try:
-        renameat2 = libc.renameat2
-    except AttributeError as exc:
-        raise OSError(
-            errno.ENOTSUP,
-            "atomic no-replace directory publication is unsupported on this platform",
-        ) from exc
+    renameat2 = _renameat2()
     renameat2.argtypes = (
         ctypes.c_int,
         ctypes.c_char_p,
@@ -49,6 +48,17 @@ def rename_noreplace(source: Path, destination: Path) -> None:
             destination,
         )
     raise OSError(error, os.strerror(error), destination)
+
+
+def _renameat2():
+    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        return libc.renameat2
+    except AttributeError as exc:
+        raise OSError(
+            errno.ENOTSUP,
+            "atomic no-replace directory publication is unsupported on this platform",
+        ) from exc
 
 
 def _encoded_path(path: Path) -> bytes:

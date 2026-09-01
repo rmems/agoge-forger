@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ._atomic_directory import rename_noreplace
+from ._atomic_directory import rename_noreplace, require_rename_noreplace_support
 from ._source_snapshot import copy_source_snapshot, nearest_existing_output_ancestor
 from ._split_report import manifest_bytes, render_report
 from ._strict_json import decode_json_object
@@ -435,6 +435,7 @@ def materialize_split(
             "exact-content hashing"
         )
     _validate_materialization_paths(source, destination)
+    require_rename_noreplace_support()
     with tempfile.TemporaryDirectory(
         prefix=".agoge-split-staging-",
         dir=nearest_existing_output_ancestor(destination),

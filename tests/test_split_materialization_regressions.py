@@ -451,6 +451,26 @@ def test_materialization_does_not_replace_concurrently_created_destination(
     assert not any(output.iterdir())
 
 
+def test_materialization_rejects_unsupported_atomic_publication_before_staging(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source.jsonl"
+    output = tmp_path / "snapshot"
+    _write_rows(source, _text_rows())
+    copy_source = pytest.fail
+
+    def unsupported():
+        raise OSError("atomic publication unsupported")
+
+    monkeypatch.setattr(split_materialize, "require_rename_noreplace_support", unsupported)
+    monkeypatch.setattr(split_materialize, "copy_source_snapshot", copy_source)
+
+    with pytest.raises(OSError, match="atomic publication unsupported"):
+        materialize_split(source, output, _spec())
+
+    assert not output.exists()
+
+
 def test_materialization_assigns_metadata_without_retaining_source_payloads(
     tmp_path: Path, monkeypatch
 ) -> None:

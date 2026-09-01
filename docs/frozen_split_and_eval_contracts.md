@@ -66,6 +66,11 @@ gate.
 
 ## Validate and consume without re-splitting
 
+Snapshot materialization currently requires Linux `renameat2` support for
+atomic no-replace directory publication. The capability is checked before any
+source or payload staging begins. Validation on platforms without safe
+descriptor-relative traversal fails with a controlled diagnostic.
+
 `validate_split_manifest(path, source_path=...)` verifies the source SHA-256,
 the complete source-to-member mapping (using the recorded repository-relative
 path for source coordinates), every materialized split digest and count, and all

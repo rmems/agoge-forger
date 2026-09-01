@@ -525,6 +525,23 @@ def test_split_validation_reports_unsupported_dirfd_as_controlled_error(tmp_path
     assert isinstance(raised.value.__cause__, NotImplementedError)
 
 
+def test_split_validation_stages_snapshot_beside_manifest(tmp_path, monkeypatch):
+    manifest_path, _ = _materialized_manifest(tmp_path)
+    original_mkstemp = split_validation.tempfile.mkstemp
+    observed_directories = []
+
+    def beside_manifest(*args, **kwargs):
+        observed_directories.append(kwargs.get("dir"))
+        return original_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(split_validation.tempfile, "mkstemp", beside_manifest)
+
+    validate_split_manifest(manifest_path)
+
+    assert observed_directories
+    assert set(observed_directories) == {manifest_path.parent}
+
+
 def test_frozen_loader_rechecks_selected_artifact_after_manifest_validation(tmp_path, monkeypatch):
     manifest_path, manifest = _materialized_manifest(tmp_path)
     artifact_path = manifest_path.parent / manifest.splits["train"].path
