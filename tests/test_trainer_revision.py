@@ -43,25 +43,8 @@ def _patch_preflight(monkeypatch) -> None:
     )
 
 
-def test_run_training_passes_revision_to_load_base_model(monkeypatch):
-    captured: dict[str, object] = {}
-
-    def fake_load_base_model(*args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-        raise RuntimeError("stop-before-trainer")
-
-    _patch_preflight(monkeypatch)
-    monkeypatch.setattr("agoge_forger.train.trainer.load_base_model", fake_load_base_model)
-
-    with pytest.raises(RuntimeError, match="stop-before-trainer"):
-        run_training(_config(revision=PINNED_REVISION))
-
-    assert captured["kwargs"]["revision"] == PINNED_REVISION
-    assert captured["args"][0] == "org/model"
-
-
-def test_run_training_passes_none_revision_when_unset(monkeypatch):
+@pytest.mark.parametrize("revision", [PINNED_REVISION, None])
+def test_run_training_passes_revision_to_load_base_model(monkeypatch, revision):
     captured: dict[str, object] = {}
 
     def fake_load_base_model(*args, **kwargs):
@@ -72,12 +55,13 @@ def test_run_training_passes_none_revision_when_unset(monkeypatch):
     monkeypatch.setattr("agoge_forger.train.trainer.load_base_model", fake_load_base_model)
 
     with pytest.raises(RuntimeError, match="stop-before-trainer"):
-        run_training(_config(revision=None))
+        run_training(_config(revision=revision))
 
-    assert captured["kwargs"]["revision"] is None
+    assert captured["kwargs"]["revision"] == revision
 
 
-def test_prepare_peft_model_persists_revision_on_lora_config(monkeypatch):
+@pytest.mark.parametrize("revision", [PINNED_REVISION, None])
+def test_prepare_peft_model_persists_revision_on_lora_config(monkeypatch, revision):
     captured: dict[str, object] = {}
 
     def fake_get_peft_model(model, peft_config, **kwargs):
@@ -91,34 +75,12 @@ def test_prepare_peft_model_persists_revision_on_lora_config(monkeypatch):
     )
     monkeypatch.setattr("agoge_forger.train.trainer.get_peft_model", fake_get_peft_model)
 
-    cfg = _config(revision=PINNED_REVISION)
+    cfg = _config(revision=revision)
     cfg.training.gradient_checkpointing = False
     cfg.quantization.load_in_4bit = False
     _prepare_peft_model(cfg, MagicMock())
 
-    assert captured["revision"] == PINNED_REVISION
-
-
-def test_prepare_peft_model_leaves_revision_none_when_unset(monkeypatch):
-    captured: dict[str, object] = {}
-
-    def fake_get_peft_model(model, peft_config, **kwargs):
-        captured["revision"] = peft_config.revision
-        model.print_trainable_parameters = lambda: None
-        return model
-
-    monkeypatch.setattr(
-        "agoge_forger.train.trainer.validate_lora_targets_exist",
-        lambda model, lora: ["q_proj"],
-    )
-    monkeypatch.setattr("agoge_forger.train.trainer.get_peft_model", fake_get_peft_model)
-
-    cfg = _config(revision=None)
-    cfg.training.gradient_checkpointing = False
-    cfg.quantization.load_in_4bit = False
-    _prepare_peft_model(cfg, MagicMock())
-
-    assert captured["revision"] is None
+    assert captured["revision"] == revision
 
 
 def test_frozen_training_provenance_uses_exact_bound_digests(tmp_path, monkeypatch):

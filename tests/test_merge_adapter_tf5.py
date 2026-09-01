@@ -87,37 +87,29 @@ def test_merge_uses_verified_snapshot_and_propagates_provenance(tmp_path, monkey
     assert not snapshot.exists()
 
 
-def test_merge_requires_index_before_model_loading(tmp_path, monkeypatch):
-    adapter = tmp_path / "adapter"
-    adapter.mkdir()
-    (adapter / "adapter_config.json").write_text("{}\n")
-    (adapter / "adapter_model.safetensors").write_bytes(b"weights")
-    observed = []
-    monkeypatch.setattr(
-        "agoge_forger.export.merge_adapter.load_base_model",
-        lambda *args, **kwargs: observed.append((args, kwargs)),
-    )
-
-    with pytest.raises(ValueError, match="artifact_index.json is required"):
-        merge_adapter("example/base", str(adapter), str(tmp_path / "merged"))
-
-    assert observed == []
-    assert not (tmp_path / "merged").exists()
-
-
-def test_merge_requires_index_provenance_before_model_loading(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("include_index", "expected_error"),
+    [
+        (False, "artifact_index.json is required"),
+        (True, "requires producer_provenance"),
+    ],
+)
+def test_merge_requires_verified_index_before_model_loading(
+    tmp_path, monkeypatch, include_index, expected_error
+):
     adapter = tmp_path / "adapter"
     adapter.mkdir()
     (adapter / "adapter_config.json").write_text("{}\n")
     write_safetensors(adapter / "adapter_model.safetensors")
-    write_artifact_index(str(adapter))
+    if include_index:
+        write_artifact_index(str(adapter))
     observed = []
     monkeypatch.setattr(
         "agoge_forger.export.merge_adapter.load_base_model",
         lambda *args, **kwargs: observed.append((args, kwargs)),
     )
 
-    with pytest.raises(ValueError, match="requires producer_provenance"):
+    with pytest.raises(ValueError, match=expected_error):
         merge_adapter("example/base", str(adapter), str(tmp_path / "merged"))
 
     assert observed == []
