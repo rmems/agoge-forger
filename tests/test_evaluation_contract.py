@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import torch
 from pydantic import ValidationError
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 from transformers import LlamaConfig, LlamaForCausalLM
 
@@ -35,6 +36,27 @@ MODEL_REVISION = "abcdef0123456789abcdef0123456789abcdef01"
 _BuildArgs = tuple[Path, Path, EvaluationArm, EvaluationArm]
 pytestmark = pytest.mark.usefixtures("cached_test_base_config")
 
+_WRITABLE_SAFETENSORS_DTYPES = (
+    (torch.float64, "F64"),
+    (torch.float32, "F32"),
+    (torch.float16, "F16"),
+    (torch.bfloat16, "BF16"),
+    (torch.int64, "I64"),
+    (torch.int32, "I32"),
+    (torch.int16, "I16"),
+    (torch.int8, "I8"),
+    (torch.uint64, "U64"),
+    (torch.uint32, "U32"),
+    (torch.uint16, "U16"),
+    (torch.uint8, "U8"),
+    (torch.bool, "BOOL"),
+    (torch.float8_e4m3fn, "F8_E4M3"),
+    (torch.float8_e5m2, "F8_E5M2"),
+    (torch.float8_e8m0fnu, "F8_E8M0"),
+    (torch.float4_e2m1fn_x2, "F4"),
+    (torch.complex64, "C64"),
+)
+
 
 def _write_safetensors(path: Path, value: int = 0, *, keys: tuple[str, ...] = ("weight",)) -> None:
     tensors = {
@@ -45,6 +67,20 @@ def _write_safetensors(path: Path, value: int = 0, *, keys: tuple[str, ...] = ("
     header += b" " * (-len(header) % 8)
     data = bytes((value + index) % 256 for index in range(len(keys)))
     path.write_bytes(len(header).to_bytes(8, "little") + header + data)
+
+
+@pytest.mark.parametrize(("dtype", "serialized_dtype"), _WRITABLE_SAFETENSORS_DTYPES)
+def test_torch_tensor_schema_matches_safetensors_header(tmp_path, dtype, serialized_dtype):
+    tensor = torch.empty((1,), dtype=dtype)
+    weights = tmp_path / f"{serialized_dtype}.safetensors"
+    save_file({"weight": tensor}, weights)
+
+    with safe_open(weights, framework="pt") as handle:
+        stored = handle.get_slice("weight")
+        actual = _tensor_schema.TensorSchemaEntry(tuple(stored.get_shape()), stored.get_dtype())
+
+    assert _tensor_schema.safetensors_dtype(dtype) == serialized_dtype
+    assert _tensor_schema.torch_tensor_schema_entry(tensor) == actual
 
 
 def _frozen_manifest(tmp_path: Path):
@@ -126,7 +162,11 @@ def _write_merged_config(output_dir: Path, payload: dict[str, str] | None = None
 
 
 def _write_complete_merged_model(
-    output_dir: Path, *, sharded: bool, tie_word_embeddings: bool = False
+    output_dir: Path,
+    *,
+    sharded: bool,
+    tie_word_embeddings: bool = False,
+    dtype: torch.dtype | None = None,
 ) -> None:
     config = LlamaConfig(
         vocab_size=16,
@@ -136,8 +176,11 @@ def _write_complete_merged_model(
         num_attention_heads=2,
         num_key_value_heads=2,
         tie_word_embeddings=tie_word_embeddings,
+        dtype=dtype,
     )
     model = LlamaForCausalLM(config)
+    if dtype is not None:
+        model.to(dtype=dtype)
     model.save_pretrained(output_dir, max_shard_size="1KB" if sharded else "1GB")
 
 
@@ -651,6 +694,16 @@ def test_evaluation_contract_accepts_valid_merged_model_layouts(tmp_path, layout
     assert written.sft.artifact.kind == "merged_model"
 
 
+def test_evaluation_contract_accepts_configured_merged_model_dtype(tmp_path):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-bfloat16")
+    _write_complete_merged_model(output_dir, sharded=False, dtype=torch.bfloat16)
+    merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
+
+    written = _build(tmp_path, manifest_path, base, merged_sft)
+
+    assert validate_evaluation_contract(tmp_path / "eval" / "contract.json") == written
+
+
 def test_merged_tensor_schema_keeps_only_one_verified_shard_snapshot(tmp_path, monkeypatch):
     manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-sharded")
     _write_complete_merged_model(output_dir, sharded=True)
@@ -717,13 +770,13 @@ def test_ignored_model_save_keys_are_literal_not_patterns():
         all_tied_weights_keys = None
 
     expected = {
-        "layer.0.weight": (1,),
-        "layerX0Yweight": (1,),
+        "layer.0.weight": _tensor_schema.TensorSchemaEntry((1,), "F32"),
+        "layerX0Yweight": _tensor_schema.TensorSchemaEntry((1,), "F32"),
     }
 
     _merged_model_schema.drop_omitted_model_keys(expected, ModelWithIgnoredKey())
 
-    assert expected == {"layerX0Yweight": (1,)}
+    assert expected == {"layerX0Yweight": _tensor_schema.TensorSchemaEntry((1,), "F32")}
 
 
 def test_merged_tensor_schema_rechecks_the_inspected_snapshot(tmp_path, monkeypatch):
@@ -767,7 +820,9 @@ def test_evaluation_contract_accepts_omitted_tied_embedding_alias(tmp_path):
     assert validate_evaluation_contract(tmp_path / "eval" / "contract.json") == written
 
 
-@pytest.mark.parametrize("mutation", ["missing", "unexpected", "wrong-shape", "config-drift"])
+@pytest.mark.parametrize(
+    "mutation", ["missing", "unexpected", "wrong-shape", "wrong-dtype", "config-drift"]
+)
 def test_evaluation_contract_rejects_merged_model_tensor_schema_drift(tmp_path, mutation):
     manifest_path, base, sft, output_dir = _artifact_case(tmp_path, f"merged-{mutation}")
     _write_complete_merged_model(output_dir, sharded=False)
@@ -783,8 +838,10 @@ def test_evaluation_contract_rejects_merged_model_tensor_schema_drift(tmp_path, 
             tensors.pop(first_key)
         elif mutation == "unexpected":
             tensors["unexpected.weight"] = torch.zeros((1, 1))
-        else:
+        elif mutation == "wrong-shape":
             tensors[first_key] = torch.zeros((1,))
+        else:
+            tensors[first_key] = torch.zeros(tensors[first_key].shape, dtype=torch.uint8)
         save_file(tensors, weights_path)
     drifted_sft = _with_artifact(sft, output_dir, kind="merged_model")
 

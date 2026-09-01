@@ -8,7 +8,12 @@ from collections.abc import Collection
 from typing import Any
 
 from ._artifact_schema import _ADAPTER_WEIGHTS_PATH, ArtifactValidationContext, IndexedArtifacts
-from ._tensor_schema import read_verified_tensor_schema, require_matching_tensor_schema
+from ._tensor_schema import (
+    TensorSchemaEntry,
+    read_verified_tensor_schema,
+    require_matching_tensor_schema,
+    torch_tensor_schema_entry,
+)
 
 
 def require_adapter_tensor_schema(
@@ -28,7 +33,7 @@ def require_adapter_tensor_schema(
 def expected_adapter_tensor_schema(
     adapter_config: dict[str, object],
     context: ArtifactValidationContext,
-) -> dict[str, tuple[int, ...]]:
+) -> dict[str, TensorSchemaEntry]:
     try:
         lora_config = _validated_lora_config(adapter_config)
         base_config = load_base_config(context.model_repository, context.model_revision)
@@ -64,7 +69,7 @@ def _empty_adapter(base_config: Any, lora_config: Any, repository: str) -> Any:
         return get_peft_model(base, lora_config, low_cpu_mem_usage=True)
 
 
-def _saved_adapter_schema(adapter: Any, lora_config: Any) -> dict[str, tuple[int, ...]]:
+def _saved_adapter_schema(adapter: Any, lora_config: Any) -> dict[str, TensorSchemaEntry]:
     from peft.utils import get_peft_model_state_dict
 
     state = get_peft_model_state_dict(
@@ -72,7 +77,7 @@ def _saved_adapter_schema(adapter: Any, lora_config: Any) -> dict[str, tuple[int
         adapter_name="default",
         save_embedding_layers=saves_embedding_layers(lora_config),
     )
-    return {name: tuple(tensor.shape) for name, tensor in state.items()}
+    return {name: torch_tensor_schema_entry(tensor) for name, tensor in state.items()}
 
 
 def load_base_config(repository: str, revision: str) -> Any:

@@ -6,7 +6,12 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from ._artifact_schema import IndexedArtifacts
-from ._tensor_schema import read_verified_tensor_schema, require_matching_tensor_schema
+from ._tensor_schema import (
+    TensorSchemaEntry,
+    read_verified_tensor_schema,
+    require_matching_tensor_schema,
+    torch_tensor_schema_entry,
+)
 
 
 def require_merged_tensor_schema(
@@ -25,9 +30,11 @@ def require_merged_tensor_schema(
 
 def _expected_merged_tensor_schema(
     config_payload: dict[str, object],
-) -> dict[str, tuple[int, ...]]:
+) -> dict[str, TensorSchemaEntry]:
     model = _empty_causal_lm(config_payload)
-    expected = {name: tuple(tensor.shape) for name, tensor in model.state_dict().items()}
+    expected = {
+        name: torch_tensor_schema_entry(tensor) for name, tensor in model.state_dict().items()
+    }
     drop_omitted_model_keys(expected, model)
     return expected
 
@@ -42,15 +49,20 @@ def _empty_causal_lm(config_payload: dict[str, object]) -> Any:
         if not isinstance(model_type, str):
             raise TypeError("model_type must be a string")
         config = AutoConfig.for_model(model_type, **values)
+        model_kwargs = {"dtype": config.dtype} if config.dtype is not None else {}
         with init_empty_weights(include_buffers=True):
-            return AutoModelForCausalLM.from_config(config, trust_remote_code=False)
+            return AutoModelForCausalLM.from_config(
+                config,
+                trust_remote_code=False,
+                **model_kwargs,
+            )
     except (ImportError, OSError, TypeError, ValueError, KeyError) as exc:
         raise ValueError(
             "merged-model config cannot resolve a local, remote-code-disabled causal LM schema"
         ) from exc
 
 
-def drop_omitted_model_keys(expected: dict[str, tuple[int, ...]], model: object) -> None:
+def drop_omitted_model_keys(expected: dict[str, TensorSchemaEntry], model: object) -> None:
     tied = getattr(model, "all_tied_weights_keys", None)
     if isinstance(tied, dict):
         for omitted_alias in tied:

@@ -6,7 +6,7 @@ from peft import LoraConfig, get_peft_model
 from safetensors import safe_open
 from transformers import AutoConfig, LlamaConfig, LlamaForCausalLM
 
-from agoge_forger.eval import _adapter_schema
+from agoge_forger.eval import _adapter_schema, _tensor_schema
 from agoge_forger.eval._artifact_schema import ArtifactValidationContext
 
 
@@ -103,6 +103,11 @@ def test_expected_adapter_schema_matches_peft_save(tmp_path, monkeypatch, varian
     expected = _adapter_schema.expected_adapter_tensor_schema(adapter_config, context)
     with safe_open(tmp_path / "adapter_model.safetensors", framework="pt") as handle:
         tensor_keys = handle.keys()
-        actual = {key: tuple(handle.get_slice(key).get_shape()) for key in tensor_keys}
+        actual = {}
+        for key in tensor_keys:
+            tensor = handle.get_slice(key)
+            actual[key] = _tensor_schema.TensorSchemaEntry(
+                tuple(tensor.get_shape()), tensor.get_dtype()
+            )
 
     assert expected == actual

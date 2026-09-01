@@ -20,7 +20,7 @@ from tests.test_evaluation_contract import (
 pytestmark = pytest.mark.usefixtures("cached_test_base_config")
 
 
-@pytest.mark.parametrize("mutation", ["missing", "unexpected", "wrong-shape"])
+@pytest.mark.parametrize("mutation", ["missing", "unexpected", "wrong-shape", "wrong-dtype"])
 def test_evaluation_contract_rejects_adapter_tensor_schema_drift(tmp_path, mutation):
     manifest_path, base, sft, output_dir = _artifact_case(tmp_path, f"adapter-{mutation}")
     write_complete_adapter_model(output_dir)
@@ -31,8 +31,10 @@ def test_evaluation_contract_rejects_adapter_tensor_schema_drift(tmp_path, mutat
         tensors.pop(first_key)
     elif mutation == "unexpected":
         tensors["unrelated.weight"] = torch.zeros((1, 1))
-    else:
+    elif mutation == "wrong-shape":
         tensors[first_key] = torch.zeros((1,))
+    else:
+        tensors[first_key] = torch.zeros(tensors[first_key].shape, dtype=torch.uint8)
     save_file(tensors, weights_path)
     drifted_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
 
