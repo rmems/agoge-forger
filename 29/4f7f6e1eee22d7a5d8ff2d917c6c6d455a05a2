@@ -1,0 +1,56 @@
+src/agoge_forger/split_token_stats.py
+  s_9d02230d0ab6ec::t_4f2f49f6864c9e 28,30,55-56,61
+tests/test_split_streaming_and_provenance.py
+  s_9d02230d0ab6ec::t_bd28e7b04d8b33 355-358,366,380
+  s_9d02230d0ab6ec::t_a775f9716d6414 11,352-354,359-365,367-379
+tests/test_docs_workflow.py
+  s_9d02230d0ab6ec::t_a775f9716d6414 1-3,11-23
+tests/test_evaluation_contract.py
+  s_9d02230d0ab6ec::t_ed7472f060dacf 3,727-757
+  s_9d02230d0ab6ec::t_feaa367c2e8539 712-715,718-726
+  s_9d02230d0ab6ec::t_3a20bfc2f83042 10,129-135,137-141,643
+  s_9d02230d0ab6ec::t_8fecdef22beaa9 126-128,136,700-701,760-767
+  s_9d02230d0ab6ec::t_691886068d37af 12,716-717
+  s_9d02230d0ab6ec::t_2a4db5f83fac28 7,9,768-794
+  s_9d02230d0ab6ec::t_c29ba8b4957ad6 654-678
+  s_9d02230d0ab6ec::t_67b05ce6111389 679-699,795-796
+  s_9d02230d0ab6ec::t_3769e52f5d1804 702-711,758-759
+src/agoge_forger/split_materialize.py
+  s_9d02230d0ab6ec::t_4f2f49f6864c9e 5,8,462,492,497-498,500,503-509,515-520,522-523,527,531,540,564
+  s_9d02230d0ab6ec::t_a6921b2d8a2f92 6,430-439,441-448,461,463-491,493-494,513-514
+  s_9d02230d0ab6ec::t_b312fe36e3f805 38-45,440,499,502,510-512,525
+.devcontainer/devcontainer.json
+  s_9d02230d0ab6ec::t_4f2f49f6864c9e 2,6
+src/agoge_forger/eval/_artifact_validation.py
+  s_9d02230d0ab6ec::t_ed7472f060dacf 10,305-309,315-350
+  s_9d02230d0ab6ec::t_00a5eae30f6e1f 310-313
+  s_9d02230d0ab6ec::t_b312fe36e3f805 291-292,354-359,371,376-378
+  s_9d02230d0ab6ec::t_3a20bfc2f83042 243-244,277-281,283-284,286-290,293-304,314,351-352,361-364,373-375,385-387,391
+  s_9d02230d0ab6ec::t_1b1d17aad91cca 379-383,388-390
+  s_9d02230d0ab6ec::t_feaa367c2e8539 392-393
+  s_9d02230d0ab6ec::t_79570f8dcfc6f3 12,360
+  s_9d02230d0ab6ec::t_8fecdef22beaa9 235,245,272,276,282,285,353,365-370,372,384
+tests/test_split_materialization_regressions.py
+  s_9d02230d0ab6ec::t_371fec2f108027 1,221,223-225,230,238-239
+  s_9d02230d0ab6ec::t_a6921b2d8a2f92 226,228-229,232
+  s_9d02230d0ab6ec::t_b1b65f21c75712 240-262
+  s_9d02230d0ab6ec::t_a775f9716d6414 9,211-220,222,227,231,233-237
+.devcontainer/Dockerfile
+  s_9d02230d0ab6ec::t_4f2f49f6864c9e 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "294f7f6e1eee22d7a5d8ff2d917c6c6d455a05a2",
+  "prompts": {},
+  "sessions": {
+    "s_9d02230d0ab6ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05c12-f51c-7140-a693-33864d1c4551",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
