@@ -6,6 +6,8 @@ import hashlib
 import io
 import os
 import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
@@ -20,6 +22,21 @@ class EntryIdentity:
     size: int
     modified_ns: int
     changed_ns: int
+
+
+@dataclass(frozen=True)
+class _ScannedEntry:
+    name: str
+    relative: PurePosixPath
+    metadata: os.stat_result
+
+
+@dataclass(frozen=True)
+class _OpenedEntry:
+    source: int
+    parent: int
+    name: str
+    relative: PurePosixPath
 
 
 def require_descriptor_support() -> None:
@@ -38,10 +55,7 @@ def require_descriptor_support() -> None:
 
 
 def open_bundle(root: Path) -> int:
-    try:
-        return os.open(root, _directory_flags())
-    except OSError as exc:
-        raise ValueError(f"artifact bundle is not readable: {root}") from exc
+    return _open_directory(root, f"artifact bundle is not readable: {root}")
 
 
 def scan_bundle(root: Path) -> dict[PurePosixPath, EntryIdentity]:
@@ -55,29 +69,21 @@ def scan_bundle(root: Path) -> dict[PurePosixPath, EntryIdentity]:
 
 
 def read_relative_file(root_descriptor: int, relative: PurePosixPath) -> tuple[bytes, str]:
-    source, parent, name = _open_relative_file(root_descriptor, relative)
-    try:
+    with _opened_relative_file(root_descriptor, relative) as opened:
         target = io.BytesIO()
-        _, digest = _stream_descriptor(source, target, "read")
-        _require_unchanged_entry(source, parent, name, relative, "read")
+        _, digest = _stream_descriptor(opened.source, target, "read")
+        _require_unchanged_entry(opened, "read")
         return target.getvalue(), digest
-    finally:
-        os.close(source)
-        os.close(parent)
 
 
 def copy_relative_file(
     root_descriptor: int, relative: PurePosixPath, destination: Path
 ) -> tuple[int, str]:
-    source, parent, name = _open_relative_file(root_descriptor, relative)
-    try:
+    with _opened_relative_file(root_descriptor, relative) as opened:
         with destination.open("xb") as target:
-            size, digest = _stream_descriptor(source, target, "copied")
-        _require_unchanged_entry(source, parent, name, relative, "copied")
+            size, digest = _stream_descriptor(opened.source, target, "copied")
+        _require_unchanged_entry(opened, "copied")
         return size, digest
-    finally:
-        os.close(source)
-        os.close(parent)
 
 
 def _scan_directory(
@@ -108,6 +114,7 @@ def _scan_entry(
         metadata = entry.stat(follow_symlinks=False)
     except OSError as exc:
         raise ValueError(f"artifact bundle entry is not readable: {relative}") from exc
+    scanned = _ScannedEntry(entry.name, relative, metadata)
     if stat.S_ISLNK(metadata.st_mode):
         raise ValueError(f"artifact bundle cannot contain symlinks: {relative}")
     if stat.S_ISREG(metadata.st_mode):
@@ -115,32 +122,38 @@ def _scan_entry(
         return
     if not stat.S_ISDIR(metadata.st_mode):
         raise ValueError(f"artifact bundle entry is not a regular file: {relative}")
-    _scan_child_directory(descriptor, entry.name, relative, metadata, identities)
+    _scan_child_directory(descriptor, scanned, identities)
 
 
 def _scan_child_directory(
     descriptor: int,
-    name: str,
-    relative: PurePosixPath,
-    metadata: os.stat_result,
+    entry: _ScannedEntry,
     identities: dict[PurePosixPath, EntryIdentity],
 ) -> None:
-    child = _open_directory_component(descriptor, name)
+    child = _open_directory_component(descriptor, entry.name)
     try:
         opened = _identity(os.fstat(child), "directory")
-        if opened != _identity(metadata, "directory"):
-            raise ValueError(f"artifact bundle directory changed while scanning: {relative}")
-        identities[relative] = opened
-        _scan_directory(child, relative, identities)
+        if opened != _identity(entry.metadata, "directory"):
+            raise ValueError(f"artifact bundle directory changed while scanning: {entry.relative}")
+        identities[entry.relative] = opened
+        _scan_directory(child, entry.relative, identities)
     finally:
         os.close(child)
 
 
 def _open_directory_component(parent: int, name: str) -> int:
+    return _open_directory(
+        name,
+        f"artifact bundle directory is not readable: {name}",
+        parent=parent,
+    )
+
+
+def _open_directory(path: str | Path, error_message: str, *, parent: int | None = None) -> int:
     try:
-        return os.open(name, _directory_flags(), dir_fd=parent)
+        return os.open(path, _directory_flags(), dir_fd=parent)
     except OSError as exc:
-        raise ValueError(f"artifact bundle directory is not readable: {name}") from exc
+        raise ValueError(error_message) from exc
 
 
 def _directory_flags() -> int:
@@ -152,7 +165,7 @@ def _directory_flags() -> int:
     )
 
 
-def _open_relative_file(root_descriptor: int, relative: PurePosixPath) -> tuple[int, int, str]:
+def _open_relative_file(root_descriptor: int, relative: PurePosixPath) -> _OpenedEntry:
     directory = os.dup(root_descriptor)
     try:
         for component in relative.parts[:-1]:
@@ -166,10 +179,20 @@ def _open_relative_file(root_descriptor: int, relative: PurePosixPath) -> tuple[
             | getattr(os, "O_CLOEXEC", 0)
         )
         source = os.open(relative.parts[-1], flags, dir_fd=directory)
-        return source, directory, relative.parts[-1]
+        return _OpenedEntry(source, directory, relative.parts[-1], relative)
     except (OSError, ValueError):
         os.close(directory)
         raise
+
+
+@contextmanager
+def _opened_relative_file(root_descriptor: int, relative: PurePosixPath) -> Iterator[_OpenedEntry]:
+    opened = _open_relative_file(root_descriptor, relative)
+    try:
+        yield opened
+    finally:
+        os.close(opened.source)
+        os.close(opened.parent)
 
 
 def _stream_descriptor(source: int, target: BinaryIO, action: str) -> tuple[int, str]:
@@ -188,19 +211,15 @@ def _stream_descriptor(source: int, target: BinaryIO, action: str) -> tuple[int,
     return size, digest.hexdigest()
 
 
-def _require_unchanged_entry(
-    source: int,
-    parent: int,
-    name: str,
-    relative: PurePosixPath,
-    action: str,
-) -> None:
+def _require_unchanged_entry(entry: _OpenedEntry, action: str) -> None:
     try:
-        path_metadata = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        path_metadata = os.stat(entry.name, dir_fd=entry.parent, follow_symlinks=False)
     except OSError as exc:
-        raise ValueError(f"artifact bundle entry changed while being {action}: {relative}") from exc
-    if _identity(path_metadata, "file") != _identity(os.fstat(source), "file"):
-        raise ValueError(f"artifact bundle entry changed while being {action}: {relative}")
+        raise ValueError(
+            f"artifact bundle entry changed while being {action}: {entry.relative}"
+        ) from exc
+    if _identity(path_metadata, "file") != _identity(os.fstat(entry.source), "file"):
+        raise ValueError(f"artifact bundle entry changed while being {action}: {entry.relative}")
 
 
 def _identity(metadata: os.stat_result, kind: str) -> EntryIdentity:

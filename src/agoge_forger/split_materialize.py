@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import os
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
@@ -15,6 +14,7 @@ from typing import Any
 from ._atomic_directory import rename_noreplace
 from ._source_snapshot import copy_source_snapshot, nearest_existing_output_ancestor
 from ._split_report import manifest_bytes, render_report
+from ._strict_json import decode_json_object
 from .datasets import normalize_row
 from .split_schema import (
     SPLIT_NAMES,
@@ -81,12 +81,6 @@ class _BucketPolicy:
     total_weight: int
     train_threshold: int
     validation_threshold: int
-
-
-class _DuplicateJsonKey(ValueError):
-    def __init__(self, key: str) -> None:
-        self.key = key
-        super().__init__(key)
 
 
 class _UnionFind:
@@ -182,28 +176,7 @@ def _training_representation(row: Mapping[str, Any], coordinate: str) -> str:
 
 
 def _decode_source_row(raw_line: bytes, coordinate: str) -> dict[str, Any]:
-    try:
-        decoded = raw_line.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"{coordinate}: source line is not UTF-8") from exc
-    try:
-        row = json.loads(decoded, object_pairs_hook=_unique_json_object)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{coordinate}: invalid JSON: {exc}") from exc
-    except _DuplicateJsonKey as exc:
-        raise ValueError(f"{coordinate}: duplicate JSON object key '{exc.key}'") from exc
-    if not isinstance(row, dict):
-        raise ValueError(f"{coordinate}: source row must be a JSON object")  # noqa: TRY004
-    return row
-
-
-def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise _DuplicateJsonKey(key)
-        result[key] = value
-    return result
+    return decode_json_object(raw_line, coordinate)
 
 
 def _build_source_record(

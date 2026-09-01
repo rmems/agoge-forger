@@ -6,6 +6,7 @@ import os
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from ._artifact_schema import (
@@ -23,6 +24,14 @@ from ._descriptor_bundle import (
     require_descriptor_support,
     scan_bundle,
 )
+
+
+@dataclass(frozen=True)
+class _SnapshotPlan:
+    root: Path
+    index_relative: PurePosixPath
+    expected_index_digest: str
+    indexed: IndexedArtifacts
 
 
 @contextmanager
@@ -43,7 +52,8 @@ def verified_artifact_snapshot(
         prefix=".agoge-artifact-snapshot-", dir=root.parent
     ) as snapshot_dir:
         snapshot_indexed = _copy_snapshot(
-            root, Path(snapshot_dir), index_relative, expected_index_sha256, indexed
+            _SnapshotPlan(root, index_relative, expected_index_sha256, indexed),
+            Path(snapshot_dir),
         )
         yield index, snapshot_indexed
         _require_bundle_unchanged(root, initial)
@@ -75,23 +85,20 @@ def _require_complete_index(
 
 
 def _copy_snapshot(
-    root: Path,
+    plan: _SnapshotPlan,
     snapshot_root: Path,
-    index_relative: PurePosixPath,
-    expected_index_digest: str,
-    indexed: IndexedArtifacts,
 ) -> IndexedArtifacts:
-    root_descriptor = open_bundle(root)
+    root_descriptor = open_bundle(plan.root)
     try:
-        _, index_digest = read_relative_file(root_descriptor, index_relative)
-        if index_digest != expected_index_digest:
+        _, index_digest = read_relative_file(root_descriptor, plan.index_relative)
+        if index_digest != plan.expected_index_digest:
             raise ValueError("SFT artifact index changed while creating bundle snapshot")
         return {
             portable: (
                 entry,
                 _copy_indexed_file(root_descriptor, snapshot_root, portable, entry),
             )
-            for portable, (entry, _) in indexed.items()
+            for portable, (entry, _) in plan.indexed.items()
         }
     finally:
         os.close(root_descriptor)
