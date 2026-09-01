@@ -1,0 +1,28 @@
+src/agoge_forger/split_materialize.py
+  s_9d02230d0ab6ec::t_ae393c3e84329f 164-170
+tests/test_split_materialization_regressions.py
+  s_9d02230d0ab6ec::t_ae393c3e84329f 89,114
+src/agoge_forger/_token_provenance.py
+  s_9d02230d0ab6ec::t_ae393c3e84329f 190,201-228
+tests/test_split_contract.py
+  s_9d02230d0ab6ec::t_79ae2b34764291 261
+tests/test_split_streaming_and_provenance.py
+  s_9d02230d0ab6ec::t_ae393c3e84329f 260,282,285,287-293
+  s_9d02230d0ab6ec::t_1bda411d97cb49 281,283-284,286,479,491,499
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "29f4b3b065ae3b70558692d9c0bbab2bf571aeee",
+  "prompts": {},
+  "sessions": {
+    "s_9d02230d0ab6ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05c12-f51c-7140-a693-33864d1c4551",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
