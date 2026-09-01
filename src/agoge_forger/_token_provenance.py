@@ -187,6 +187,7 @@ def _fast_tokenizer_state(
     special_tokens = _fast_tokenizer_special_tokens(tokenizer)
     payload = {
         "backend": backend_state,
+        "python_classes": _fast_tokenizer_class_implementations(type(tokenizer)),
         "vocabulary": _fingerprint_value(get_vocab()),
         "init_kwargs": _fingerprint_value(_tokenizer_init_kwargs(tokenizer)),
         "special_tokens": _fingerprint_value(special_tokens),
@@ -195,6 +196,36 @@ def _fast_tokenizer_state(
         "python_instance": _fast_tokenizer_instance_state(tokenizer),
     }
     return _with_callable_code(payload, code)
+
+
+def _fast_tokenizer_class_implementations(tokenizer_type: type[Any]) -> dict[str, Any]:
+    return {
+        _class_identifier(base): {
+            name: code
+            for name, member in vars(base).items()
+            if (code := _runtime_member_code(member)) is not None
+        }
+        for base in tokenizer_type.__mro__
+        if base is not object
+    }
+
+
+def _runtime_member_code(value: Any) -> Any:
+    if inspect.isfunction(value):
+        return _code_payload(value.__code__)
+    if isinstance(value, (staticmethod, classmethod)):
+        return _code_payload(value.__func__.__code__)
+    if isinstance(value, property):
+        return {
+            name: _code_payload(accessor.__code__)
+            for name, accessor in {
+                "get": value.fget,
+                "set": value.fset,
+                "delete": value.fdel,
+            }.items()
+            if accessor is not None
+        }
+    return None
 
 
 def _fast_tokenizer_backend_state(backend_to_str: Callable[[], Any]) -> str:

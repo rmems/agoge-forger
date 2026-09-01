@@ -161,7 +161,13 @@ def _training_representation(row: Mapping[str, Any], coordinate: str) -> str:
             f"{coordinate}: source row declares multiple training representations: {rendered}"
         )
     if representations:
-        return representations[0]
+        representation = representations[0]
+        if representation != "text":
+            raise ValueError(
+                f"{coordinate}: new split snapshots require pre-rendered 'text'; "
+                f"'{representation}' depends on downstream rendering"
+            )
+        return representation
     # Keep normalize_row's existing missing-payload diagnostic as the canonical error.
     return "unknown"
 

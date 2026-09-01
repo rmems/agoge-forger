@@ -86,7 +86,7 @@ class _TemplateTokenizer:
         )
 
 
-def test_tokenizer_equivalent_text_and_messages_cannot_share_a_snapshot(tmp_path: Path) -> None:
+def test_new_snapshot_requires_prerendered_text(tmp_path: Path) -> None:
     source = tmp_path / "download.jsonl"
     output = tmp_path / "snapshot"
     messages = [
@@ -111,7 +111,7 @@ def test_tokenizer_equivalent_text_and_messages_cannot_share_a_snapshot(tmp_path
 
     with pytest.raises(
         ValueError,
-        match=r"source mixes model-dependent training representations: text .* messages",
+        match=r"new split snapshots require pre-rendered 'text'; 'messages'",
     ):
         materialize_split(source, output, _spec())
 

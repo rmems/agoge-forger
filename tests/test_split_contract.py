@@ -258,7 +258,7 @@ def test_mixed_training_representations_fail_closed(tmp_path):
     )
     source.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in rows))
 
-    with pytest.raises(ValueError, match="mixes model-dependent training representations"):
+    with pytest.raises(ValueError, match="new split snapshots require pre-rendered 'text'"):
         _materialize(source, output)
     assert not output.exists()
 

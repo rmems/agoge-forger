@@ -23,7 +23,6 @@ from agoge_forger.split_contract import (
     validate_split_manifest,
     write_token_statistics,
 )
-from agoge_forger.split_materialize import iter_source_records
 
 TOKENIZER_ID = "example/tokenizer"
 TOKENIZER_REVISION = "a" * 40
@@ -258,7 +257,7 @@ def _fast_tokenizer(vocabulary, tokenizer_type=PreTrainedTokenizerFast):
     return tokenizer
 
 
-def test_hugging_face_fast_state_and_model_specific_subclasses_are_bound():
+def test_hugging_face_fast_state_and_model_specific_subclasses_are_bound(monkeypatch):
     first_tokenizer = _fast_tokenizer({"[UNK]": 0, "first": 1})
     first = TokenizerBinding(implementation=first_tokenizer)
     second = TokenizerBinding(implementation=_fast_tokenizer({"[UNK]": 0, "second": 1}))
@@ -278,6 +277,20 @@ def test_hugging_face_fast_state_and_model_specific_subclasses_are_bound():
     )
 
     assert subclass.tokenizer_sha256 != first.tokenizer_sha256
+
+    original_encode = HiddenFastTokenizer._encode_plus
+
+    def changed_encode(self, *args, **kwargs):
+        return original_encode(self, *args, **kwargs)
+
+    monkeypatch.setattr(HiddenFastTokenizer, "_encode_plus", changed_encode)
+    changed_subclass = TokenizerBinding(
+        implementation=_fast_tokenizer(
+            {"[UNK]": 0, "hidden": 1}, tokenizer_type=HiddenFastTokenizer
+        )
+    )
+
+    assert changed_subclass.tokenizer_sha256 != subclass.tokenizer_sha256
 
 
 def test_tokenizer_binding_fingerprints_materially_distinct_callables():
@@ -463,7 +476,7 @@ def test_frozen_loader_does_not_retain_materialized_source_records(tmp_path, mon
     assert peak_live_records <= 2
 
 
-def test_manifest_validation_rejects_different_representations_across_splits(tmp_path):
+def test_manifest_validation_rejects_downstream_rendered_representation(tmp_path):
     manifest_path, manifest = _materialized_manifest(tmp_path)
     artifact = manifest.splits["train"]
     artifact_path = manifest_path.parent / artifact.path
@@ -475,25 +488,7 @@ def test_manifest_validation_rejects_different_representations_across_splits(tmp
     ]
     payload = b"".join(canonical_json_bytes(row) + b"\n" for row in converted)
     artifact_path.write_bytes(payload)
-    rebuilt = tuple(
-        iter_source_records(
-            artifact_path,
-            manifest.canonical_identity,
-            source_coordinate_path=artifact.path,
-        )
-    )
-    members = tuple(
-        record.member.model_copy(
-            update={
-                "source_coordinate": expected.source_coordinate,
-                "raw_line_sha256": expected.raw_line_sha256,
-            }
-        )
-        for record, expected in zip(rebuilt, artifact.members, strict=True)
-    )
-    updated_artifact = artifact.model_copy(
-        update={"sha256": sha256_bytes(payload), "members": members}
-    )
+    updated_artifact = artifact.model_copy(update={"sha256": sha256_bytes(payload)})
     updated_manifest = manifest.model_copy(
         update={"splits": {**manifest.splits, "train": updated_artifact}}
     )
@@ -501,7 +496,7 @@ def test_manifest_validation_rejects_different_representations_across_splits(tmp
         canonical_json_bytes(updated_manifest.model_dump(mode="json")) + b"\n"
     )
 
-    with pytest.raises(ValueError, match="mixes model-dependent training representations"):
+    with pytest.raises(ValueError, match="new split snapshots require pre-rendered 'text'"):
         validate_split_manifest(manifest_path)
 
 
