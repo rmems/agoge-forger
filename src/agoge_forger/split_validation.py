@@ -49,8 +49,7 @@ def validate_split_manifest(
     """Validate schema, source identity, artifacts, members, and leakage gates."""
 
     path = Path(manifest_path).expanduser().resolve(strict=True)
-    manifest = load_split_manifest(path)
-    return _validate_split_manifest(path, manifest, source_path)
+    return validate_split_manifest_snapshot(path, path.read_bytes(), source_path=source_path)
 
 
 def validate_split_manifest_snapshot(
