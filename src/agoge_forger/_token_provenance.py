@@ -256,7 +256,9 @@ def _runtime_function_code(
     function: Callable[..., Any], require_independent: bool, owner: type[Any]
 ) -> Any:
     if require_independent:
-        _require_bound_custom_method(function, owner)
+        _require_bound_class_closure(function, owner)
+        if function.__defaults__ or function.__kwdefaults__:
+            raise ValueError(f"{_TOKENIZER_IMPLEMENTATION_LABEL} must not depend on defaults")
         _require_no_external_dependencies(
             function,
             _TOKENIZER_IMPLEMENTATION_LABEL,
@@ -265,22 +267,12 @@ def _runtime_function_code(
     return _code_payload(function.__code__)
 
 
-def _require_bound_custom_method(function: Callable[..., Any], owner: type[Any]) -> None:
-    _require_bound_class_closure(function, owner)
-    _require_no_behavioral_defaults(function)
-
-
 def _require_bound_class_closure(function: Callable[..., Any], owner: type[Any]) -> None:
     free_variables = set(function.__code__.co_freevars)
     if free_variables - {"__class__"}:
         raise ValueError(f"{_TOKENIZER_IMPLEMENTATION_LABEL} must not depend on closure state")
     if "__class__" in free_variables and _closure_value(function, "__class__") is not owner:
         raise ValueError(f"{_TOKENIZER_IMPLEMENTATION_LABEL} has an unbound class closure")
-
-
-def _require_no_behavioral_defaults(function: Callable[..., Any]) -> None:
-    if function.__defaults__ or function.__kwdefaults__:
-        raise ValueError(f"{_TOKENIZER_IMPLEMENTATION_LABEL} must not depend on defaults")
 
 
 def _closure_value(function: Callable[..., Any], name: str) -> Any:
