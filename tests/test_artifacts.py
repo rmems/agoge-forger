@@ -44,6 +44,26 @@ def test_artifact_index_excludes_only_its_root_index(tmp_path):
     ]
 
 
+def test_artifact_index_writes_producer_provenance(tmp_path):
+    out_dir = tmp_path / "test_out"
+    out_dir.mkdir()
+    (out_dir / "model.safetensors").write_bytes(b"weights")
+    provenance = {
+        "base_model_name_or_path": "example/base",
+        "revision": "a" * 40,
+        "training_split_manifest_sha256": "b" * 64,
+        "training_split_name": "train",
+        "training_split_sha256": "c" * 64,
+    }
+
+    index_path = write_artifact_index(str(out_dir), producer_provenance=provenance)
+
+    import json
+
+    with open(index_path) as handle:
+        assert json.load(handle)["producer_provenance"] == provenance
+
+
 def test_no_bin_outputs_when_safe_serialization_required(tmp_path):
     out_dir = tmp_path / "safe_dir"
     out_dir.mkdir()

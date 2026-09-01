@@ -6,6 +6,9 @@ import json
 import os
 import re
 import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TypeGuard
 
@@ -29,9 +32,76 @@ from ._artifact_schema import (
     _unique_json_object,
 )
 from ._artifact_snapshot import verified_artifact_snapshot
+from ._descriptor_bundle import open_bundle, read_relative_file
 from ._merged_model_schema import require_merged_tensor_schema
 
 _SAFETENSORS_SUFFIX = ".safetensors"
+
+
+@dataclass(frozen=True)
+class VerifiedAdapterSource:
+    root: Path
+    provenance: ArtifactProducerProvenance
+    indexed: IndexedArtifacts
+    adapter_config: dict[str, object]
+
+
+@contextmanager
+def verified_adapter_source(
+    root: Path,
+    model_repository: str,
+    model_revision: str | None,
+) -> Iterator[VerifiedAdapterSource]:
+    """Yield a descriptor-pinned, fully verified adapter snapshot for merging."""
+
+    index_path = root / "artifact_index.json"
+    expected_digest = _descriptor_index_digest(root)
+    with verified_artifact_snapshot(root, index_path, expected_digest) as (index, snapshot):
+        provenance = index.producer_provenance
+        if provenance is None:
+            raise ValueError("peft_adapter artifact index requires producer_provenance")
+        effective_revision = model_revision or provenance.revision
+        context = ArtifactValidationContext(
+            kind="peft_adapter",
+            model_repository=model_repository,
+            model_revision=effective_revision,
+            split_manifest_sha256=provenance.training_split_manifest_sha256,
+            train_split_sha256=provenance.training_split_sha256,
+        )
+        _require_safe_weight_paths(snapshot)
+        _require_valid_safetensors(snapshot)
+        adapter_config = _require_peft_adapter_structure(snapshot, context)
+        _require_producer_provenance(provenance, context)
+        yield VerifiedAdapterSource(
+            root=snapshot[_ADAPTER_CONFIG_PATH][1].parent,
+            provenance=provenance,
+            indexed=snapshot,
+            adapter_config=adapter_config,
+        )
+
+
+def require_adapter_source_tensor_schema(
+    source: VerifiedAdapterSource,
+    model_repository: str,
+    model_revision: str,
+) -> None:
+    context = ArtifactValidationContext(
+        kind="peft_adapter",
+        model_repository=model_repository,
+        model_revision=model_revision,
+        split_manifest_sha256=source.provenance.training_split_manifest_sha256,
+        train_split_sha256=source.provenance.training_split_sha256,
+    )
+    require_adapter_tensor_schema(source.indexed, source.adapter_config, context)
+
+
+def _descriptor_index_digest(root: Path) -> str:
+    root_descriptor = open_bundle(root)
+    try:
+        _, digest = read_relative_file(root_descriptor, PurePosixPath("artifact_index.json"))
+    finally:
+        os.close(root_descriptor)
+    return digest
 
 
 def require_artifact_index(
@@ -52,6 +122,7 @@ def _require_artifact_layout(
     _require_valid_safetensors(indexed)
     if context.kind == "peft_adapter":
         _require_peft_adapter_layout(indexed, context)
+        _require_producer_provenance(producer_provenance, context)
         return
     _require_merged_model_layout(indexed, context, producer_provenance)
 
@@ -66,6 +137,14 @@ def _require_peft_adapter_layout(
     indexed: IndexedArtifacts,
     context: ArtifactValidationContext,
 ) -> None:
+    config = _require_peft_adapter_structure(indexed, context)
+    require_adapter_tensor_schema(indexed, config, context)
+
+
+def _require_peft_adapter_structure(
+    indexed: IndexedArtifacts,
+    context: ArtifactValidationContext,
+) -> dict[str, object]:
     _require_indexed_paths(
         indexed,
         {_ADAPTER_CONFIG_PATH, _ADAPTER_WEIGHTS_PATH},
@@ -79,7 +158,7 @@ def _require_peft_adapter_layout(
     config = _load_verified_json(entry, config_path, label="PEFT adapter config")
     _require_nonempty_string(config, "peft_type", label="PEFT adapter config")
     _require_adapter_provenance(config, context)
-    require_adapter_tensor_schema(indexed, config, context)
+    return config
 
 
 def _require_no_merged_config(indexed: IndexedArtifacts) -> None:
@@ -149,7 +228,7 @@ def _require_merged_model_layout(
     _require_indexed_paths(indexed, {_MERGED_CONFIG_PATH}, kind="merged_model")
     _require_no_adapter_files(indexed)
     config = _require_merged_config(indexed)
-    _require_merged_producer_provenance(producer_provenance, context)
+    _require_producer_provenance(producer_provenance, context)
     has_single = _MERGED_WEIGHTS_PATH in indexed
     has_sharded = _MERGED_WEIGHTS_INDEX_PATH in indexed
     _require_single_or_sharded_weights(has_single, has_sharded)
@@ -161,20 +240,29 @@ def _require_merged_model_layout(
     require_merged_tensor_schema(indexed, model_weights, config)
 
 
-def _require_merged_producer_provenance(
+def _require_producer_provenance(
     provenance: ArtifactProducerProvenance | None,
     context: ArtifactValidationContext,
 ) -> None:
     if provenance is None:
-        raise ValueError("merged_model artifact index requires producer_provenance")
-    if provenance.base_model_name_or_path != context.model_repository:
+        raise ValueError(f"{context.kind} artifact index requires producer_provenance")
+    expected = {
+        "base_model_name_or_path": context.model_repository,
+        "revision": context.model_revision,
+        "training_split_manifest_sha256": context.split_manifest_sha256,
+        "training_split_sha256": context.train_split_sha256,
+    }
+    for field, expected_value in expected.items():
+        _require_provenance_value(provenance, field, expected_value)
+
+
+def _require_provenance_value(
+    provenance: ArtifactProducerProvenance, field: str, expected: str
+) -> None:
+    if getattr(provenance, field) != expected:
         raise ValueError(
-            "merged_model producer provenance base_model_name_or_path does not match "
-            "the contracted SFT arm"
-        )
-    if provenance.revision != context.model_revision:
-        raise ValueError(
-            "merged_model producer provenance revision does not match the contracted SFT arm"
+            f"artifact producer provenance {field} does not match the contracted "
+            "SFT training identity"
         )
 
 

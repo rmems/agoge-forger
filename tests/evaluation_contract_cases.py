@@ -107,8 +107,13 @@ def write_artifact_index(output_dir: Path, provenance=None) -> Path:
 
 
 def with_artifact(sft: EvaluationArm, output_dir: Path, *, kind, provenance=None):
-    if provenance is None and kind == "merged_model":
-        provenance = model_provenance()
+    if provenance is None:
+        manifest_path = output_dir.parent / "snapshot" / "split_manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        provenance = model_provenance(
+            split_manifest_sha256=sha256_file(manifest_path),
+            train_split_sha256=manifest["splits"]["train"]["sha256"],
+        )
     index_provenance = None if provenance is False else provenance
     artifact_index = write_artifact_index(output_dir, index_provenance)
     return sft.model_copy(
@@ -128,9 +133,19 @@ def write_adapter_config(output_dir: Path, payload: dict[str, object]) -> None:
 
 
 def model_provenance(
-    repository: object = MODEL_REPOSITORY, revision: object = MODEL_REVISION
+    repository: object = MODEL_REPOSITORY,
+    revision: object = MODEL_REVISION,
+    *,
+    split_manifest_sha256: object = "7" * 64,
+    train_split_sha256: object = "8" * 64,
 ) -> dict[str, object]:
-    return {"base_model_name_or_path": repository, "revision": revision}
+    return {
+        "base_model_name_or_path": repository,
+        "revision": revision,
+        "training_split_manifest_sha256": split_manifest_sha256,
+        "training_split_name": "train",
+        "training_split_sha256": train_split_sha256,
+    }
 
 
 def write_merged_config(output_dir: Path, payload: dict[str, str] | None = None) -> None:
@@ -214,6 +229,7 @@ def evaluation_case(tmp_path: Path):
     manifest_path, manifest = frozen_manifest(tmp_path)
     digest = logical_task_set_sha256(held_out_task_ids(manifest))
     base, sft = evaluation_arms(digest, tmp_path)
+    sft = with_artifact(sft, tmp_path / "adapter", kind="peft_adapter")
     return manifest_path, manifest, base, sft
 
 

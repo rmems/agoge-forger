@@ -75,6 +75,17 @@ materialized artifacts and their recorded membership.
 Training code can call `load_frozen_dataset(manifest, "train", tokenizer)`.
 Evaluation plumbing can call `iter_frozen_records(manifest, "held_out")`.
 Both loaders verify and read recorded membership; neither computes a new split.
+The dataset loader includes the exact manifest and selected-split digests in
+the Hugging Face generator cache identity, so replacing files at the same path
+cannot silently reuse stale Arrow membership.
+
+For evaluation-eligible training, configure `split_manifest_path` together with
+`split_name: train` instead of `dataset_path`, and pin `revision` to a lowercase
+40-64 character commit digest. The trainer records the exact manifest and
+training-split digests in `artifact_index.json`. Ordinary `dataset_path` runs
+remain supported but intentionally produce no claim that held-out records were
+excluded. Frozen-mode checkpoint resume is rejected until checkpoints carry
+and verify the same provenance.
 
 Tokenizer and serializer statistics are immutable sidecars produced with
 `write_token_statistics`. Callers must supply `TokenizerBinding` and
@@ -98,7 +109,10 @@ any source-level split digest.
 digest from the frozen split manifest. Validation fails closed when causal base
 and SFT arms drift in logical task identity, tokenizer provenance, serializer
 identity/hash, decoding settings, context window, truncation policy, or scoring
-version.
+version. Artifact validation additionally requires both adapter and merged SFT
+bundles to prove they were produced from that exact manifest's `train`
+artifact. Contract-relative paths use POSIX separators for relocation between
+Windows and Unix systems.
 
 This foundation does not load a model, run inference, choose a checkpoint,
 score generations, or create claim-bearing results. Those #100 capabilities

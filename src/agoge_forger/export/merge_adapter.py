@@ -1,6 +1,17 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
 from peft import PeftModel
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
+from ..eval._artifact_schema import ArtifactProducerProvenance
+from ..eval._artifact_validation import (
+    VerifiedAdapterSource,
+    require_adapter_source_tensor_schema,
+    verified_adapter_source,
+)
 from ..logging import logger
 from ..models.load import load_base_model
 from ..path_safety import resolve_output_directory
@@ -10,6 +21,21 @@ from ..train.checkpoints import (
     is_adapter_artifact,
     resolve_export_source,
 )
+
+
+@dataclass(frozen=True)
+class _MergedOutputRequest:
+    out_dir: str
+    max_shard_size: str
+    allow_unsafe: bool
+    provenance: ArtifactProducerProvenance | None
+
+
+@dataclass(frozen=True)
+class _MergeSource:
+    root: Path
+    provenance: ArtifactProducerProvenance | None
+    verified: VerifiedAdapterSource | None = None
 
 
 def merged_model_save_kwargs(*, max_shard_size: str = "4GB") -> dict[str, str]:
@@ -64,35 +90,78 @@ def merge_adapter(
     if revision is None and infer_revision:
         revision = infer_base_revision_from_adapter(adapter_path)
 
-    model, tokenizer = load_base_model(
-        base_model_id,
-        trust_remote_code=trust_remote_code,
-        quant_config=None,
-        bf16=True,
-        revision=revision,
-    )
-    model = PeftModel.from_pretrained(model, adapter_path)
+    with _merge_source(adapter_path, base_model_id, revision, allow_unsafe) as source:
+        effective_revision = (
+            source.provenance.revision if source.provenance is not None else revision
+        )
+        model, tokenizer = load_base_model(
+            base_model_id,
+            trust_remote_code=trust_remote_code,
+            quant_config=None,
+            bf16=True,
+            revision=effective_revision,
+        )
+        if source.verified is not None:
+            require_adapter_source_tensor_schema(
+                source.verified,
+                base_model_id,
+                source.verified.provenance.revision,
+            )
+        model = PeftModel.from_pretrained(model, str(source.root))
+        _save_merged_output(
+            model,
+            tokenizer,
+            _MergedOutputRequest(
+                out_dir,
+                max_shard_size,
+                allow_unsafe,
+                source.provenance,
+            ),
+        )
 
+
+@contextmanager
+def _merge_source(
+    adapter_path: str,
+    base_model_id: str,
+    revision: str | None,
+    allow_unsafe: bool,
+) -> Iterator[_MergeSource]:
+    root = Path(adapter_path)
+    if allow_unsafe:
+        yield _MergeSource(root, None)
+        return
+    if not (root / "artifact_index.json").is_file():
+        raise ValueError(
+            "adapter artifact_index.json is required for a verified merged export; "
+            "pass allow_unsafe=True only for a legacy, evaluation-ineligible merge"
+        )
+    with verified_adapter_source(root, base_model_id, revision) as source:
+        yield _MergeSource(source.root, source.provenance, source)
+
+
+def _save_merged_output(
+    model,
+    tokenizer,
+    request: _MergedOutputRequest,
+) -> None:
     logger.info("Merging weights...")
     merged_model = model.merge_and_unload()
-
-    # Validate the output path *before* touching the filesystem so a
-    # rejected traversal path cannot create directories on disk. The
-    # resolver also creates the directory via mkdir(parents=True, exist_ok=True).
-    safe_out_dir = resolve_output_directory(out_dir)
+    safe_out_dir = resolve_output_directory(request.out_dir)
     logger.info(f"Saving merged model to {safe_out_dir}")
-    # Transformers 5: no safe_serialization kwarg on PreTrainedModel (always safetensors).
-    # PeftModel.save_pretrained (adapter path in train/trainer.py) still accepts it.
     merged_model.save_pretrained(
         str(safe_out_dir),
-        **merged_model_save_kwargs(max_shard_size=max_shard_size),
+        **merged_model_save_kwargs(max_shard_size=request.max_shard_size),
     )
     tokenizer.save_pretrained(str(safe_out_dir))
-
-    if not allow_unsafe:
+    if not request.allow_unsafe:
         assert_no_unsafe_weight_bins(str(safe_out_dir))
-
-    index_path = write_artifact_index(str(safe_out_dir))
+    index_path = write_artifact_index(
+        str(safe_out_dir),
+        producer_provenance=(
+            request.provenance.model_dump(mode="json") if request.provenance else None
+        ),
+    )
     logger.info(f"Artifact index written to {index_path}")
 
 

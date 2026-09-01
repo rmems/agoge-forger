@@ -1,4 +1,7 @@
 import os
+import re
+from dataclasses import dataclass
+from typing import Any
 
 import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -6,9 +9,11 @@ from trl import SFTConfig, SFTTrainer
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
 from ..datasets import load_jsonl_dataset
+from ..eval._artifact_schema import ArtifactProducerProvenance
 from ..logging import logger
 from ..manifests import write_run_manifest
 from ..models.load import load_base_model
+from ..split_loaders import FrozenSplitBinding, bind_frozen_split, load_frozen_dataset
 from .checkpoints import resolve_resume_checkpoint
 from .preflight import (
     BYTES_PER_GB,
@@ -20,6 +25,13 @@ from .preflight import (
     validate_lora_targets_exist,
     warn_on_disk_pressure,
 )
+
+
+@dataclass(frozen=True)
+class _TrainingFinalization:
+    out_dir: str
+    gpu_report: Any
+    producer_provenance: ArtifactProducerProvenance | None
 
 
 def _build_training_args(config, out_dir):
@@ -95,7 +107,8 @@ def _prepare_peft_model(config, model):
     return model
 
 
-def _finalize_training_run(config, trainer, out_dir, gpu_report):
+def _finalize_training_run(config, trainer, finalization: _TrainingFinalization):
+    out_dir = finalization.out_dir
     logger.info(f"Saving adapter to {out_dir}")
     trainer.model.save_pretrained(out_dir, safe_serialization=config.runtime.save_safetensors)
     # `Trainer.tokenizer` was removed in Transformers 5; the tokenizer now
@@ -106,7 +119,14 @@ def _finalize_training_run(config, trainer, out_dir, gpu_report):
     if not config.runtime.allow_unsafe_serialization:
         assert_no_unsafe_weight_bins(out_dir)
 
-    index_path = write_artifact_index(out_dir)
+    index_path = write_artifact_index(
+        out_dir,
+        producer_provenance=(
+            finalization.producer_provenance.model_dump(mode="json")
+            if finalization.producer_provenance is not None
+            else None
+        ),
+    )
     logger.info(f"Artifact index written to {index_path}")
 
     vram_used = torch.cuda.max_memory_allocated() / BYTES_PER_GB
@@ -114,7 +134,7 @@ def _finalize_training_run(config, trainer, out_dir, gpu_report):
 
     metrics = {
         "max_vram_gb": vram_used,
-        "gpu_report": gpu_report,
+        "gpu_report": finalization.gpu_report,
         "artifact_index": index_path,
     }
     write_run_manifest(
@@ -135,10 +155,12 @@ def run_training(config):
     estimate_training_risk(config, gpu_report)
     warn_on_disk_pressure(config)
 
-    # Reject a bad dataset_text_field here, while it is still cheap: scanning
-    # the raw JSONL needs no tokenizer, so a misconfigured run dies before
-    # `load_base_model` spends time and VRAM below.
-    validate_dataset_text_field_in_source(config.dataset_path, config.dataset_text_field)
+    frozen_binding = _bind_frozen_training_input(config)
+    if frozen_binding is None:
+        # Reject a bad dataset_text_field here, while it is still cheap: scanning
+        # the raw JSONL needs no tokenizer, so a misconfigured run dies before
+        # `load_base_model` spends time and VRAM below.
+        validate_dataset_text_field_in_source(config.dataset_path, config.dataset_text_field)
 
     logger.info(f"Loading {config.model_id} for run {config.run_name}")
     model, tokenizer = load_base_model(
@@ -150,7 +172,17 @@ def run_training(config):
     )
     model = _prepare_peft_model(config, model)
 
-    dataset = load_jsonl_dataset(config.dataset_path, tokenizer)
+    producer_provenance = None
+    if frozen_binding is None:
+        dataset = load_jsonl_dataset(config.dataset_path, tokenizer)
+    else:
+        dataset = load_frozen_dataset(
+            frozen_binding.manifest_path,
+            "train",
+            tokenizer,
+            expected_binding=frozen_binding,
+        )
+        producer_provenance = _frozen_producer_provenance(config, frozen_binding)
     # Authoritative re-check: the peek above only saw the first row, and a
     # later row in a mixed-format file can normalize to different columns.
     validate_dataset_text_field(dataset.column_names, config.dataset_text_field)
@@ -165,4 +197,40 @@ def run_training(config):
 
     logger.info("Starting training...")
     trainer.train(resume_from_checkpoint=resume_checkpoint)
-    _finalize_training_run(config, trainer, out_dir, gpu_report)
+    _finalize_training_run(
+        config,
+        trainer,
+        _TrainingFinalization(out_dir, gpu_report, producer_provenance),
+    )
+
+
+def _bind_frozen_training_input(config) -> FrozenSplitBinding | None:
+    if config.split_manifest_path is None:
+        return None
+    if config.split_name != "train":
+        raise ValueError("frozen training requires split_name: train")
+    _require_frozen_revision(config.revision)
+    _reject_frozen_resume(config)
+    return bind_frozen_split(config.split_manifest_path, "train")
+
+
+def _require_frozen_revision(revision: str | None) -> None:
+    if revision is None or re.fullmatch(r"[0-9a-f]{40,64}", revision) is None:
+        raise ValueError("frozen training requires an immutable lowercase commit revision")
+
+
+def _reject_frozen_resume(config) -> None:
+    if config.training.resume_checkpoint_path or config.training.resume_from_latest_checkpoint:
+        raise ValueError(
+            "frozen training resume is disabled until checkpoints carry verified provenance"
+        )
+
+
+def _frozen_producer_provenance(config, binding: FrozenSplitBinding) -> ArtifactProducerProvenance:
+    return ArtifactProducerProvenance(
+        base_model_name_or_path=config.model_id,
+        revision=config.revision,
+        training_split_manifest_sha256=binding.manifest_sha256,
+        training_split_name="train",
+        training_split_sha256=binding.split_sha256,
+    )

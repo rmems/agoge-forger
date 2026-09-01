@@ -1,6 +1,13 @@
-import yaml
-from pydantic import BaseModel, Field, field_validator
+from typing import Literal
 
+import yaml
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from ._config_dataset import (
+    require_complete_frozen_source,
+    require_exclusive_dataset_source,
+    resolve_optional_input,
+)
 from .path_safety import resolve_existing_path
 
 
@@ -66,7 +73,9 @@ class ExperimentConfig(BaseModel):
     model_id: str
     revision: str | None = None
     trust_remote_code: bool = False
-    dataset_path: str
+    dataset_path: str | None = None
+    split_manifest_path: str | None = None
+    split_name: Literal["train"] | None = None
     dataset_text_field: str = "text"
     output_dir: str = "adapters"
     run_name: str = "run"
@@ -81,6 +90,13 @@ class ExperimentConfig(BaseModel):
     def _normalize_revision(cls, value: object) -> str | None:
         return normalize_revision(value)
 
+    @model_validator(mode="after")
+    def _require_one_dataset_source(self) -> "ExperimentConfig":
+        frozen_fields = self.split_manifest_path is not None or self.split_name is not None
+        require_exclusive_dataset_source(self.dataset_path, frozen_fields)
+        require_complete_frozen_source(self.split_manifest_path, self.split_name)
+        return self
+
 
 def load_config(yaml_path: str) -> ExperimentConfig:
     config_path = resolve_existing_path(yaml_path, must_be_file=True)
@@ -92,20 +108,14 @@ def load_config(yaml_path: str) -> ExperimentConfig:
         raise ValueError(
             f"Invalid config file '{yaml_path}': expected a YAML mapping, got {type(data).__name__}"
         )
-    if "dataset_path" not in data:
-        raise ValueError(f"Invalid config file '{yaml_path}': missing required key 'dataset_path'")
     if "model_id" not in data:
         raise ValueError(f"Invalid config file '{yaml_path}': missing required key 'model_id'")
 
     # Resolve relative `dataset_path` entries against the directory of
     # the config file itself, not the current working directory, so
     # configs are portable and reproducible across environments.
-    from pathlib import Path
-
-    raw_dataset_path = Path(str(data["dataset_path"])).expanduser()
-    if not raw_dataset_path.is_absolute():
-        raw_dataset_path = (config_path.parent / raw_dataset_path).resolve()
-    dataset_path = str(resolve_existing_path(str(raw_dataset_path), must_be_file=True))
+    dataset_path = resolve_optional_input(data.get("dataset_path"), config_path)
+    split_manifest_path = resolve_optional_input(data.get("split_manifest_path"), config_path)
 
     # Flattened parsing to match yaml structure
     return ExperimentConfig(
@@ -113,6 +123,8 @@ def load_config(yaml_path: str) -> ExperimentConfig:
         revision=data.get("revision"),
         trust_remote_code=data.get("trust_remote_code", False),
         dataset_path=dataset_path,
+        split_manifest_path=split_manifest_path,
+        split_name=data.get("split_name"),
         dataset_text_field=data.get("dataset_text_field", "text"),
         output_dir=data.get("output_dir", "adapters"),
         run_name=data.get("run_name", "run"),

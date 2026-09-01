@@ -148,7 +148,7 @@ def validate_evaluation_contract(contract_path: str | Path) -> PairedEvaluationC
     contract = load_evaluation_contract(path)
     manifest = _validate_manifest_reference(path, contract)
     _validate_held_out_reference(contract, manifest)
-    _validate_sft_artifact(path, contract.sft)
+    _validate_sft_artifact(path, contract.sft, manifest, contract.split_manifest_sha256)
     return contract
 
 
@@ -193,10 +193,11 @@ def build_evaluation_contract(
     manifest = validate_split_manifest_snapshot(manifest_file, manifest_snapshot)
     task_ids = held_out_task_ids(manifest)
     task_digest = logical_task_set_sha256(task_ids)
-    normalized_sft = _normalize_sft_artifact(validated_sft, destination)
+    manifest_digest = sha256_bytes(manifest_snapshot)
+    normalized_sft = _normalize_sft_artifact(validated_sft, destination, manifest, manifest_digest)
     contract = PairedEvaluationContract(
-        split_manifest_path=str(Path(os.path.relpath(manifest_file, destination.parent.resolve()))),
-        split_manifest_sha256=sha256_bytes(manifest_snapshot),
+        split_manifest_path=_portable_relative_path(manifest_file, destination.parent.resolve()),
+        split_manifest_sha256=manifest_digest,
         held_out_split_sha256=manifest.splits["held_out"].sha256,
         logical_task_ids=task_ids,
         logical_task_set_sha256=task_digest,
@@ -213,8 +214,13 @@ def build_evaluation_contract(
     return contract
 
 
-def _normalize_sft_artifact(sft: EvaluationArm, destination: Path) -> EvaluationArm:
-    artifact, context = _sft_artifact_validation(sft)
+def _normalize_sft_artifact(
+    sft: EvaluationArm,
+    destination: Path,
+    manifest: SplitManifest,
+    manifest_digest: str,
+) -> EvaluationArm:
+    artifact, context = _sft_artifact_validation(sft, manifest, manifest_digest)
     anchor = destination.parent.resolve()
     supplied = Path(artifact.artifact_index_path).expanduser()
     artifact_path = (
@@ -227,7 +233,7 @@ def _normalize_sft_artifact(sft: EvaluationArm, destination: Path) -> Evaluation
     normalized = ArtifactIndexReference.model_validate(
         {
             **artifact.model_dump(mode="json"),
-            "artifact_index_path": str(Path(os.path.relpath(artifact_path, anchor))),
+            "artifact_index_path": _portable_relative_path(artifact_path, anchor),
         }
     )
     return EvaluationArm.model_validate(
@@ -244,14 +250,21 @@ def _require_contract_outside_artifact_bundle(
         raise ValueError("evaluation contract cannot be written inside its artifact bundle")
 
 
-def _validate_sft_artifact(contract_path: Path, sft: EvaluationArm) -> None:
-    artifact, context = _sft_artifact_validation(sft)
+def _validate_sft_artifact(
+    contract_path: Path,
+    sft: EvaluationArm,
+    manifest: SplitManifest,
+    manifest_digest: str,
+) -> None:
+    artifact, context = _sft_artifact_validation(sft, manifest, manifest_digest)
     artifact_path = (contract_path.parent / artifact.artifact_index_path).resolve(strict=True)
     require_artifact_index(artifact_path, artifact.artifact_index_sha256, context)
 
 
 def _sft_artifact_validation(
     sft: EvaluationArm,
+    manifest: SplitManifest,
+    manifest_digest: str,
 ) -> tuple[ArtifactIndexReference, ArtifactValidationContext]:
     artifact = sft.artifact
     if artifact is None:
@@ -260,5 +273,11 @@ def _sft_artifact_validation(
         kind=artifact.kind,
         model_repository=sft.model_repository,
         model_revision=sft.model_revision,
+        split_manifest_sha256=manifest_digest,
+        train_split_sha256=manifest.splits["train"].sha256,
     )
     return artifact, context
+
+
+def _portable_relative_path(path: Path, anchor: Path) -> str:
+    return os.path.relpath(path, anchor).replace("\\", "/")

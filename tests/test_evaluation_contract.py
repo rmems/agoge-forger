@@ -182,3 +182,9 @@ def test_evaluation_contract_requires_immutable_model_and_tokenizer_revisions(tm
         base.model_copy(update={"tokenizer_revision": "latest"}).model_validate(
             base.model_copy(update={"tokenizer_revision": "latest"}).model_dump()
         )
+
+
+def test_contract_references_are_serialized_with_posix_separators(monkeypatch):
+    monkeypatch.setattr(contract_module.os.path, "relpath", lambda path, anchor: r"..\bundle\x")
+
+    assert contract_module._portable_relative_path(Path("x"), Path("y")) == "../bundle/x"

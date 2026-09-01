@@ -15,7 +15,7 @@ from agoge_forger.eval import (
     _tensor_schema,
 )
 from agoge_forger.eval.contract import validate_evaluation_contract
-from agoge_forger.split_contract import canonical_json_bytes
+from agoge_forger.split_contract import canonical_json_bytes, sha256_file
 from tests.evaluation_contract_cases import (
     MODEL_REPOSITORY,
     MODEL_REVISION,
@@ -236,6 +236,53 @@ def test_evaluation_contract_revalidates_peft_provenance(tmp_path):
 
     with pytest.raises(ValueError, match="revision does not match"):
         validate_evaluation_contract(contract_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_error"),
+    [
+        (
+            "training_split_manifest_sha256",
+            "4" * 64,
+            "training_split_manifest_sha256 does not match",
+        ),
+        ("training_split_sha256", "5" * 64, "training_split_sha256 does not match"),
+    ],
+)
+def test_evaluation_contract_binds_artifact_to_frozen_training_split(
+    tmp_path, field, value, expected_error
+):
+    manifest_path, _, base, sft = evaluation_case(tmp_path)
+    contract_path = tmp_path / "eval" / "contract.json"
+    build_contract(tmp_path, manifest_path, base, sft)
+    assert sft.artifact is not None
+    artifact_index = Path(sft.artifact.artifact_index_path)
+    payload = json.loads(artifact_index.read_bytes())
+    payload["producer_provenance"][field] = value
+    artifact_index.write_bytes(canonical_json_bytes(payload) + b"\n")
+    refresh_contract_artifact_digest(contract_path, artifact_index)
+
+    with pytest.raises(ValueError, match=expected_error):
+        validate_evaluation_contract(contract_path)
+
+
+def test_evaluation_contract_rejects_missing_training_split_name(tmp_path):
+    manifest_path, _, base, sft = evaluation_case(tmp_path)
+    assert sft.artifact is not None
+    artifact_index = Path(sft.artifact.artifact_index_path)
+    payload = json.loads(artifact_index.read_bytes())
+    del payload["producer_provenance"]["training_split_name"]
+    artifact_index.write_bytes(canonical_json_bytes(payload) + b"\n")
+    invalid_sft = sft.model_copy(
+        update={
+            "artifact": sft.artifact.model_copy(
+                update={"artifact_index_sha256": sha256_file(artifact_index)}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="invalid SFT artifact index"):
+        build_contract(tmp_path, manifest_path, base, invalid_sft)
 
 
 @pytest.mark.parametrize("layout", ["single", "sharded"])

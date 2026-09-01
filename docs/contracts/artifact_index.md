@@ -14,6 +14,13 @@ adapters/<run_name>/artifact_index.json   # training output
 ```json
 {
   "output_dir": "/path/to/output",
+  "producer_provenance": {
+    "base_model_name_or_path": "ibm-granite/granite-4.1-3b-base",
+    "revision": "0123456789abcdef0123456789abcdef01234567",
+    "training_split_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "training_split_name": "train",
+    "training_split_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
   "artifacts": [
     {
       "file": "adapter_model.safetensors",
@@ -38,6 +45,15 @@ adapters/<run_name>/artifact_index.json   # training output
 | `artifacts[].file`  | str    | Yes      | Relative path from the directory containing `artifact_index.json` (normally `output_dir`) |
 | `artifacts[].size_bytes` | int | Yes    | File size in bytes                             |
 | `artifacts[].sha256` | str   | Yes      | Hex-encoded SHA-256 hash of the file contents  |
+| `producer_provenance` | object | No | Immutable model and frozen-training identity emitted by an eligible producer |
+
+Evaluation-eligible adapter and merged-model bundles require all five
+`producer_provenance` fields shown above. Legacy JSONL training remains
+supported, but its indexes omit this object and cannot be used as the SFT arm
+of a paired evaluation contract. Merging a provenanced adapter copies its
+validated provenance unchanged; merge code never invents training provenance.
+Default merge requires that verified index. `allow_unsafe=True` is the explicit
+legacy escape hatch and produces an unprovenanced, evaluation-ineligible merge.
 
 ## Referenced By
 
@@ -80,5 +96,5 @@ Python writes and consumes `artifact_index.json` after training and merging.
 - Consumers resolve listed files from the directory containing `artifact_index.json`; `output_dir` is producer provenance and may become stale when an immutable artifact bundle is relocated
 - Consumers verify every listed file's existence, regular-file type, byte size, and SHA-256 digest before using the bundle
 - Evaluation-contract validation also requires the index to cover every regular file recursively beneath the bundle root, excluding only the root `artifact_index.json`, and rejects symlinks or special files
-- A `peft_adapter` evaluation artifact requires `adapter_config.json` plus `adapter_model.safetensors` and binds the adapter's base repository and immutable revision to the SFT arm; a `merged_model` requires `config.json` plus either one `model.safetensors` or a complete safetensors shard index
+- A `peft_adapter` evaluation artifact requires `adapter_config.json` plus `adapter_model.safetensors` and binds the adapter's base repository, immutable revision, exact split manifest, and frozen `train` digest to the SFT arm; a `merged_model` requires the same producer provenance plus `config.json` and either one `model.safetensors` or a complete safetensors shard index
 - All JSON output uses `indent=2` formatting

@@ -121,6 +121,38 @@ def test_frozen_output_refuses_silent_regeneration(tmp_path):
         _materialize(source, output)
 
 
+def test_frozen_dataset_cache_identity_changes_with_manifest_and_split_digests(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "curated.jsonl"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_source(source)
+    first_manifest = _materialize(source, first)
+    captured = []
+
+    def from_generator(generate, *, gen_kwargs):
+        captured.append(gen_kwargs)
+        return list(generate(**gen_kwargs))
+
+    monkeypatch.setattr("agoge_forger.split_loaders.Dataset.from_generator", from_generator)
+    load_frozen_dataset(first / "split_manifest.json", "train")
+
+    source.write_bytes(
+        source.read_bytes().replace(b"deterministic sample 0", b"materially changed 0")
+    )
+    second_manifest = _materialize(source, second)
+    (first / "split_manifest.json").write_bytes((second / "split_manifest.json").read_bytes())
+    for split in SPLIT_NAMES:
+        (first / first_manifest.splits[split].path).write_bytes(
+            (second / second_manifest.splits[split].path).read_bytes()
+        )
+    load_frozen_dataset(first / "split_manifest.json", "train")
+
+    assert captured[0]["request"].manifest_sha256 != captured[1]["request"].manifest_sha256
+    assert captured[0]["request"].split_sha256 != captured[1]["request"].split_sha256
+
+
 def test_source_and_materialized_mutations_are_detected(tmp_path):
     source = tmp_path / "curated.jsonl"
     output = tmp_path / "frozen"

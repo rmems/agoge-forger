@@ -76,7 +76,11 @@ def sha256_file(path: str) -> str:
         raise
 
 
-def write_artifact_index(output_dir: str) -> str:
+def write_artifact_index(
+    output_dir: str,
+    *,
+    producer_provenance: dict[str, object] | None = None,
+) -> str:
     index_path = os.path.join(output_dir, "artifact_index.json")
     resolved_index_path = os.path.abspath(index_path)
     artifacts = []
@@ -91,7 +95,9 @@ def write_artifact_index(output_dir: str) -> str:
             checksum = sha256_file(filepath)
             artifacts.append({"file": rel_path, "size_bytes": size, "sha256": checksum})
 
-    index = {"output_dir": output_dir, "artifacts": artifacts}
+    index: dict[str, Any] = {"output_dir": output_dir, "artifacts": artifacts}
+    if producer_provenance is not None:
+        index["producer_provenance"] = producer_provenance
 
     with open(index_path, "w") as f:
         json.dump(index, f, indent=2)

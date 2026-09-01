@@ -9,7 +9,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from agoge_forger.config import ExperimentConfig
-from agoge_forger.train.trainer import _prepare_peft_model, run_training
+from agoge_forger.split_loaders import FrozenSplitBinding
+from agoge_forger.train.trainer import (
+    _bind_frozen_training_input,
+    _frozen_producer_provenance,
+    _prepare_peft_model,
+    run_training,
+)
 
 PINNED_REVISION = "d3040b7c81a0a810fa13c6f392f3e304a0e121d5"
 
@@ -113,3 +119,52 @@ def test_prepare_peft_model_leaves_revision_none_when_unset(monkeypatch):
     _prepare_peft_model(cfg, MagicMock())
 
     assert captured["revision"] is None
+
+
+def test_frozen_training_provenance_uses_exact_bound_digests(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "split_manifest.json"
+    manifest_path.write_text("{}\n")
+    binding = FrozenSplitBinding(
+        manifest_path=manifest_path,
+        manifest=MagicMock(),
+        manifest_sha256="b" * 64,
+        split="train",
+        split_sha256="c" * 64,
+    )
+    config = ExperimentConfig(
+        model_id="org/model",
+        revision=PINNED_REVISION,
+        split_manifest_path=str(manifest_path),
+        split_name="train",
+    )
+    monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", lambda *args: binding)
+
+    actual_binding = _bind_frozen_training_input(config)
+    assert actual_binding is not None
+    provenance = _frozen_producer_provenance(config, actual_binding)
+
+    assert provenance.model_dump(mode="json") == {
+        "base_model_name_or_path": "org/model",
+        "revision": PINNED_REVISION,
+        "training_split_manifest_sha256": "b" * 64,
+        "training_split_name": "train",
+        "training_split_sha256": "c" * 64,
+    }
+
+
+def test_frozen_training_rejects_unpinned_revision_before_binding(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "split_manifest.json"
+    manifest_path.write_text("{}\n")
+    config = ExperimentConfig(
+        model_id="org/model",
+        revision="main",
+        split_manifest_path=str(manifest_path),
+        split_name="train",
+    )
+    bind = MagicMock()
+    monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", bind)
+
+    with pytest.raises(ValueError, match="immutable lowercase commit revision"):
+        _bind_frozen_training_input(config)
+
+    bind.assert_not_called()

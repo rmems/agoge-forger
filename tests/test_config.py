@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from agoge_forger.config import ExperimentConfig, load_config
 
 SMOKE_REVISION = "d3040b7c81a0a810fa13c6f392f3e304a0e121d5"
@@ -133,3 +136,40 @@ def test_config_resolves_relative_dataset_path_against_config_dir(tmp_path, monk
     monkeypatch.chdir(elsewhere)
     config = load_config(str(config_path))
     assert config.dataset_path == str(dataset.resolve())
+
+
+def test_config_resolves_frozen_manifest_path_against_config_dir(tmp_path):
+    manifest = tmp_path / "snapshot" / "split_manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_text("{}\n")
+    config_path = tmp_path / "frozen.yaml"
+    config_path.write_text(
+        "model_id: example/base\n"
+        "revision: abcdef0123456789abcdef0123456789abcdef01\n"
+        "split_manifest_path: snapshot/split_manifest.json\n"
+        "split_name: train\n"
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.dataset_path is None
+    assert config.split_manifest_path == str(manifest.resolve())
+    assert config.split_name == "train"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"split_manifest_path": "manifest.json"},
+        {"split_name": "train"},
+        {
+            "dataset_path": "data.jsonl",
+            "split_manifest_path": "manifest.json",
+            "split_name": "train",
+        },
+    ],
+)
+def test_config_requires_exactly_one_complete_dataset_source(kwargs):
+    with pytest.raises(ValidationError):
+        ExperimentConfig(model_id="example/base", **kwargs)

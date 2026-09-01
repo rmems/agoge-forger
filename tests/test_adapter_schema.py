@@ -42,7 +42,9 @@ def test_adapter_schema_fails_closed_when_base_config_is_not_cached(monkeypatch)
         base_model_name_or_path="example/base",
         revision="a" * 40,
     ).to_dict()
-    context = ArtifactValidationContext("peft_adapter", "example/base", "a" * 40)
+    context = ArtifactValidationContext(
+        "peft_adapter", "example/base", "a" * 40, "b" * 64, "c" * 64
+    )
 
     with pytest.raises(ValueError, match="local, remote-code-disabled base schema"):
         _adapter_schema.expected_adapter_tensor_schema(config, context)
@@ -98,7 +100,9 @@ def test_expected_adapter_schema_matches_peft_save(tmp_path, monkeypatch, varian
         "load_base_config",
         lambda repository, revision: base_config,
     )
-    context = ArtifactValidationContext("peft_adapter", "example/base", "a" * 40)
+    context = ArtifactValidationContext(
+        "peft_adapter", "example/base", "a" * 40, "b" * 64, "c" * 64
+    )
 
     expected = _adapter_schema.expected_adapter_tensor_schema(adapter_config, context)
     with safe_open(tmp_path / "adapter_model.safetensors", framework="pt") as handle:

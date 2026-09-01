@@ -18,6 +18,7 @@ _MERGED_CONFIG_PATH = PurePosixPath("config.json")
 _MERGED_WEIGHTS_PATH = PurePosixPath("model.safetensors")
 _MERGED_WEIGHTS_INDEX_PATH = PurePosixPath("model.safetensors.index.json")
 _MODEL_SHARD_PATTERN = re.compile(r"^model-(\d{5})-of-(\d{5})\.safetensors$")
+_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class FrozenEvaluationModel(BaseModel):
@@ -27,12 +28,15 @@ class FrozenEvaluationModel(BaseModel):
 class ArtifactIndexEntry(FrozenEvaluationModel):
     file: str = Field(min_length=1)
     size_bytes: int = Field(ge=0, strict=True)
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    sha256: str = Field(pattern=_SHA256_PATTERN)
 
 
 class ArtifactProducerProvenance(FrozenEvaluationModel):
     base_model_name_or_path: str = Field(min_length=1)
     revision: str = Field(pattern=r"^[0-9a-f]{40,64}$")
+    training_split_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
+    training_split_name: Literal["train"]
+    training_split_sha256: str = Field(pattern=_SHA256_PATTERN)
 
 
 class ArtifactIndex(FrozenEvaluationModel):
@@ -51,7 +55,7 @@ class ArtifactIndex(FrozenEvaluationModel):
 class ArtifactIndexReference(FrozenEvaluationModel):
     kind: ArtifactKind
     artifact_index_path: str = Field(min_length=1)
-    artifact_index_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifact_index_sha256: str = Field(pattern=_SHA256_PATTERN)
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,8 @@ class ArtifactValidationContext:
     kind: ArtifactKind
     model_repository: str
     model_revision: str
+    split_manifest_sha256: str
+    train_split_sha256: str
 
 
 IndexedArtifacts = dict[PurePosixPath, tuple[ArtifactIndexEntry, Path]]
