@@ -120,15 +120,20 @@ any source-level split digest.
 ## Minimal paired-evaluation foundation
 
 `agoge_forger.eval.contract` defines the versioned
-`agoge.evaluation-contract.v1` schema. It consumes the exact held-out IDs and
+`agoge.evaluation-contract.v2` schema. It consumes the exact held-out IDs and
 digest from the frozen split manifest. Validation fails closed when causal base
-and SFT arms drift in logical task identity, tokenizer provenance, serializer
-identity/hash, decoding settings, context window, truncation policy, or scoring
-version. Artifact validation additionally requires both adapter and merged SFT
+and SFT arms drift in logical task identity, tokenizer repository, revision, or
+canonical-state SHA-256, serializer identity/hash, decoding settings, context
+window, truncation policy, or scoring version. Version 1 contracts do not carry
+the tokenizer-state digest and must be rebuilt as version 2 before measured
+evaluation. Artifact validation additionally requires both adapter and merged SFT
 bundles to prove they were produced from that exact manifest's `train`
 artifact. Contract-relative paths use POSIX separators for relocation between
 Windows and Unix systems, and absolute or drive-prefixed references are
 rejected during schema validation.
+
+Evaluation-eligible frozen training also requires `trust_remote_code: false`;
+legacy mutable `dataset_path` training retains the existing explicit opt-in.
 
 This foundation does not load a model, run inference, choose a checkpoint,
 score generations, or create claim-bearing results. Those #100 capabilities

@@ -213,6 +213,8 @@ def _bind_frozen_training_input(config) -> FrozenSplitBinding | None:
         raise ValueError("frozen training requires split_name: train")
     if config.dataset_text_field != "text":
         raise ValueError("frozen training requires dataset_text_field: text")
+    if config.trust_remote_code:
+        raise ValueError("frozen training requires trust_remote_code: false")
     _reject_local_frozen_base(config.model_id)
     _require_frozen_revision(config.revision)
     _reject_frozen_resume(config)

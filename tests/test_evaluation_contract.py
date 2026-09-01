@@ -43,6 +43,7 @@ def test_schema_only_contract_consumes_frozen_held_out_manifest(tmp_path):
     assert validated.logical_task_ids == task_ids
     assert validated.held_out_split_sha256 == manifest.splits["held_out"].sha256
     assert validated.base.model_repository == validated.sft.model_repository
+    assert validated.schema_version == "agoge.evaluation-contract.v2"
     assert validated.sft.artifact is not None
     assert not Path(validated.sft.artifact.artifact_index_path).is_absolute()
     assert paths_absent(contract_path.parent / "base", contract_path.parent / "sft")
@@ -51,6 +52,7 @@ def test_schema_only_contract_consumes_frozen_held_out_manifest(tmp_path):
 @pytest.mark.parametrize(
     ("field", "replacement"),
     [
+        ("tokenizer_sha256", "5" * 64),
         ("serializer_sha256", "5" * 64),
         ("context_window", 8192),
         ("truncation_policy", "reject"),
@@ -159,7 +161,7 @@ def test_evaluation_contract_serializes_before_creating_file(tmp_path, monkeypat
     def reject_contract(value):
         if (
             isinstance(value, dict)
-            and value.get("schema_version") == "agoge.evaluation-contract.v1"
+            and value.get("schema_version") == "agoge.evaluation-contract.v2"
         ):
             raise ValueError("synthetic serialization failure")
         return original_canonical_json_bytes(value)
@@ -221,7 +223,7 @@ def test_evaluation_contract_rejects_duplicate_json_keys(tmp_path):
     build_contract(tmp_path, manifest_path, base, sft)
     payload = contract_path.read_bytes().replace(
         b"{",
-        b'{"schema_version":"agoge.evaluation-contract.v1",',
+        b'{"schema_version":"agoge.evaluation-contract.v2",',
         1,
     )
     contract_path.write_bytes(payload)

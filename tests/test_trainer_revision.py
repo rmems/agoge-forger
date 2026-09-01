@@ -139,6 +139,7 @@ def test_frozen_training_rejects_unpinned_revision_before_binding(tmp_path, monk
         ({"dataset_text_field": "body"}, "dataset_text_field: text"),
         ({"model_id": r"C:\\models\\mutable"}, "Hub model repository"),
         ({"model_id": r"\\server\\share\\mutable"}, "Hub model repository"),
+        ({"trust_remote_code": True}, "trust_remote_code: false"),
     ],
 )
 def test_frozen_training_rejects_nonportable_inputs_before_binding(

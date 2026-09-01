@@ -9,7 +9,7 @@ import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, Unpack
 
 from ._atomic_directory import rename_noreplace, require_rename_noreplace_support
 from ._source_snapshot import copy_source_snapshot, nearest_existing_output_ancestor
@@ -75,6 +75,11 @@ class _SourceLine:
     training_payload: Mapping[str, Any]
 
 
+class _SourceRecordOptions(TypedDict, total=False):
+    representation_tracker: TrainingRepresentationTracker | None
+    require_declared_lineage: bool
+
+
 @dataclass(frozen=True)
 class _BucketPolicy:
     spec: SplitMaterializationSpec
@@ -105,13 +110,13 @@ def iter_source_records(
     identity: CanonicalIdentityPolicy,
     *,
     source_coordinate_path: str,
-    representation_tracker: TrainingRepresentationTracker | None = None,
+    **options: Unpack[_SourceRecordOptions],
 ) -> Iterator[SourceRecord]:
     """Yield source records while enforcing complete-source invariants."""
 
     coordinate_path = validate_repository_relative_path(source_coordinate_path)
     seen_ids: dict[str, str] = {}
-    tracker = representation_tracker or TrainingRepresentationTracker()
+    tracker = options.get("representation_tracker") or TrainingRepresentationTracker()
     record_count = 0
     with source_path.open("rb") as handle:
         for line_number, raw_line in enumerate(handle, 1):
@@ -127,6 +132,7 @@ def iter_source_records(
                     training_payload=_content_hash_payload(row, identity, line_number),
                 ),
                 identity,
+                require_declared_lineage=options.get("require_declared_lineage", False),
             )
             _reject_duplicate_identity(record.member, seen_ids)
             if identity.content_hash_policy == "normalized-training-payload-v1":
@@ -182,11 +188,17 @@ def _decode_source_row(raw_line: bytes, coordinate: str) -> dict[str, Any]:
 def _build_source_record(
     source: _SourceLine,
     identity: CanonicalIdentityPolicy,
+    *,
+    require_declared_lineage: bool,
 ) -> SourceRecord:
     row = source.row
     coordinate = source.coordinate
     canonical_id = _required_string(row, identity.canonical_id_field, coordinate)
-    lineage_id = _optional_string(row, identity.lineage_id_field, coordinate) or canonical_id
+    lineage_id = (
+        _required_string(row, identity.lineage_id_field, coordinate)
+        if require_declared_lineage
+        else _optional_string(row, identity.lineage_id_field, coordinate) or canonical_id
+    )
     group_id = _optional_string(row, identity.group_id_field, coordinate)
     materialized_line = canonical_json_bytes(row) + b"\n"
     member = SplitMember(
@@ -488,6 +500,7 @@ def _stage_source_records(
         source_snapshot,
         spec.canonical_identity,
         source_coordinate_path=spec.source_path,
+        require_declared_lineage=True,
     ):
         line = canonical_json_bytes(record.row) + b"\n"
         offset = payloads.tell()

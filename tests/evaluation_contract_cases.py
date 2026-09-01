@@ -190,6 +190,7 @@ def evaluation_arms(task_digest: str, tmp_path: Path):
     common = {
         "tokenizer_repository": "example/tokenizer",
         "tokenizer_revision": "1111111111111111111111111111111111111111",
+        "tokenizer_sha256": "3" * 64,
         "serializer_id": "messages-v1",
         "serializer_version": "1",
         "serializer_sha256": "2" * 64,

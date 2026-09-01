@@ -31,8 +31,8 @@ IndexedArtifacts = _artifact_schema.IndexedArtifacts
 portable_contract_reference = _artifact_schema.portable_contract_reference
 require_artifact_index = _artifact_validation.require_artifact_index
 
-EVALUATION_CONTRACT_VERSION: Literal["agoge.evaluation-contract.v1"] = (
-    "agoge.evaluation-contract.v1"
+EVALUATION_CONTRACT_VERSION: Literal["agoge.evaluation-contract.v2"] = (
+    "agoge.evaluation-contract.v2"
 )
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 COMPARABLE_ARM_FIELDS = (
@@ -40,6 +40,7 @@ COMPARABLE_ARM_FIELDS = (
     "model_revision",
     "tokenizer_repository",
     "tokenizer_revision",
+    "tokenizer_sha256",
     "serializer_id",
     "serializer_version",
     "serializer_sha256",
@@ -66,6 +67,7 @@ class EvaluationArm(FrozenEvaluationModel):
     artifact: ArtifactIndexReference | None = None
     tokenizer_repository: str = Field(min_length=1)
     tokenizer_revision: str = Field(pattern=r"^[0-9a-f]{40,64}$")
+    tokenizer_sha256: str = Field(pattern=_SHA256_PATTERN)
     serializer_id: str = Field(min_length=1)
     serializer_version: str = Field(min_length=1)
     serializer_sha256: str = Field(pattern=_SHA256_PATTERN)
@@ -85,7 +87,7 @@ class EvaluationArm(FrozenEvaluationModel):
 
 
 class PairedEvaluationContract(FrozenEvaluationModel):
-    schema_version: Literal["agoge.evaluation-contract.v1"] = EVALUATION_CONTRACT_VERSION
+    schema_version: Literal["agoge.evaluation-contract.v2"] = EVALUATION_CONTRACT_VERSION
     split_manifest_path: str = Field(min_length=1)
     split_manifest_sha256: str = Field(pattern=_SHA256_PATTERN)
     held_out_split_sha256: str = Field(pattern=_SHA256_PATTERN)

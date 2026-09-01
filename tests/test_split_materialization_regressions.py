@@ -69,6 +69,19 @@ def test_materialization_rejects_noncanonical_identity_whitespace(
     assert not output.exists()
 
 
+def test_new_materialization_requires_declared_lineage_id(tmp_path: Path) -> None:
+    source = tmp_path / "download.jsonl"
+    output = tmp_path / "snapshot"
+    rows = _text_rows()
+    del rows[0]["lineage_id"]
+    _write_rows(source, rows)
+
+    with pytest.raises(ValueError, match="identity field 'lineage_id' must be a string"):
+        materialize_split(source, output, _spec())
+
+    assert not output.exists()
+
+
 class _TemplateTokenizer:
     chat_template = "pinned-test-template"
 
