@@ -1,0 +1,25 @@
+####################################################################################################################
+# WARNING: Do not store sensitive information in this file, as its contents will be included in the Qodana report. #
+####################################################################################################################
+# yaml-language-server: $schema=https://json.schemastore.org/qodana-1.0.json
+
+version: "1.0"
+linter: qodana-python
+profile:
+  name: qodana.recommended
+# Qodana runs bootstrap from /data/project. Discard tracked legacy IDE module
+# state only from the ephemeral scan checkout so it cannot override pyproject
+# metadata. uv omits pip from project environments, but Qodana's package and
+# license discovery requires it, so install the interpreter's bundled wheel.
+bootstrap: >-
+  rm -rf -- /data/project/.idea &&
+  UV_CACHE_DIR=/data/cache/uv
+  UV_PYTHON_INSTALL_DIR=/data/cache/uv-python
+  UV_LINK_MODE=copy
+  /data/cache/bin/uv sync --python 3.12 --frozen &&
+  /data/project/.venv/bin/python -m ensurepip --upgrade
+# The pull-request-only zero-new-issues threshold lives in the workflow.
+# Applying it globally here would make main fail on the existing debt before a
+# reviewed baseline is committed.
+include:
+  - name: CheckDependencyLicenses
