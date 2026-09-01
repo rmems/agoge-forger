@@ -18,7 +18,7 @@ from .logging import logger
 from .models.inspect import inspect_model as _inspect_model
 from .models.lora_targets import inspect_lora_targets as _inspect_lora_targets
 from .models.metadata import get_model_config_metadata
-from .path_safety import resolve_existing_path, resolve_output_directory
+from .path_safety import resolve_existing_path, resolve_output_path
 from .providers.chat_completions import ChatCompletionsConfig
 from .serving.config import ServingConfig, load_serving_config
 from .serving.serve import serve_vllm as _serve_vllm
@@ -29,6 +29,8 @@ from .train.qlora import train_qlora as _train_qlora
 
 app = typer.Typer(help="Agoge Forger CLI")
 _IMMUTABLE_REVISION_HELP = "Immutable Hugging Face revision"
+_MODEL_ID_HELP = "Hugging Face model ID"
+_TRUST_REMOTE_CODE_HELP = "Trust remote code from the model repo"
 
 
 @app.command()
@@ -45,9 +47,9 @@ def check_torch():
 
 @app.command()
 def inspect_model(
-    model_id: str = typer.Option(..., help="Hugging Face model ID"),
+    model_id: str = typer.Option(..., help=_MODEL_ID_HELP),
     revision: str | None = typer.Option(None, help=_IMMUTABLE_REVISION_HELP),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
 ):
     """Inspect model architecture (loads weights)."""
     _inspect_model(model_id, trust_remote_code, revision)
@@ -55,9 +57,9 @@ def inspect_model(
 
 @app.command()
 def model_metadata(
-    model_id: str = typer.Option(..., help="Hugging Face model ID"),
+    model_id: str = typer.Option(..., help=_MODEL_ID_HELP),
     revision: str | None = typer.Option(None, help=_IMMUTABLE_REVISION_HELP),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
 ):
     """Inspect model metadata without loading weights."""
     meta = get_model_config_metadata(model_id, trust_remote_code, revision)
@@ -66,10 +68,10 @@ def model_metadata(
 
 @app.command()
 def inspect_lora_targets(
-    model_id: str = typer.Option(..., help="Hugging Face model ID"),
+    model_id: str = typer.Option(..., help=_MODEL_ID_HELP),
     out: str = typer.Option(None, help="Output JSON path"),
     revision: str | None = typer.Option(None, help=_IMMUTABLE_REVISION_HELP),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
 ):
     """Inspect model for potential LoRA targets."""
     _inspect_lora_targets(model_id, trust_remote_code, out, revision)
@@ -92,7 +94,7 @@ def train_lora(config: str = typer.Option(..., help="Path to YAML config")):
 @app.command()
 def smoke_eval(
     adapter_path: str = typer.Option(..., help="Path to PEFT adapter"),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
     allow_unsafe_serialization: bool = typer.Option(
         False, help="Allow .bin weight files in the adapter"
     ),
@@ -122,7 +124,7 @@ def merge_adapter(
     base_model: str = typer.Option(..., help="Base model ID"),
     adapter_path: str = typer.Option(..., help="Path to PEFT adapter"),
     out_dir: str = typer.Option(..., help="Output directory"),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
     allow_unsafe_serialization: bool = typer.Option(
         False, help="Allow .bin weight files in the adapter"
     ),
@@ -142,7 +144,7 @@ def merge_adapter(
         except RuntimeError as e:
             logger.error(str(e))
             raise typer.Exit(code=1)
-    safe_out_dir = str(resolve_output_directory(out_dir))
+    safe_out_dir = str(resolve_output_path(out_dir))
     _merge_adapter(
         base_model,
         safe_adapter_path,
@@ -173,10 +175,10 @@ def export_final_model(
         False, help="Allow unsafe .bin input adapters / skip post-save .bin assert"
     ),
     max_shard_size: str = typer.Option("4GB", help="Maximum shard size for merged weights"),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
 ):
     """Export one final merged model from the latest valid checkpoint or adapter."""
-    safe_out_dir = str(resolve_output_directory(out_dir))
+    safe_out_dir = str(resolve_output_path(out_dir))
     safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True)) if run_dir else None
     safe_adapter_path = (
         str(resolve_existing_path(adapter_path, must_be_dir=True)) if adapter_path else None
@@ -205,7 +207,7 @@ def inspect_safetensors(path: str = typer.Option(..., help="Path to safetensors 
 def dataset_stats(
     path: str = typer.Option(..., help="Path to JSONL dataset"),
     model_id: str = typer.Option(..., help="Model ID for tokenizer"),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
 ):
     """Get dataset token statistics."""
     safe_path = str(resolve_existing_path(path, must_be_file=True))
@@ -277,13 +279,14 @@ def _smoke_env_defaults(
     config_path: str | None,
 ) -> tuple[str | None, str | None, str | None, str | None, str | None, bool | None]:
     """Apply environment fallbacks and determine the effective streaming flag."""
+    default_stream = False if config_path is None else None
     return (
         _first_non_empty(base_url, "AGOGE_SMOKE_BASE_URL"),
         _first_non_empty(model, "AGOGE_SMOKE_MODEL"),
         _first_non_empty(api_key, "OPENAI_API_KEY", "VLLM_API_KEY"),
         _first_non_empty(prompt, "AGOGE_SMOKE_PROMPT"),
         _first_non_empty(system, "AGOGE_SMOKE_SYSTEM"),
-        stream if stream is not None else (False if config_path is None else None),
+        stream if stream is not None else default_stream,
     )
 
 

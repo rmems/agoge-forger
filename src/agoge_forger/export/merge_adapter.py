@@ -1,3 +1,5 @@
+import os
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -5,6 +7,7 @@ from pathlib import Path
 
 from peft import PeftModel
 
+from .._atomic_directory import rename_noreplace, require_rename_noreplace_support
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
 from ..eval import (
     ArtifactProducerProvenance,
@@ -14,7 +17,7 @@ from ..eval import (
 )
 from ..logging import logger
 from ..models.load import load_base_model
-from ..path_safety import resolve_output_directory
+from ..path_safety import resolve_output_path
 from ..train.checkpoints import (
     infer_base_model_from_adapter,
     infer_base_revision_from_adapter,
@@ -91,7 +94,7 @@ def merge_adapter(
         revision = infer_base_revision_from_adapter(adapter_path)
 
     with _merge_source(adapter_path, base_model_id, revision, allow_unsafe) as source:
-        safe_out_dir = _require_empty_output_directory(out_dir)
+        safe_out_dir = _require_new_output_directory(out_dir)
         effective_revision = (
             source.provenance.revision if source.provenance is not None else revision
         )
@@ -148,28 +151,42 @@ def _save_merged_output(
 ) -> None:
     logger.info("Merging weights...")
     merged_model = model.merge_and_unload()
-    safe_out_dir = _require_empty_output_directory(request.out_dir)
-    logger.info(f"Saving merged model to {safe_out_dir}")
-    merged_model.save_pretrained(
-        str(safe_out_dir),
-        **merged_model_save_kwargs(max_shard_size=request.max_shard_size),
-    )
-    tokenizer.save_pretrained(str(safe_out_dir))
-    if not request.allow_unsafe:
-        assert_no_unsafe_weight_bins(str(safe_out_dir))
-    index_path = write_artifact_index(
-        str(safe_out_dir),
-        producer_provenance=(
-            request.provenance.model_dump(mode="json") if request.provenance else None
-        ),
-    )
+    safe_out_dir = _require_new_output_directory(request.out_dir)
+    safe_out_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{safe_out_dir.name}-staging-",
+        dir=safe_out_dir.parent,
+    ) as staging_dir:
+        staged_output = Path(staging_dir) / "merged"
+        staged_output.mkdir()
+        logger.info(f"Staging merged model for {safe_out_dir}")
+        merged_model.save_pretrained(
+            str(staged_output),
+            **merged_model_save_kwargs(max_shard_size=request.max_shard_size),
+        )
+        tokenizer.save_pretrained(str(staged_output))
+        if not request.allow_unsafe:
+            assert_no_unsafe_weight_bins(str(staged_output))
+        write_artifact_index(
+            str(staged_output),
+            producer_provenance=(
+                request.provenance.model_dump(mode="json") if request.provenance else None
+            ),
+            recorded_output_dir=str(safe_out_dir),
+        )
+        rename_noreplace(staged_output, safe_out_dir)
+    index_path = safe_out_dir / "artifact_index.json"
     logger.info(f"Artifact index written to {index_path}")
 
 
-def _require_empty_output_directory(out_dir: str) -> Path:
-    safe_out_dir = resolve_output_directory(out_dir)
-    if any(safe_out_dir.iterdir()):
-        raise FileExistsError(f"merged-model output directory must be empty: {safe_out_dir}")
+def _require_new_output_directory(out_dir: str) -> Path:
+    require_rename_noreplace_support()
+    safe_out_dir = resolve_output_path(out_dir)
+    safe_out_dir.parent.mkdir(parents=True, exist_ok=True)
+    if os.path.lexists(safe_out_dir):
+        raise FileExistsError(
+            f"merged-model output directory must not already exist: {safe_out_dir}"
+        )
     return safe_out_dir
 
 

@@ -174,3 +174,25 @@ def test_frozen_training_rejects_existing_local_model_before_binding(
         _bind_frozen_training_input(_frozen_config(manifest_path, model_id=str(model_path)))
 
     bind.assert_not_called()
+
+
+def test_frozen_training_rejects_populated_run_directory_before_binding(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "split_manifest.json"
+    manifest_path.write_text("{}\n")
+    run_dir = tmp_path / "outputs" / "frozen-run"
+    checkpoint = run_dir / "checkpoint-10"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "adapter_model.safetensors").write_bytes(b"stale")
+    bind = MagicMock()
+    monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", bind)
+
+    config = _frozen_config(
+        manifest_path,
+        output_dir=str(tmp_path / "outputs"),
+        run_name="frozen-run",
+    )
+    with pytest.raises(FileExistsError, match="empty run directory"):
+        _bind_frozen_training_input(config)
+
+    bind.assert_not_called()
+    assert (checkpoint / "adapter_model.safetensors").read_bytes() == b"stale"

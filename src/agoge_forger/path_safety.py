@@ -33,12 +33,18 @@ def resolve_existing_path(
     return resolved
 
 
-def resolve_output_directory(path: str) -> Path:
+def resolve_output_path(path: str) -> Path:
     if not path or not path.strip():
         raise ValueError("Output directory must not be empty")
 
     candidate = Path(path).expanduser()
     _check_no_parent_traversal(candidate)
-    resolved = candidate.resolve()
+    if candidate.name:
+        return candidate.parent.resolve() / candidate.name
+    return candidate.resolve()
+
+
+def resolve_output_directory(path: str) -> Path:
+    resolved = resolve_output_path(path)
     resolved.mkdir(parents=True, exist_ok=True)
     return resolved

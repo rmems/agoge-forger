@@ -218,6 +218,7 @@ def _bind_frozen_training_input(config) -> FrozenSplitBinding | None:
     _reject_local_frozen_base(config.model_id)
     _require_frozen_revision(config.revision)
     _reject_frozen_resume(config)
+    _require_empty_frozen_run_directory(config)
     return bind_frozen_split(config.split_manifest_path, "train")
 
 
@@ -256,6 +257,23 @@ def _reject_frozen_resume(config) -> None:
         raise ValueError(
             "frozen training resume is disabled until checkpoints carry verified provenance"
         )
+
+
+def _require_empty_frozen_run_directory(config) -> None:
+    run_dir = Path(config.output_dir).expanduser() / config.run_name
+    if not os.path.lexists(run_dir):
+        return
+    if _is_empty_run_directory(run_dir):
+        return
+    raise FileExistsError(f"frozen training requires an empty run directory: {run_dir}")
+
+
+def _is_empty_run_directory(run_dir: Path) -> bool:
+    if run_dir.is_symlink():
+        return False
+    if not run_dir.is_dir():
+        return False
+    return next(run_dir.iterdir(), None) is None
 
 
 def _frozen_producer_provenance(config, binding: FrozenSplitBinding) -> ArtifactProducerProvenance:

@@ -1,6 +1,10 @@
 import pytest
 
-from agoge_forger.path_safety import resolve_existing_path, resolve_output_directory
+from agoge_forger.path_safety import (
+    resolve_existing_path,
+    resolve_output_directory,
+    resolve_output_path,
+)
 
 
 def test_resolve_existing_path_rejects_parent_traversal(tmp_path):
@@ -18,6 +22,19 @@ def test_resolve_output_directory_creates_directory(tmp_path):
     out_dir = tmp_path / "nested" / "output"
     resolved = resolve_output_directory(str(out_dir))
     assert resolved.is_dir()
+
+
+def test_resolve_output_path_does_not_create_directory(tmp_path):
+    out_dir = tmp_path / "new" / "output"
+    resolved = resolve_output_path(str(out_dir))
+    assert resolved == out_dir
+    assert not out_dir.exists()
+
+
+def test_resolve_output_path_preserves_final_symlink(tmp_path):
+    out_dir = tmp_path / "output"
+    out_dir.symlink_to(tmp_path / "missing", target_is_directory=True)
+    assert resolve_output_path(str(out_dir)) == out_dir
 
 
 def test_resolve_output_directory_rejects_parent_traversal(tmp_path):

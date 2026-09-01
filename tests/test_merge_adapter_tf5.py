@@ -7,7 +7,9 @@ Spun out of #63 / PR #67 — see GH#68 / RM-229. PeftModel still accepts
 from __future__ import annotations
 
 import inspect
+import json
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -19,7 +21,9 @@ from agoge_forger.eval import _artifact_validation
 from agoge_forger.eval._artifact_schema import ArtifactProducerProvenance
 from agoge_forger.export.merge_adapter import (
     _merge_source,
+    _MergedOutputRequest,
     _MergeSource,
+    _save_merged_output,
     merge_adapter,
     merged_model_save_kwargs,
 )
@@ -56,17 +60,21 @@ def test_merge_adapter_rejects_save_safetensors_false():
         )
 
 
-def test_merge_adapter_rejects_nonempty_output_before_model_loading(tmp_path, monkeypatch):
+@pytest.mark.parametrize("populated", [False, True])
+def test_merge_adapter_rejects_existing_output_before_model_loading(
+    tmp_path, monkeypatch, populated
+):
     adapter = tmp_path / "adapter"
     adapter.mkdir()
     output = tmp_path / "merged"
     output.mkdir()
     leftover = output / "adapter_config.json"
-    leftover.write_text("stale\n")
+    if populated:
+        leftover.write_text("stale\n")
     load_base = MagicMock()
     monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", load_base)
 
-    with pytest.raises(FileExistsError, match="must be empty"):
+    with pytest.raises(FileExistsError, match="must not already exist"):
         merge_adapter(
             "example/base",
             str(adapter),
@@ -76,7 +84,80 @@ def test_merge_adapter_rejects_nonempty_output_before_model_loading(tmp_path, mo
         )
 
     load_base.assert_not_called()
-    assert leftover.read_text() == "stale\n"
+    if populated:
+        assert leftover.read_text() == "stale\n"
+    else:
+        assert list(output.iterdir()) == []
+
+
+def test_merge_adapter_rejects_broken_output_symlink_before_model_loading(tmp_path, monkeypatch):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    output = tmp_path / "merged"
+    output.symlink_to(tmp_path / "missing", target_is_directory=True)
+    load_base = MagicMock()
+    monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", load_base)
+
+    with pytest.raises(FileExistsError, match="must not already exist"):
+        merge_adapter(
+            "example/base",
+            str(adapter),
+            str(output),
+            allow_unsafe=True,
+            infer_revision=False,
+        )
+
+    load_base.assert_not_called()
+    assert output.is_symlink()
+
+
+def test_failed_merged_serialization_leaves_retryable_empty_output(tmp_path):
+    output = tmp_path / "merged"
+
+    class FailingMergedModel:
+        def save_pretrained(self, destination, **kwargs):
+            (Path(destination) / "partial.safetensors").write_bytes(b"partial")
+            raise OSError("disk full")
+
+    model = MagicMock()
+    model.merge_and_unload.return_value = FailingMergedModel()
+
+    with pytest.raises(OSError, match="disk full"):
+        _save_merged_output(
+            model,
+            MagicMock(),
+            _MergedOutputRequest(str(output), "4GB", False, None),
+        )
+
+    assert not output.exists()
+
+
+def test_merged_bundle_is_published_with_final_path_in_index(tmp_path):
+    output = tmp_path / "merged"
+
+    class MergedModel:
+        def save_pretrained(self, destination, **kwargs):
+            (Path(destination) / "model.safetensors").write_bytes(b"weights")
+
+    class Tokenizer:
+        def save_pretrained(self, destination):
+            (Path(destination) / "tokenizer.json").write_text("{}\n")
+
+    model = MagicMock()
+    model.merge_and_unload.return_value = MergedModel()
+    _save_merged_output(
+        model,
+        Tokenizer(),
+        _MergedOutputRequest(str(output), "4GB", False, None),
+    )
+
+    index = json.loads((output / "artifact_index.json").read_text())
+    assert index["output_dir"] == str(output)
+    assert {artifact["file"] for artifact in index["artifacts"]} == {
+        "model.safetensors",
+        "tokenizer.json",
+    }
+    assert not list(tmp_path.glob(".merged-staging-*"))
 
 
 def test_merge_uses_verified_snapshot_and_propagates_provenance(tmp_path, monkeypatch):
