@@ -141,7 +141,9 @@ def read_source_records(
 
 
 def _training_representation(row: Mapping[str, Any], coordinate: str) -> str:
-    representations = tuple(field for field in ("text", "messages", "instruction") if field in row)
+    representations = tuple(
+        field_name for field_name in ("text", "messages", "instruction") if field_name in row
+    )
     if len(representations) > 1:
         rendered = ", ".join(representations)
         raise ValueError(
@@ -218,19 +220,19 @@ def _without_identity_fields(
     return content_row
 
 
-def _required_string(row: Mapping[str, Any], field: str, coordinate: str) -> str:
-    value = row.get(field)
+def _required_string(row: Mapping[str, Any], field_name: str, coordinate: str) -> str:
+    value = row.get(field_name)
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{coordinate}: required identity field '{field}' must be a string")
+        raise ValueError(f"{coordinate}: required identity field '{field_name}' must be a string")
     return value.strip()
 
 
-def _optional_string(row: Mapping[str, Any], field: str, coordinate: str) -> str | None:
-    value = row.get(field)
+def _optional_string(row: Mapping[str, Any], field_name: str, coordinate: str) -> str | None:
+    value = row.get(field_name)
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{coordinate}: optional identity field '{field}' must be a string")
+        raise ValueError(f"{coordinate}: optional identity field '{field_name}' must be a string")
     return value.strip()
 
 

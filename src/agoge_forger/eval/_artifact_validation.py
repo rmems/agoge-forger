@@ -23,8 +23,8 @@ from ._artifact_schema import (
     ArtifactIndexEntry,
     ArtifactKind,
     ArtifactProducerProvenance,
+    ArtifactValidationContext,
     IndexedArtifacts,
-    _ArtifactValidationContext,
     _parse_artifact_index,
     _portable_artifact_path,
     _require_canonical_model_shard_set,
@@ -36,10 +36,10 @@ BundleEntryKind = Literal["directory", "file"]
 _SAFETENSORS_SUFFIX = ".safetensors"
 
 
-def _require_artifact_index(
+def require_artifact_index(
     path: Path,
     expected: str,
-    context: _ArtifactValidationContext,
+    context: ArtifactValidationContext,
 ) -> None:
     index = _load_artifact_index(path, expected)
     artifacts = _resolve_index_entries(path, index)
@@ -128,7 +128,7 @@ def _record_bundle_file(candidate: Path, index_path: Path, files: set[Path]) -> 
 
 
 def _require_artifact_layout(
-    context: _ArtifactValidationContext,
+    context: ArtifactValidationContext,
     indexed: IndexedArtifacts,
     producer_provenance: ArtifactProducerProvenance | None,
 ) -> None:
@@ -148,7 +148,7 @@ def _require_safe_weight_paths(indexed: IndexedArtifacts) -> None:
 
 def _require_peft_adapter_layout(
     indexed: IndexedArtifacts,
-    context: _ArtifactValidationContext,
+    context: ArtifactValidationContext,
 ) -> None:
     _require_indexed_paths(
         indexed,
@@ -202,7 +202,7 @@ def _require_no_unexpected_peft_safetensors(indexed: IndexedArtifacts) -> None:
 
 def _require_adapter_provenance(
     config: dict[str, object],
-    context: _ArtifactValidationContext,
+    context: ArtifactValidationContext,
 ) -> None:
     expected = {
         "base_model_name_or_path": context.model_repository,
@@ -226,7 +226,7 @@ def _require_adapter_provenance_value(config: dict[str, object], field: str) -> 
 
 def _require_merged_model_layout(
     indexed: IndexedArtifacts,
-    context: _ArtifactValidationContext,
+    context: ArtifactValidationContext,
     producer_provenance: ArtifactProducerProvenance | None,
 ) -> None:
     _require_indexed_paths(indexed, {_MERGED_CONFIG_PATH}, kind="merged_model")
@@ -245,7 +245,7 @@ def _require_merged_model_layout(
 
 def _require_merged_producer_provenance(
     provenance: ArtifactProducerProvenance | None,
-    context: _ArtifactValidationContext,
+    context: ArtifactValidationContext,
 ) -> None:
     if provenance is None:
         raise ValueError("merged_model artifact index requires producer_provenance")

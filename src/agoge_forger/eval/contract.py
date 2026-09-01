@@ -17,19 +17,18 @@ from ..split_contract import (
     SplitManifest,
     canonical_json_bytes,
     sha256_bytes,
-    sha256_file,
-    validate_split_manifest,
 )
+from ..split_validation import validate_split_manifest_snapshot
 from . import _artifact_schema, _artifact_validation
 
 ArtifactIndex = _artifact_schema.ArtifactIndex
 ArtifactIndexEntry = _artifact_schema.ArtifactIndexEntry
 ArtifactIndexReference = _artifact_schema.ArtifactIndexReference
 ArtifactKind = _artifact_schema.ArtifactKind
+ArtifactValidationContext = _artifact_schema.ArtifactValidationContext
 FrozenEvaluationModel = _artifact_schema.FrozenEvaluationModel
 IndexedArtifacts = _artifact_schema.IndexedArtifacts
-_ArtifactValidationContext = _artifact_schema._ArtifactValidationContext
-_require_artifact_index = _artifact_validation._require_artifact_index
+require_artifact_index = _artifact_validation.require_artifact_index
 
 EVALUATION_CONTRACT_VERSION: Literal["agoge.evaluation-contract.v1"] = (
     "agoge.evaluation-contract.v1"
@@ -55,7 +54,7 @@ class DecodingContract(FrozenEvaluationModel):
     do_sample: bool = False
     seed: int
     max_new_tokens: int = Field(ge=1)
-    temperature: float = Field(ge=0)
+    temperature: float = Field(ge=0, allow_inf_nan=False)
     top_p: float = Field(gt=0, le=1)
 
 
@@ -158,9 +157,10 @@ def _validate_manifest_reference(
     contract: PairedEvaluationContract,
 ) -> SplitManifest:
     manifest_path = (contract_path.parent / contract.split_manifest_path).resolve(strict=True)
-    if sha256_file(manifest_path) != contract.split_manifest_sha256:
+    manifest_snapshot = manifest_path.read_bytes()
+    if sha256_bytes(manifest_snapshot) != contract.split_manifest_sha256:
         raise ValueError("evaluation contract split-manifest SHA-256 mismatch")
-    return validate_split_manifest(manifest_path)
+    return validate_split_manifest_snapshot(manifest_path, manifest_snapshot)
 
 
 def _validate_held_out_reference(
@@ -189,23 +189,25 @@ def build_evaluation_contract(
     destination = Path(contract_path).expanduser()
     validated_base = EvaluationArm.model_validate(base.model_dump(mode="json"))
     validated_sft = EvaluationArm.model_validate(sft.model_dump(mode="json"))
-    manifest = validate_split_manifest(manifest_file)
+    manifest_snapshot = manifest_file.read_bytes()
+    manifest = validate_split_manifest_snapshot(manifest_file, manifest_snapshot)
     task_ids = held_out_task_ids(manifest)
     task_digest = logical_task_set_sha256(task_ids)
     normalized_sft = _normalize_sft_artifact(validated_sft, destination)
     contract = PairedEvaluationContract(
         split_manifest_path=str(Path(os.path.relpath(manifest_file, destination.parent.resolve()))),
-        split_manifest_sha256=sha256_file(manifest_file),
+        split_manifest_sha256=sha256_bytes(manifest_snapshot),
         held_out_split_sha256=manifest.splits["held_out"].sha256,
         logical_task_ids=task_ids,
         logical_task_set_sha256=task_digest,
         base=validated_base,
         sft=normalized_sft,
     )
+    payload = canonical_json_bytes(contract.model_dump(mode="json")) + b"\n"
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
         with destination.open("xb") as handle:
-            handle.write(canonical_json_bytes(contract.model_dump(mode="json")) + b"\n")
+            handle.write(payload)
     except FileExistsError as exc:
         raise FileExistsError(f"refusing to overwrite evaluation contract: {destination}") from exc
     return contract
@@ -221,7 +223,7 @@ def _normalize_sft_artifact(sft: EvaluationArm, destination: Path) -> Evaluation
         else (anchor / supplied).resolve(strict=True)
     )
     _require_contract_outside_artifact_bundle(destination, artifact_path)
-    _require_artifact_index(artifact_path, artifact.artifact_index_sha256, context)
+    require_artifact_index(artifact_path, artifact.artifact_index_sha256, context)
     normalized = ArtifactIndexReference.model_validate(
         {
             **artifact.model_dump(mode="json"),
@@ -245,16 +247,16 @@ def _require_contract_outside_artifact_bundle(
 def _validate_sft_artifact(contract_path: Path, sft: EvaluationArm) -> None:
     artifact, context = _sft_artifact_validation(sft)
     artifact_path = (contract_path.parent / artifact.artifact_index_path).resolve(strict=True)
-    _require_artifact_index(artifact_path, artifact.artifact_index_sha256, context)
+    require_artifact_index(artifact_path, artifact.artifact_index_sha256, context)
 
 
 def _sft_artifact_validation(
     sft: EvaluationArm,
-) -> tuple[ArtifactIndexReference, _ArtifactValidationContext]:
+) -> tuple[ArtifactIndexReference, ArtifactValidationContext]:
     artifact = sft.artifact
     if artifact is None:
         raise ValueError("causal_sft arm requires a verified artifact-index reference")
-    context = _ArtifactValidationContext(
+    context = ArtifactValidationContext(
         kind=artifact.kind,
         model_repository=sft.model_repository,
         model_revision=sft.model_revision,

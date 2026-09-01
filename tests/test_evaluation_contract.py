@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from agoge_forger.eval import contract as contract_module
 from agoge_forger.eval.contract import (
     ArtifactIndexReference,
     DecodingContract,
@@ -344,12 +345,80 @@ def test_evaluation_contract_detects_manifest_mutation(tmp_path):
         validate_evaluation_contract(contract_path)
 
 
+def test_evaluation_contract_recomputes_manifest_split_ownership(tmp_path):
+    manifest_path, _, base, sft = _case(tmp_path)
+    contract_path = tmp_path / "eval" / "contract.json"
+    _build(tmp_path, manifest_path, base, sft)
+    manifest_payload = json.loads(manifest_path.read_bytes())
+    manifest_payload["split_policy"]["salt"] = "rewritten-policy"
+    manifest_path.write_bytes(canonical_json_bytes(manifest_payload) + b"\n")
+    contract_payload = json.loads(contract_path.read_bytes())
+    contract_payload["split_manifest_sha256"] = sha256_file(manifest_path)
+    contract_path.write_bytes(canonical_json_bytes(contract_payload) + b"\n")
+
+    with pytest.raises(ValueError, match="split ownership differs"):
+        validate_evaluation_contract(contract_path)
+
+
+def test_evaluation_contract_hashes_and_validates_one_manifest_snapshot(tmp_path, monkeypatch):
+    manifest_path, _, base, sft = _case(tmp_path)
+    contract_path = tmp_path / "eval" / "contract.json"
+    written = _build(tmp_path, manifest_path, base, sft)
+    original_validate = contract_module.validate_split_manifest_snapshot
+
+    def replace_after_snapshot(path, content):
+        replacement = json.loads(manifest_path.read_bytes())
+        replacement["source"]["revision"] = "f" * 40
+        manifest_path.write_bytes(canonical_json_bytes(replacement) + b"\n")
+        return original_validate(path, content)
+
+    monkeypatch.setattr(
+        contract_module,
+        "validate_split_manifest_snapshot",
+        replace_after_snapshot,
+    )
+
+    assert validate_evaluation_contract(contract_path) == written
+
+
 def test_evaluation_contract_refuses_overwrite(tmp_path):
     manifest_path, _, base, sft = _case(tmp_path)
     _build(tmp_path, manifest_path, base, sft)
 
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
         _build(tmp_path, manifest_path, base, sft)
+
+
+def test_evaluation_contract_rejects_non_finite_temperature_without_creating_file(tmp_path):
+    manifest_path, _, base, sft = _case(tmp_path)
+    invalid_decoding = base.decoding.model_copy(update={"temperature": float("inf")})
+    invalid_base = base.model_copy(update={"decoding": invalid_decoding})
+    invalid_sft = sft.model_copy(update={"decoding": invalid_decoding})
+    contract_path = tmp_path / "eval" / "contract.json"
+
+    with pytest.raises(ValidationError, match="finite number"):
+        _build(tmp_path, manifest_path, invalid_base, invalid_sft)
+    assert not contract_path.exists()
+
+
+def test_evaluation_contract_serializes_before_creating_file(tmp_path, monkeypatch):
+    manifest_path, _, base, sft = _case(tmp_path)
+    contract_path = tmp_path / "eval" / "contract.json"
+    original_canonical_json_bytes = contract_module.canonical_json_bytes
+
+    def reject_contract(value):
+        if (
+            isinstance(value, dict)
+            and value.get("schema_version") == "agoge.evaluation-contract.v1"
+        ):
+            raise ValueError("synthetic serialization failure")
+        return original_canonical_json_bytes(value)
+
+    monkeypatch.setattr(contract_module, "canonical_json_bytes", reject_contract)
+
+    with pytest.raises(ValueError, match="synthetic serialization failure"):
+        _build(tmp_path, manifest_path, base, sft)
+    assert not contract_path.exists()
 
 
 def test_evaluation_contract_requires_immutable_model_and_tokenizer_revisions(tmp_path):

@@ -55,7 +55,7 @@ class ArtifactIndexReference(FrozenEvaluationModel):
 
 
 @dataclass(frozen=True)
-class _ArtifactValidationContext:
+class ArtifactValidationContext:
     kind: ArtifactKind
     model_repository: str
     model_revision: str

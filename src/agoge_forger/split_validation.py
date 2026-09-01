@@ -32,11 +32,15 @@ from .split_schema import (
 
 def load_split_manifest(manifest_path: str | Path) -> SplitManifest:
     path = Path(manifest_path).expanduser().resolve(strict=True)
+    return _load_split_manifest_snapshot(path.read_bytes(), path)
+
+
+def _load_split_manifest_snapshot(content: bytes, path: Path) -> SplitManifest:
     try:
-        content = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        value = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise ValueError(f"invalid split manifest JSON: {path}") from exc
-    return SplitManifest.model_validate(content)
+    return SplitManifest.model_validate(value)
 
 
 def validate_split_manifest(
@@ -46,6 +50,27 @@ def validate_split_manifest(
 
     path = Path(manifest_path).expanduser().resolve(strict=True)
     manifest = load_split_manifest(path)
+    return _validate_split_manifest(path, manifest, source_path)
+
+
+def validate_split_manifest_snapshot(
+    manifest_path: str | Path,
+    content: bytes,
+    *,
+    source_path: str | Path | None = None,
+) -> SplitManifest:
+    """Validate one already-read manifest snapshot and its referenced artifacts."""
+
+    path = Path(manifest_path).expanduser().resolve(strict=True)
+    manifest = _load_split_manifest_snapshot(content, path)
+    return _validate_split_manifest(path, manifest, source_path)
+
+
+def _validate_split_manifest(
+    path: Path,
+    manifest: SplitManifest,
+    source_path: str | Path | None,
+) -> SplitManifest:
     if source_path is not None:
         _validate_source(manifest, Path(source_path).expanduser().resolve(strict=True))
     context = _ArtifactValidationContext(
@@ -62,7 +87,16 @@ def validate_split_manifest(
         manifest.leakage_audit,
         "stored leakage audit differs from recomputed audit",
     )
+    _require_expected_ownership(manifest, _manifest_records(manifest))
     return manifest
+
+
+def _manifest_records(manifest: SplitManifest) -> list[SourceRecord]:
+    return [
+        SourceRecord(row={}, raw_line=b"", member=member)
+        for split in SPLIT_NAMES
+        for member in manifest.splits[split].members
+    ]
 
 
 def _validate_source(manifest: SplitManifest, source: Path) -> None:
