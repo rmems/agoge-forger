@@ -123,7 +123,7 @@ def iter_source_records(
             if not raw_line.strip():
                 continue
             coordinate = f"{coordinate_path}:{line_number}"
-            row = _decode_source_row(raw_line, coordinate)
+            row = decode_json_object(raw_line, coordinate)
             record = _build_source_record(
                 _SourceLine(
                     row=row,
@@ -151,13 +151,10 @@ def read_source_records(
 ) -> list[SourceRecord]:
     """Materialize :func:`iter_source_records` for assignment and validation."""
 
-    return list(
-        iter_source_records(
-            source_path,
-            identity,
-            source_coordinate_path=source_coordinate_path,
-        )
+    records = iter_source_records(
+        source_path, identity, source_coordinate_path=source_coordinate_path
     )
+    return list(records)
 
 
 def _training_representation(row: Mapping[str, Any], coordinate: str) -> str:
@@ -179,10 +176,6 @@ def _training_representation(row: Mapping[str, Any], coordinate: str) -> str:
         return representation
     # Keep normalize_row's existing missing-payload diagnostic as the canonical error.
     return "unknown"
-
-
-def _decode_source_row(raw_line: bytes, coordinate: str) -> dict[str, Any]:
-    return decode_json_object(raw_line, coordinate)
 
 
 def _build_source_record(
