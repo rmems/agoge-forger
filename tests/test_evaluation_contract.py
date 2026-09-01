@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from safetensors.torch import load_file, save_file
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from agoge_forger.eval import _artifact_validation, _merged_model_schema
+from agoge_forger.eval import _artifact_validation, _merged_model_schema, _tensor_schema
 from agoge_forger.eval import contract as contract_module
 from agoge_forger.eval.contract import (
     ArtifactIndexReference,
@@ -28,10 +28,12 @@ from agoge_forger.split_contract import (
     materialize_split,
     sha256_file,
 )
+from tests.peft_adapter_fixtures import write_complete_adapter_model
 
 MODEL_REPOSITORY = "example/base-model"
 MODEL_REVISION = "abcdef0123456789abcdef0123456789abcdef01"
 _BuildArgs = tuple[Path, Path, EvaluationArm, EvaluationArm]
+pytestmark = pytest.mark.usefixtures("cached_test_base_config")
 
 
 def _write_safetensors(path: Path, value: int = 0, *, keys: tuple[str, ...] = ("weight",)) -> None:
@@ -148,9 +150,7 @@ def _refresh_contract_artifact_digest(contract_path: Path, artifact_index: Path)
 def _arms(task_digest: str, tmp_path: Path):
     output_dir = tmp_path / "adapter"
     output_dir.mkdir(parents=True, exist_ok=True)
-    adapter_weights = output_dir / "adapter_model.safetensors"
-    _write_safetensors(adapter_weights)
-    _write_adapter_config(output_dir, _provenance())
+    write_complete_adapter_model(output_dir)
     artifact_index = _write_artifact_index(output_dir)
     common = {
         "tokenizer_repository": "example/tokenizer",
@@ -655,7 +655,7 @@ def test_merged_tensor_schema_keeps_only_one_verified_shard_snapshot(tmp_path, m
     manifest_path, base, sft, output_dir = _artifact_case(tmp_path, "merged-sharded")
     _write_complete_merged_model(output_dir, sharded=True)
     merged_sft = _with_artifact(sft, output_dir, kind="merged_model")
-    original_collect = _merged_model_schema.collect_tensor_schema
+    original_collect = _tensor_schema.collect_tensor_schema
     observed_snapshots = 0
 
     def collect_one_snapshot(path, portable, schema):
@@ -666,7 +666,7 @@ def test_merged_tensor_schema_keeps_only_one_verified_shard_snapshot(tmp_path, m
         original_collect(path, portable, schema)
 
     monkeypatch.setattr(
-        _merged_model_schema,
+        _tensor_schema,
         "collect_tensor_schema",
         collect_one_snapshot,
     )

@@ -13,6 +13,7 @@ from typing import Literal, TypeGuard
 from safetensors import SafetensorError, safe_open
 
 from ..split_contract import sha256_bytes
+from ._adapter_schema import require_adapter_tensor_schema
 from ._artifact_schema import (
     _ADAPTER_CONFIG_PATH,
     _ADAPTER_WEIGHTS_PATH,
@@ -164,6 +165,7 @@ def _require_peft_adapter_layout(
     config = _load_verified_json(entry, config_path, label="PEFT adapter config")
     _require_nonempty_string(config, "peft_type", label="PEFT adapter config")
     _require_adapter_provenance(config, context)
+    require_adapter_tensor_schema(indexed, config, context)
 
 
 def _require_no_merged_config(indexed: IndexedArtifacts) -> None:

@@ -1,10 +1,13 @@
 from pathlib import Path
 
 import pytest
+import torch
 from pydantic import ValidationError
+from safetensors.torch import load_file, save_file
 
 from agoge_forger.eval.contract import ArtifactIndexReference, build_evaluation_contract
 from agoge_forger.split_contract import canonical_json_bytes, sha256_file
+from tests.peft_adapter_fixtures import write_complete_adapter_model
 from tests.test_evaluation_contract import (
     _artifact_case,
     _assert_build_rejected,
@@ -13,6 +16,30 @@ from tests.test_evaluation_contract import (
     _with_artifact,
     _write_invalid_merged_layout,
 )
+
+pytestmark = pytest.mark.usefixtures("cached_test_base_config")
+
+
+@pytest.mark.parametrize("mutation", ["missing", "unexpected", "wrong-shape"])
+def test_evaluation_contract_rejects_adapter_tensor_schema_drift(tmp_path, mutation):
+    manifest_path, base, sft, output_dir = _artifact_case(tmp_path, f"adapter-{mutation}")
+    write_complete_adapter_model(output_dir)
+    weights_path = output_dir / "adapter_model.safetensors"
+    tensors = load_file(weights_path)
+    first_key = next(iter(tensors))
+    if mutation == "missing":
+        tensors.pop(first_key)
+    elif mutation == "unexpected":
+        tensors["unrelated.weight"] = torch.zeros((1, 1))
+    else:
+        tensors[first_key] = torch.zeros((1,))
+    save_file(tensors, weights_path)
+    drifted_sft = _with_artifact(sft, output_dir, kind="peft_adapter")
+
+    _assert_build_rejected(
+        (tmp_path, manifest_path, base, drifted_sft),
+        "PEFT adapter tensor schema",
+    )
 
 
 @pytest.mark.parametrize(
