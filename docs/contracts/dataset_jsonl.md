@@ -70,11 +70,7 @@ All formats are normalized to `{"text": "..."}` before training:
 
 ## Owner
 
-| Language | Responsibility                                              |
-|----------|-------------------------------------------------------------|
-| Python   | Reads, validates, normalizes, and trains on JSONL datasets  |
-| Rust     | Parses JSONL lines for syntax (via `agoge-cli validate`); does not enforce dataset row schema |
-| Julia    | Reads pre-processed datasets (Parquet/CSV from Python path) |
+Python reads, validates, normalizes, and trains on JSONL datasets.
 
 ## Compatibility
 

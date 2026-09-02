@@ -1,22 +1,13 @@
-"""Launch vLLM servers with Python or Rust frontends."""
+"""Launch vLLM servers."""
 
 from __future__ import annotations
 
-import os
 import subprocess  # nosec B404
 import sys
-from collections.abc import Mapping
 
 from ..logging import logger
-from .config import Frontend, ServingConfig
-from .diagnostics import get_vllm_version, has_rust_frontend_support
-
-
-def _set_frontend_env(env: Mapping[str, str], frontend: Frontend) -> dict[str, str]:
-    """Return a copy of *env* with VLLM_USE_RUST_FRONTEND set for the chosen frontend."""
-    env = dict(env)
-    env["VLLM_USE_RUST_FRONTEND"] = "1" if frontend == Frontend.RUST else "0"
-    return env
+from .config import ServingConfig
+from .diagnostics import get_vllm_version
 
 
 def build_serve_command(cfg: ServingConfig) -> list[str]:
@@ -43,17 +34,15 @@ def build_serve_command(cfg: ServingConfig) -> list[str]:
 
 
 def serve_vllm(cfg: ServingConfig) -> int:
-    """Launch a vLLM server with the requested frontend.
+    """Launch a vLLM server.
 
     Returns an exit code: 0 for success/dry-run, 1 for a hard failure.
     """
-    env = _set_frontend_env(os.environ, cfg.frontend)
     cmd = build_serve_command(cfg)
 
     if cfg.dry_run:
         logger.info("[dry-run] would execute:")
         logger.info(" ".join(cmd))
-        logger.info("[dry-run] VLLM_USE_RUST_FRONTEND=%s", env["VLLM_USE_RUST_FRONTEND"])
         return 0
 
     version = get_vllm_version()
@@ -61,15 +50,9 @@ def serve_vllm(cfg: ServingConfig) -> int:
         logger.error("vLLM is not installed. Install vLLM to use serve-vllm.")
         return 1
 
-    if cfg.frontend == Frontend.RUST:
-        supported, msg = has_rust_frontend_support()
-        if not supported:
-            logger.error("Rust frontend requested but not available: %s", msg)
-            return 1
-
-    logger.info("Starting vLLM (%s frontend): %s", cfg.frontend.value, " ".join(cmd))
+    logger.info("Starting vLLM: %s", " ".join(cmd))
     try:
-        proc = subprocess.run(cmd, env=env, check=False, shell=False)  # nosec B603  # nosemgrep
+        proc = subprocess.run(cmd, check=False, shell=False)  # nosec B603  # nosemgrep
     except FileNotFoundError:
         logger.error("vLLM entry point not found. Is vLLM installed?")
         return 1

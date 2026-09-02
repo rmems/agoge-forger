@@ -5,8 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agoge-forger"
 version = "0.1.0"
-description = "A local-first, GPU-aware forge for modern LLM fine-tuning."
-authors = [{name = "Agoge"}]
+description = "A reproducible Python/PyTorch platform for post-training, evaluation, and model release."
+authors = [{name = "Raul Montoya Cardenas"}]
+license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -29,13 +30,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-jax = ["jax[cuda13]", "flax", "optax", "orbax-checkpoint"]
-dev = ["pytest", "ruff==0.16.2", "mypy>=1.0", "pre-commit"]
-infra = []
-cuda = []
+dev = ["pytest", "ruff==0.16.4", "mypy>=1.0", "pre-commit"]
 
 [project.scripts]
 agoge = "agoge_forger.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/rmems/agoge-forger"
+Repository = "https://github.com/rmems/agoge-forger"
+Issues = "https://github.com/rmems/agoge-forger/issues"
 
 [tool.ruff]
 line-length = 100

@@ -1,23 +1,20 @@
 from agoge_forger.config import ExperimentConfig, load_config
 
-SMOKE_REVISION = "d3040b7c81a0a810fa13c6f392f3e304a0e121d5"
-RTX5080_REVISION = "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
 
-
-def test_load_smoke_config():
-    config = load_config("configs/smoke_test.yaml")
+def test_load_minicpm5_canary_config():
+    config = load_config("configs/minicpm5_canary.yaml")
     assert isinstance(config, ExperimentConfig)
-    assert config.model_id == "HuggingFaceM4/tiny-random-LlamaForCausalLM"
-    assert config.revision == SMOKE_REVISION
+    assert config.model_id == "openbmb/MiniCPM5-1B-Base"
+    assert config.revision is None
     assert config.training.batch_size == 1
-    assert config.quantization.load_in_4bit is False
+    assert config.quantization.load_in_4bit is True
 
 
-def test_load_5080_config_pins_hub_revision():
-    config = load_config("configs/local_rtx5080_16gb.yaml")
+def test_load_granite_flagship_template():
+    config = load_config("configs/granite_4_1_flagship.yaml")
     assert isinstance(config, ExperimentConfig)
-    assert config.model_id == "Qwen/Qwen2.5-1.5B-Instruct"
-    assert config.revision == RTX5080_REVISION
+    assert config.model_id == "ibm-granite/granite-4.1-3b-base"
+    assert config.trust_remote_code is False
 
 
 def test_revision_is_optional_and_defaults_to_none(tmp_path):
@@ -29,9 +26,10 @@ def test_revision_is_optional_and_defaults_to_none(tmp_path):
     assert config.revision is None
 
 
-def test_existing_configs_without_revision_still_load():
-    config = load_config("configs/nemotron_3_nano_4b_qlora.yaml")
+def test_flagship_config_requires_target_discovery():
+    config = load_config("configs/granite_4_1_flagship.yaml")
     assert config.revision is None
+    assert config.lora.target_modules_mode == "discover_required"
 
 
 def test_load_config_parses_explicit_revision(tmp_path):
@@ -68,11 +66,11 @@ def test_load_config_normalizes_empty_revision_to_none(tmp_path):
 
 
 def test_config_loads_safetensors_fields():
-    config = load_config("configs/smoke_test.yaml")
+    config = load_config("configs/minicpm5_canary.yaml")
     assert config.runtime.save_safetensors is True
     assert config.runtime.allow_unsafe_serialization is False
     assert config.runtime.max_shard_size == "4GB"
-    assert config.lora.target_modules_mode == "auto_common"
+    assert config.lora.target_modules_mode == "discover_required"
 
 
 def test_config_loads_checkpoint_controls(tmp_path):
