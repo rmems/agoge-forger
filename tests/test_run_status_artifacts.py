@@ -11,6 +11,7 @@ from test_run_status import (
     _make_run_dir,
     _minimal_safetensors,
     _safetensors_with_dtype,
+    _safetensors_with_tensors,
     _write_adapter_config,
     _write_checkpoint,
     _write_final_adapter,
@@ -85,6 +86,7 @@ def test_merged_dir_without_safetensors_is_not_a_merged_model(tmp_path):
     merged.mkdir(parents=True)
     (merged / "config.json").write_text('{"model_type": "llama"}')
     (merged / "tokenizer_config.json").write_text("{}")
+    (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
 
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
@@ -115,6 +117,7 @@ def test_sharded_merged_model_is_recognised(tmp_path):
     merged.mkdir(parents=True)
     (merged / "config.json").write_text('{"model_type": "llama"}')
     (merged / "tokenizer_config.json").write_text("{}")
+    (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
     (merged / "model.safetensors.index.json").write_text(
         json.dumps(
             {
@@ -125,8 +128,8 @@ def test_sharded_merged_model_is_recognised(tmp_path):
             }
         )
     )
-    (merged / "model-00001-of-00002.safetensors").write_bytes(_minimal_safetensors())
-    (merged / "model-00002-of-00002.safetensors").write_bytes(_minimal_safetensors())
+    (merged / "model-00001-of-00002.safetensors").write_bytes(_safetensors_with_tensors("a"))
+    (merged / "model-00002-of-00002.safetensors").write_bytes(_safetensors_with_tensors("b"))
 
     assert is_merged_model_dir(merged) is True
     assert build_run_status(str(run_dir))["merged_model"] == {
@@ -143,6 +146,7 @@ def test_shared_shard_filenames_are_recognised(tmp_path):
     merged.mkdir(parents=True)
     (merged / "config.json").write_text('{"model_type": "llama"}')
     (merged / "tokenizer_config.json").write_text("{}")
+    (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
     (merged / "model.safetensors.index.json").write_text(
         json.dumps(
             {
@@ -153,13 +157,30 @@ def test_shared_shard_filenames_are_recognised(tmp_path):
             }
         )
     )
-    (merged / "model-00001-of-00001.safetensors").write_bytes(_minimal_safetensors())
+    (merged / "model-00001-of-00001.safetensors").write_bytes(
+        _safetensors_with_tensors("model.embed_tokens.weight", "model.norm.weight")
+    )
 
     assert is_merged_model_dir(merged) is True
     assert build_run_status(str(run_dir))["merged_model"] == {
         "present": True,
         "path": str(merged.resolve()),
     }
+
+
+def test_shard_index_tensor_must_exist_in_designated_shard(tmp_path):
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    (merged / "config.json").write_text('{"model_type": "llama"}')
+    (merged / "tokenizer_config.json").write_text("{}")
+    (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
+    shard_name = "model-00001-of-00001.safetensors"
+    (merged / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"expected": shard_name}})
+    )
+    (merged / shard_name).write_bytes(_safetensors_with_dtype("F32"))
+
+    assert is_merged_model_dir(merged) is False
 
 
 def test_truncated_merged_config_is_not_a_merged_model(tmp_path):
@@ -261,6 +282,13 @@ def test_merged_model_requires_completed_tokenizer_export(tmp_path):
     merged.mkdir()
     (merged / "config.json").write_text('{"model_type": "llama"}')
     (merged / "model.safetensors").write_bytes(_minimal_safetensors())
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_merged_model_requires_final_artifact_index(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "artifact_index.json").unlink(missing_ok=True)
 
     assert is_merged_model_dir(merged) is False
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -11,24 +12,31 @@ from safetensors import SafetensorError, safe_open
 PathLike = str | Path
 
 
-def _json_object(path: Path) -> bool:
+def _load_json_object(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
-        return False
+        return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
-        return False
-    return isinstance(payload, dict)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _json_object(path: Path) -> bool:
+    return _load_json_object(path) is not None
+
+
+def _safetensors_keys(path: Path) -> set[str] | None:
+    """Return tensor keys from a valid container without materializing data."""
+    try:
+        with safe_open(path, framework="pt", device="cpu") as weights:
+            return set(weights.keys())
+    except SafetensorError:
+        return None
 
 
 def _safetensors_usable(path: Path) -> bool:
-    """Validate a container without materializing any tensor data."""
-    try:
-        with safe_open(path, framework="pt", device="cpu") as weights:
-            tuple(weights.keys())
-    except SafetensorError:
-        return False
-    return True
+    return bool(_safetensors_keys(path))
 
 
 def _is_root_model_shard_name(name: str) -> bool:
@@ -62,12 +70,27 @@ def _load_shard_weight_map(candidate: Path) -> dict[str, Any] | None:
     return weight_map
 
 
-def _shards_usable(candidate: Path, shards: set[str]) -> bool:
+def _load_shard_keys(candidate: Path, shards: set[str]) -> dict[str, set[str]] | None:
+    shard_keys: dict[str, set[str]] = {}
     for name in shards:
         if not _is_root_model_shard_name(name):
-            return False
+            return None
         shard = candidate / name
-        if not shard.is_file() or not _safetensors_usable(shard):
+        if not shard.is_file():
+            return None
+        keys = _safetensors_keys(shard)
+        if not keys:
+            return None
+        shard_keys[name] = keys
+    return shard_keys
+
+
+def _weight_map_matches_shards(
+    weight_map: dict[str, Any],
+    shard_keys: dict[str, set[str]],
+) -> bool:
+    for tensor_name, shard_name in weight_map.items():
+        if not isinstance(shard_name, str) or tensor_name not in shard_keys[shard_name]:
             return False
     return True
 
@@ -77,7 +100,10 @@ def _has_complete_sharded_weights(candidate: Path) -> bool:
     if weight_map is None:
         return False
     shards = _shard_filenames(weight_map)
-    return shards is not None and _shards_usable(candidate, shards)
+    if shards is None:
+        return False
+    shard_keys = _load_shard_keys(candidate, shards)
+    return shard_keys is not None and _weight_map_matches_shards(weight_map, shard_keys)
 
 
 def _has_complete_merged_weights(candidate: Path) -> bool:
@@ -94,8 +120,14 @@ def is_merged_model_dir(path: PathLike) -> bool:
         candidate.is_dir()
         and _json_object(candidate / "config.json")
         and _has_complete_merged_weights(candidate)
-        and _json_object(candidate / "tokenizer_config.json")
+        and _artifact_index_usable(candidate)
     )
+
+
+def _artifact_index_usable(candidate: Path) -> bool:
+    """Require the completion marker written after tokenizer export."""
+    index = _load_json_object(candidate / "artifact_index.json")
+    return bool(index and isinstance(index.get("artifacts"), list) and index["artifacts"])
 
 
 def adapter_config_usable(adapter_path: PathLike | None) -> bool:
@@ -118,7 +150,23 @@ def adapter_config_usable(adapter_path: PathLike | None) -> bool:
 def trainer_state_usable(checkpoint: PathLike | None) -> bool:
     if checkpoint is None:
         return False
-    return _json_object(Path(checkpoint) / "trainer_state.json")
+    checkpoint_dir = Path(checkpoint)
+    return bool(
+        _json_object(checkpoint_dir / "trainer_state.json")
+        and _torch_state_usable(checkpoint_dir / "optimizer.pt")
+        and _torch_state_usable(checkpoint_dir / "scheduler.pt")
+    )
+
+
+def _torch_state_usable(path: Path) -> bool:
+    """Validate current PyTorch's zip container without unpickling it."""
+    if not path.is_file():
+        return False
+    try:
+        with path.open("rb") as handle, zipfile.ZipFile(handle) as archive:
+            return bool(archive.namelist())
+    except zipfile.BadZipFile:
+        return False
 
 
 def adapter_weights_usable(

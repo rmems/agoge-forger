@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -50,10 +51,18 @@ def runner() -> CliRunner:
 
 
 def _minimal_safetensors() -> bytes:
-    """Tiny valid safetensors container (empty JSON header, 8-byte aligned)."""
-    header = b"{}"
+    """Tiny valid safetensors container with one tensor."""
+    return _safetensors_with_tensors("weight")
+
+
+def _safetensors_with_tensors(*names: str) -> bytes:
+    payload = {
+        name: {"dtype": "F32", "shape": [1], "data_offsets": [index * 4, (index + 1) * 4]}
+        for index, name in enumerate(names)
+    }
+    header = json.dumps(payload, separators=(",", ":")).encode()
     header += b" " * ((8 - len(header) % 8) % 8)
-    return len(header).to_bytes(8, "little") + header
+    return len(header).to_bytes(8, "little") + header + b"\0" * (4 * len(names))
 
 
 def _safetensors_with_dtype(dtype: str) -> bytes:
@@ -85,6 +94,9 @@ def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B", revision=None)
     checkpoint_dir.mkdir(parents=True)
     (checkpoint_dir / "trainer_state.json").write_text("{}")
     (checkpoint_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
+    for state_name in ("optimizer.pt", "scheduler.pt"):
+        with zipfile.ZipFile(checkpoint_dir / state_name, "w") as archive:
+            archive.writestr("state", b"state")
     _write_adapter_config(checkpoint_dir, base_model=base_model, revision=revision)
     return checkpoint_dir
 
@@ -106,6 +118,7 @@ def _write_merged_model(path):
     (path / "config.json").write_text('{"model_type": "llama"}')
     (path / "model.safetensors").write_bytes(_minimal_safetensors())
     (path / "tokenizer_config.json").write_text("{}")
+    (path / "artifact_index.json").write_text('{"artifacts": [{"file": "tokenizer_config.json"}]}')
     return path
 
 
@@ -388,13 +401,13 @@ def test_truncated_adapter_weights_are_not_export_ready(tmp_path):
     assert report["export"]["ready"] is False
 
 
-def test_unaligned_safetensors_header_is_export_ready(tmp_path):
+def test_zero_tensor_safetensors_is_not_export_ready(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     header = b"{}" + b" " * 7
     (run_dir / "adapter_model.safetensors").write_bytes(len(header).to_bytes(8, "little") + header)
     _write_adapter_config(run_dir)
 
-    assert build_run_status(str(run_dir))["export"]["ready"] is True
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
 
 
 def test_header_without_data_region_is_not_export_ready(tmp_path):
@@ -446,6 +459,26 @@ def test_header_without_data_region_is_not_resume_ready(tmp_path):
 
     assert report["checkpoints"]["valid_count"] == 1
     assert report["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize("missing_name", ["optimizer.pt", "scheduler.pt"])
+def test_missing_training_state_is_not_resume_ready(tmp_path, missing_name):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    missing = checkpoint_dir / missing_name
+    if missing.exists():
+        missing.unlink()
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize("state_name", ["optimizer.pt", "scheduler.pt"])
+def test_corrupt_training_state_is_not_resume_ready(tmp_path, state_name):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    (checkpoint_dir / state_name).write_bytes(b"not a torch zip")
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
 
 # --------------------------------------------------------------------------
