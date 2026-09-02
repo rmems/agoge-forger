@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from agoge_forger.artifacts.safetensors_io import write_artifact_index
 from agoge_forger.cli import app
 from agoge_forger.run_status import (
     SCHEMA_VERSION,
@@ -89,14 +90,20 @@ def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=No
     (directory / "adapter_config.json").write_text(json.dumps(payload))
 
 
+def _write_torch_state(path):
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("archive/data.pkl", b"state")
+        archive.writestr("archive/version", b"3\n")
+        archive.writestr("archive/.data/serialization_id", b"0")
+
+
 def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B", revision=None):
     checkpoint_dir = root / f"checkpoint-{step}"
     checkpoint_dir.mkdir(parents=True)
     (checkpoint_dir / "trainer_state.json").write_text("{}")
     (checkpoint_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
-    for state_name in ("optimizer.pt", "scheduler.pt"):
-        with zipfile.ZipFile(checkpoint_dir / state_name, "w") as archive:
-            archive.writestr("state", b"state")
+    for state_name in ("optimizer.pt", "scheduler.pt", "rng_state.pth"):
+        _write_torch_state(checkpoint_dir / state_name)
     _write_adapter_config(checkpoint_dir, base_model=base_model, revision=revision)
     return checkpoint_dir
 
@@ -118,7 +125,7 @@ def _write_merged_model(path):
     (path / "config.json").write_text('{"model_type": "llama"}')
     (path / "model.safetensors").write_bytes(_minimal_safetensors())
     (path / "tokenizer_config.json").write_text("{}")
-    (path / "artifact_index.json").write_text('{"artifacts": [{"file": "tokenizer_config.json"}]}')
+    write_artifact_index(str(path))
     return path
 
 
@@ -477,6 +484,23 @@ def test_corrupt_training_state_is_not_resume_ready(tmp_path, state_name):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
     (checkpoint_dir / state_name).write_bytes(b"not a torch zip")
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_non_torch_zip_state_is_not_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    with zipfile.ZipFile(checkpoint_dir / "optimizer.pt", "w") as archive:
+        archive.writestr("unrelated", b"not torch serialization")
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_missing_rng_state_is_not_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    (checkpoint_dir / "rng_state.pth").unlink(missing_ok=True)
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 

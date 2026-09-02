@@ -20,6 +20,7 @@ from test_run_status import (
 )
 from typer.testing import CliRunner
 
+from agoge_forger.artifacts.safetensors_io import write_artifact_index
 from agoge_forger.cli import app
 from agoge_forger.run_status import build_run_status, find_merged_model_dir, is_merged_model_dir
 
@@ -87,7 +88,6 @@ def test_non_model_weights_are_not_a_merged_model(tmp_path, weight_name):
     merged.mkdir(parents=True)
     (merged / "config.json").write_text('{"model_type": "llama"}')
     (merged / "tokenizer_config.json").write_text("{}")
-    (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
     if weight_name is not None:
         (merged / weight_name).write_bytes(_minimal_safetensors())
 
@@ -148,10 +148,10 @@ def test_sharded_merged_model_is_recognised(tmp_path, weight_map, shard_tensors)
     merged.mkdir(parents=True)
     (merged / "config.json").write_text('{"model_type": "llama"}')
     (merged / "tokenizer_config.json").write_text("{}")
-    (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
     (merged / "model.safetensors.index.json").write_text(json.dumps({"weight_map": weight_map}))
     for shard_name, tensor_names in shard_tensors.items():
         (merged / shard_name).write_bytes(_safetensors_with_tensors(*tensor_names))
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is True
     assert build_run_status(str(run_dir))["merged_model"] == {
@@ -165,12 +165,25 @@ def test_shard_index_tensor_must_exist_in_designated_shard(tmp_path):
     merged.mkdir()
     (merged / "config.json").write_text('{"model_type": "llama"}')
     (merged / "tokenizer_config.json").write_text("{}")
-    (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
     shard_name = "model-00001-of-00001.safetensors"
     (merged / "model.safetensors.index.json").write_text(
         json.dumps({"weight_map": {"expected": shard_name}})
     )
     (merged / shard_name).write_bytes(_safetensors_with_dtype("F32"))
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_numbered_shard_series_must_be_complete(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "model.safetensors").unlink()
+    shard_name = "model-00001-of-00002.safetensors"
+    (merged / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"weight": shard_name}})
+    )
+    (merged / shard_name).write_bytes(_safetensors_with_tensors("weight"))
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
 
@@ -269,6 +282,32 @@ def test_merged_model_requires_completed_tokenizer_export(tmp_path):
 def test_merged_model_requires_final_artifact_index(tmp_path):
     merged = _write_merged_model(tmp_path / "merged")
     (merged / "artifact_index.json").unlink(missing_ok=True)
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_stale_artifact_index_is_not_a_completion_marker(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "model.safetensors").write_bytes(_safetensors_with_tensors("replacement"))
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_merged_config_requires_model_type(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "config.json").write_text("{}")
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_symlinked_merged_weights_are_not_standalone(tmp_path):
+    external = tmp_path / "external.safetensors"
+    external.write_bytes(_minimal_safetensors())
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "model.safetensors").unlink()
+    (merged / "model.safetensors").symlink_to(external)
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
 
