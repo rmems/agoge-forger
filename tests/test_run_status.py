@@ -90,9 +90,11 @@ def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=No
     (directory / "adapter_config.json").write_text(json.dumps(payload))
 
 
-def _write_torch_state(path):
+def _write_torch_state(path, payload=None):
+    if payload is None:
+        payload = b"\x80\x02}q\x00."  # pickle protocol 2 encoding of an empty dict
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("archive/data.pkl", b"state")
+        archive.writestr("archive/data.pkl", payload)
         archive.writestr("archive/version", b"3\n")
         archive.writestr("archive/.data/serialization_id", b"0")
 
@@ -100,7 +102,9 @@ def _write_torch_state(path):
 def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B", revision=None):
     checkpoint_dir = root / f"checkpoint-{step}"
     checkpoint_dir.mkdir(parents=True)
-    (checkpoint_dir / "trainer_state.json").write_text("{}")
+    (checkpoint_dir / "trainer_state.json").write_text(
+        json.dumps({"global_step": step, "train_batch_size": 1})
+    )
     (checkpoint_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
     for state_name in ("optimizer.pt", "scheduler.pt", "rng_state.pth"):
         _write_torch_state(checkpoint_dir / state_name)
@@ -115,7 +119,7 @@ def _write_final_adapter(root, base_model="Qwen/Qwen3.5-0.5B", revision=None):
 
 
 def _write_legacy_bin_adapter(root, base_model="Qwen/Qwen3.5-0.5B"):
-    (root / "adapter_model.bin").write_text("legacy-weights")
+    _write_torch_state(root / "adapter_model.bin")
     _write_adapter_config(root, base_model=base_model)
     return root
 
@@ -493,6 +497,39 @@ def test_non_torch_zip_state_is_not_resume_ready(tmp_path):
     checkpoint_dir = _write_checkpoint(run_dir, 50)
     with zipfile.ZipFile(checkpoint_dir / "optimizer.pt", "w") as archive:
         archive.writestr("unrelated", b"not torch serialization")
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize("state_name", ["optimizer.pt", "scheduler.pt", "rng_state.pth"])
+def test_torch_zip_with_invalid_pickle_is_not_resume_ready(tmp_path, state_name):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    _write_torch_state(checkpoint_dir / state_name, payload=b"not a pickle")
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_trainer_state_step_must_match_checkpoint_name(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    (checkpoint_dir / "trainer_state.json").write_text('{"global_step": 49}')
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_trainer_state_requires_positive_batch_size(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    (checkpoint_dir / "trainer_state.json").write_text('{"global_step": 50}')
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_lone_ranked_rng_state_is_not_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    (checkpoint_dir / "rng_state.pth").rename(checkpoint_dir / "rng_state_0.pth")
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 

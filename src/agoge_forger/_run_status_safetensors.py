@@ -52,12 +52,16 @@ def _numbered_shards_complete(shards: set[str]) -> bool:
         return False
     ordinal_width = len(match.group(1))
     total_text = match.group(2)
-    total = int(total_text)
-    expected = {
-        f"model-{ordinal:0{ordinal_width}d}-of-{total_text}.safetensors"
+    try:
+        total = int(total_text)
+    except ValueError:
+        return False
+    if total != len(shards):
+        return False
+    return all(
+        f"model-{ordinal:0{ordinal_width}d}-of-{total_text}.safetensors" in shards
         for ordinal in range(1, total + 1)
-    }
-    return shards == expected
+    )
 
 
 def _load_shard_weight_map(candidate: Path) -> dict[str, Any] | None:

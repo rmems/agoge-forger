@@ -9,7 +9,7 @@ from typing import Any
 
 
 def _load_index(path: Path) -> dict[str, Any] | None:
-    if not path.is_file():
+    if path.is_symlink() or not path.is_file():
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

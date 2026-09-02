@@ -188,6 +188,17 @@ def test_numbered_shard_series_must_be_complete(tmp_path):
     assert is_merged_model_dir(merged) is False
 
 
+def test_absurd_shard_total_is_rejected_without_expanding_range(monkeypatch):
+    from agoge_forger import _run_status_safetensors as module
+
+    def fail_range(*args):
+        raise AssertionError("must not materialize the attacker-controlled total")
+
+    monkeypatch.setattr(module, "range", fail_range, raising=False)
+
+    assert module._numbered_shards_complete({"model-00001-of-999999999.safetensors"}) is False
+
+
 def test_truncated_merged_config_is_not_a_merged_model(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
@@ -301,6 +312,24 @@ def test_merged_config_requires_model_type(tmp_path):
     assert is_merged_model_dir(merged) is False
 
 
+def test_merged_config_requires_recognized_local_model_type(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "config.json").write_text('{"model_type": "not-a-real-model"}')
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_symlinked_artifact_index_is_not_a_completion_marker(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    index = merged / "artifact_index.json"
+    external = tmp_path / "external-index.json"
+    index.replace(external)
+    index.symlink_to(external)
+
+    assert is_merged_model_dir(merged) is False
+
+
 def test_symlinked_merged_weights_are_not_standalone(tmp_path):
     external = tmp_path / "external.safetensors"
     external.write_bytes(_minimal_safetensors())
@@ -384,6 +413,21 @@ def test_legacy_bin_adapter_is_accepted_with_allow_unsafe(runner, tmp_path):
     result = runner.invoke(app, ["run-status", str(run_dir), "--allow-unsafe-serialization"])
     assert result.exit_code == 0
     assert json.loads(result.stdout) == report
+
+
+def test_malformed_legacy_bin_is_not_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_legacy_bin_adapter(run_dir)
+    (run_dir / "adapter_model.bin").write_bytes(b"not a torch archive")
+
+    assert build_run_status(str(run_dir), allow_unsafe=True)["export"]["ready"] is False
+
+
+def test_whitespace_base_model_is_not_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir, base_model="   ")
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
 
 
 def test_corrupt_safetensors_does_not_fall_back_to_legacy_bin(tmp_path):

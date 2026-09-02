@@ -6,8 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from transformers import CONFIG_MAPPING
+
 from ._run_status_artifact_index import artifact_index_usable
 from ._run_status_safetensors import has_complete_merged_weights, safetensors_usable
+from ._run_status_torch_archive import torch_zip_usable
 
 PathLike = str | Path
 
@@ -25,11 +28,11 @@ def _load_json_object(path: Path) -> dict[str, Any] | None:
 def _merged_config_usable(candidate: Path) -> bool:
     config = _load_json_object(candidate / "config.json")
     model_type = None if config is None else config.get("model_type")
-    return isinstance(model_type, str) and bool(model_type.strip())
+    return isinstance(model_type, str) and model_type in CONFIG_MAPPING
 
 
 def _nonempty_string(value: Any) -> bool:
-    return isinstance(value, str) and bool(value)
+    return isinstance(value, str) and bool(value.strip())
 
 
 def is_merged_model_dir(path: PathLike) -> bool:
@@ -69,6 +72,5 @@ def adapter_weights_usable(
     if allow_unsafe:
         legacy = adapter_dir / "adapter_model.bin"
         if legacy.is_file():
-            with legacy.open("rb") as handle:
-                return bool(handle.read(1))
+            return torch_zip_usable(legacy)
     return False
