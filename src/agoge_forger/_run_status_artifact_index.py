@@ -101,6 +101,10 @@ def artifact_index_usable(candidate: Path) -> bool:
         return False
     entries = _artifact_entries(index)
     current = _current_artifacts(candidate)
-    if entries is None or current is None or not _artifact_names_match(entries, current):
+    if entries is None:
+        return False
+    if current is None:
+        return False
+    if not _artifact_names_match(entries, current):
         return False
     return all(_artifact_matches(path, entries[name]) for name, path in current.items())
