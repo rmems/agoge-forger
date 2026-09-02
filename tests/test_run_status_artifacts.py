@@ -79,7 +79,8 @@ def test_merged_dir_without_config_json_is_not_a_merged_model(tmp_path):
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
 
 
-def test_merged_dir_without_safetensors_is_not_a_merged_model(tmp_path):
+@pytest.mark.parametrize("weight_name", [None, "adapter_model.safetensors"])
+def test_non_model_weights_are_not_a_merged_model(tmp_path, weight_name):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
     merged = tmp_path / "merged" / run_dir.name
@@ -87,6 +88,8 @@ def test_merged_dir_without_safetensors_is_not_a_merged_model(tmp_path):
     (merged / "config.json").write_text('{"model_type": "llama"}')
     (merged / "tokenizer_config.json").write_text("{}")
     (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
+    if weight_name is not None:
+        (merged / weight_name).write_bytes(_minimal_safetensors())
 
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
@@ -109,8 +112,36 @@ def test_merged_dir_with_only_nested_safetensors_is_not_a_merged_model(tmp_path)
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
 
 
-def test_sharded_merged_model_is_recognised(tmp_path):
-    """`save_pretrained` shards keep every weight file at the root."""
+@pytest.mark.parametrize(
+    ("weight_map", "shard_tensors"),
+    [
+        (
+            {
+                "a": "model-00001-of-00002.safetensors",
+                "b": "model-00002-of-00002.safetensors",
+            },
+            {
+                "model-00001-of-00002.safetensors": ("a",),
+                "model-00002-of-00002.safetensors": ("b",),
+            },
+        ),
+        (
+            {
+                "model.embed_tokens.weight": "model-00001-of-00001.safetensors",
+                "model.norm.weight": "model-00001-of-00001.safetensors",
+            },
+            {
+                "model-00001-of-00001.safetensors": (
+                    "model.embed_tokens.weight",
+                    "model.norm.weight",
+                )
+            },
+        ),
+    ],
+    ids=["multiple-shards", "shared-shard"],
+)
+def test_sharded_merged_model_is_recognised(tmp_path, weight_map, shard_tensors):
+    """Indexed exports allow distinct shards and tensors sharing a shard."""
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
     merged = tmp_path / "merged" / run_dir.name
@@ -118,48 +149,9 @@ def test_sharded_merged_model_is_recognised(tmp_path):
     (merged / "config.json").write_text('{"model_type": "llama"}')
     (merged / "tokenizer_config.json").write_text("{}")
     (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
-    (merged / "model.safetensors.index.json").write_text(
-        json.dumps(
-            {
-                "weight_map": {
-                    "a": "model-00001-of-00002.safetensors",
-                    "b": "model-00002-of-00002.safetensors",
-                }
-            }
-        )
-    )
-    (merged / "model-00001-of-00002.safetensors").write_bytes(_safetensors_with_tensors("a"))
-    (merged / "model-00002-of-00002.safetensors").write_bytes(_safetensors_with_tensors("b"))
-
-    assert is_merged_model_dir(merged) is True
-    assert build_run_status(str(run_dir))["merged_model"] == {
-        "present": True,
-        "path": str(merged.resolve()),
-    }
-
-
-def test_shared_shard_filenames_are_recognised(tmp_path):
-    """Transformers weight_map has one entry per tensor; many share a shard."""
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    merged = tmp_path / "merged" / run_dir.name
-    merged.mkdir(parents=True)
-    (merged / "config.json").write_text('{"model_type": "llama"}')
-    (merged / "tokenizer_config.json").write_text("{}")
-    (merged / "artifact_index.json").write_text('{"artifacts": [{}]}')
-    (merged / "model.safetensors.index.json").write_text(
-        json.dumps(
-            {
-                "weight_map": {
-                    "model.embed_tokens.weight": "model-00001-of-00001.safetensors",
-                    "model.norm.weight": "model-00001-of-00001.safetensors",
-                }
-            }
-        )
-    )
-    (merged / "model-00001-of-00001.safetensors").write_bytes(
-        _safetensors_with_tensors("model.embed_tokens.weight", "model.norm.weight")
-    )
+    (merged / "model.safetensors.index.json").write_text(json.dumps({"weight_map": weight_map}))
+    for shard_name, tensor_names in shard_tensors.items():
+        (merged / shard_name).write_bytes(_safetensors_with_tensors(*tensor_names))
 
     assert is_merged_model_dir(merged) is True
     assert build_run_status(str(run_dir))["merged_model"] == {
@@ -195,18 +187,6 @@ def test_truncated_merged_config_is_not_a_merged_model(tmp_path):
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
 
     (merged / "model.safetensors").write_bytes(b"")
-    assert is_merged_model_dir(merged) is False
-    assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
-
-
-def test_root_adapter_safetensors_is_not_a_merged_model(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    merged = tmp_path / "merged" / run_dir.name
-    merged.mkdir(parents=True)
-    (merged / "config.json").write_text('{"model_type": "llama"}')
-    (merged / "adapter_model.safetensors").write_text("adapter-weights")
-
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
 

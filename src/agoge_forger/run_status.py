@@ -143,6 +143,44 @@ def _infer_base(adapter_path: PathLike | None) -> tuple[str | None, str | None]:
     return base_model, base_revision
 
 
+def _checkpoint_status(checkpoints: list[Path]) -> tuple[Path | None, dict[str, Any]]:
+    """Describe one checkpoint snapshot without a second directory scan."""
+    latest = checkpoints[-1] if checkpoints else None
+    return latest, {
+        "valid_count": len(checkpoints),
+        "steps": [_checkpoint_step(path) for path in checkpoints],
+        "latest_step": None if latest is None else _checkpoint_step(latest),
+        "latest_path": _as_str(latest),
+    }
+
+
+def _artifact_status(path: Path | None) -> dict[str, Any]:
+    return {"present": path is not None, "path": _as_str(path)}
+
+
+def _resume_status(checkpoint: Path | None, *, allow_unsafe: bool) -> dict[str, Any]:
+    ready = bool(
+        checkpoint is not None
+        and _trainer_state_usable(checkpoint)
+        and _adapter_weights_usable(checkpoint, allow_unsafe=allow_unsafe)
+    )
+    return {"ready": ready, "checkpoint_path": _as_str(checkpoint)}
+
+
+def _export_status(
+    source: str | None,
+    kind: str | None,
+    *,
+    allow_unsafe: bool,
+) -> dict[str, Any]:
+    ready = bool(
+        source is not None
+        and _adapter_config_usable(source)
+        and _adapter_weights_usable(source, allow_unsafe=allow_unsafe)
+    )
+    return {"ready": ready, "source_path": source, "source_kind": kind}
+
+
 def build_run_status(
     run_dir: str,
     *,
@@ -160,16 +198,7 @@ def build_run_status(
     resolved_run_dir = resolve_existing_path(run_dir, must_be_dir=True)
 
     checkpoints = list_valid_checkpoints(resolved_run_dir, allow_unsafe=allow_unsafe)
-    # Exactly the selection `resolve_resume_checkpoint` makes when
-    # `resume_from_latest_checkpoint` is set: `find_latest_valid_checkpoint` is
-    # the last element of this very list. Taking it from the list already in
-    # hand — rather than rescanning — keeps `steps`, `valid_count`,
-    # `latest_step` and `latest_path` describing one single observation of the
-    # directory, so a checkpoint written mid-report cannot produce a report
-    # whose `latest_step` is missing from its own `steps`.
-    latest_checkpoint = checkpoints[-1] if checkpoints else None
-    latest_step = None if latest_checkpoint is None else _checkpoint_step(latest_checkpoint)
-
+    latest_checkpoint, checkpoint_status = _checkpoint_status(checkpoints)
     final_adapter_present = is_adapter_artifact(resolved_run_dir, allow_unsafe=allow_unsafe)
     export_source, export_kind = _resolve_export(
         resolved_run_dir,
@@ -177,52 +206,23 @@ def build_run_status(
         final_adapter_present=final_adapter_present,
     )
     base_model, base_revision = _infer_base(export_source or latest_checkpoint)
-    # Conventional merged/<run_name> is relative to the logical adapters/
-    # parent, which resolve() would lose if the run dir is a symlink.
     logical_run_dir = Path(run_dir).expanduser()
     merged_model = find_merged_model_dir(logical_run_dir, merged_dir)
-    # Symlink target basename is the wrong run identifier; Path(".").name is
-    # empty, so fall back to the resolved directory only in that case.
     run_name = logical_run_dir.name or resolved_run_dir.name
+    final_adapter = resolved_run_dir if final_adapter_present else None
 
     return {
         "schema_version": SCHEMA_VERSION,
         "run_dir": str(resolved_run_dir),
         "run_name": run_name,
         "allow_unsafe_serialization": allow_unsafe,
-        "checkpoints": {
-            "valid_count": len(checkpoints),
-            "steps": [_checkpoint_step(path) for path in checkpoints],
-            "latest_step": latest_step,
-            "latest_path": _as_str(latest_checkpoint),
-        },
-        "final_adapter": {
-            "present": final_adapter_present,
-            "path": str(resolved_run_dir) if final_adapter_present else None,
-        },
-        "merged_model": {
-            "present": merged_model is not None,
-            "path": _as_str(merged_model),
-        },
+        "checkpoints": checkpoint_status,
+        "final_adapter": _artifact_status(final_adapter),
+        "merged_model": _artifact_status(merged_model),
         "base_model": base_model,
         "base_revision": base_revision,
-        "resume": {
-            "ready": (
-                latest_checkpoint is not None
-                and _trainer_state_usable(latest_checkpoint)
-                and _adapter_weights_usable(latest_checkpoint, allow_unsafe=allow_unsafe)
-            ),
-            "checkpoint_path": _as_str(latest_checkpoint),
-        },
-        "export": {
-            "ready": (
-                export_source is not None
-                and _adapter_config_usable(export_source)
-                and _adapter_weights_usable(export_source, allow_unsafe=allow_unsafe)
-            ),
-            "source_path": export_source,
-            "source_kind": export_kind,
-        },
+        "resume": _resume_status(latest_checkpoint, allow_unsafe=allow_unsafe),
+        "export": _export_status(export_source, export_kind, allow_unsafe=allow_unsafe),
     }
 
 
