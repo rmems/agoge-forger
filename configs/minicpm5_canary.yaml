@@ -1,0 +1,21 @@
+# Compatibility canary; pin revision and architecture-specific targets before a run.
+model_id: "openbmb/MiniCPM5-1B-Base"
+trust_remote_code: false
+dataset_path: "../datasets/samples/tiny_sft.jsonl"
+dataset_text_field: "text"
+output_dir: "adapters"
+run_name: "minicpm5_canary"
+load_in_4bit: true
+bnb_4bit_quant_type: "nf4"
+bnb_4bit_compute_dtype: "bfloat16"
+bnb_4bit_use_double_quant: true
+max_seq_length: 512
+batch_size: 1
+gradient_accumulation_steps: 8
+gradient_checkpointing: true
+learning_rate: 0.0001
+num_train_epochs: 1
+bf16: true
+seed: 42
+target_modules: []
+target_modules_mode: "discover_required"
