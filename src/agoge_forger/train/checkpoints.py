@@ -1,5 +1,6 @@
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
@@ -137,6 +138,8 @@ def resolve_export_source(
     adapter_path: str | None = None,
     *,
     allow_unsafe: bool = False,
+    checkpoints: Sequence[Path] | None = None,
+    run_adapter_present: bool | None = None,
 ) -> str:
     if adapter_path:
         safe_adapter_path = str(resolve_existing_path(adapter_path, must_be_dir=True))
@@ -148,10 +151,15 @@ def resolve_export_source(
         raise ValueError("Either run_dir or adapter_path must be provided.")
 
     safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True))
-    if is_adapter_artifact(safe_run_dir, allow_unsafe=allow_unsafe):
+    if run_adapter_present is None:
+        run_adapter_present = is_adapter_artifact(safe_run_dir, allow_unsafe=allow_unsafe)
+    if run_adapter_present:
         return safe_run_dir
 
-    checkpoint_path = find_latest_valid_checkpoint(safe_run_dir, allow_unsafe=allow_unsafe)
+    if checkpoints is None:
+        checkpoint_path = find_latest_valid_checkpoint(safe_run_dir, allow_unsafe=allow_unsafe)
+    else:
+        checkpoint_path = checkpoints[-1] if checkpoints else None
     if checkpoint_path:
         return str(checkpoint_path)
 

@@ -13,12 +13,17 @@ never disagree with what training and export actually do.
 
 from __future__ import annotations
 
-import json
 import unicodedata
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ._run_status_validation import (
+    adapter_config_usable as _adapter_config_usable,
+    adapter_weights_usable as _adapter_weights_usable,
+    is_merged_model_dir,
+    trainer_state_usable as _trainer_state_usable,
+)
 from .path_safety import resolve_existing_path
 from .train.checkpoints import (
     _checkpoint_step,
@@ -35,8 +40,7 @@ PathLike = str | Path
 
 # A malformed adapter_config.json must degrade to "unknown base model", never
 # crash a status report. Permission/I/O failures propagate so the CLI can
-# exit 1. json.JSONDecodeError is a ValueError subclass; it is named here for
-# the reader's benefit. AttributeError covers a file that parses as valid JSON
+# exit 1. AttributeError covers a file that parses as valid JSON
 # but is not an object (`[]`, `"text"`, `3`), on which the checkpoint helpers'
 # `.get(...)` call would otherwise raise.
 _ADAPTER_CONFIG_ERRORS = (
@@ -44,7 +48,6 @@ _ADAPTER_CONFIG_ERRORS = (
     KeyError,
     TypeError,
     AttributeError,
-    json.JSONDecodeError,
 )
 
 
@@ -53,83 +56,6 @@ class RunStatusFormat(str, Enum):
 
     json = "json"
     table = "table"
-
-
-def _merged_config_is_object(candidate: Path) -> bool:
-    """True when config.json exists and parses as a JSON object."""
-    config_path = candidate / "config.json"
-    if not config_path.is_file():
-        return False
-    try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
-    except (ValueError, json.JSONDecodeError):
-        return False
-    return isinstance(payload, dict)
-
-
-def _is_root_model_shard_name(name: str) -> bool:
-    """True for a root-local *.safetensors shard that is not adapter weights."""
-    if not name or name != Path(name).name:
-        return False
-    if name == "adapter_model.safetensors":
-        return False
-    return name.endswith(".safetensors")
-
-
-def _shard_filenames(weight_map: dict[str, Any]) -> set[str] | None:
-    """Unique shard filenames, or None if any mapping is not a string."""
-    shards: set[str] = set()
-    for name in weight_map.values():
-        if not isinstance(name, str):
-            return None
-        shards.add(name)
-    return shards or None
-
-
-def _has_complete_sharded_weights(candidate: Path) -> bool:
-    """True when every shard named in model.safetensors.index.json exists."""
-    index_path = candidate / "model.safetensors.index.json"
-    if not index_path.is_file():
-        return False
-    try:
-        index = json.loads(index_path.read_text(encoding="utf-8"))
-    except (ValueError, json.JSONDecodeError):
-        return False
-    weight_map = index.get("weight_map") if isinstance(index, dict) else None
-    if not isinstance(weight_map, dict) or not weight_map:
-        return False
-    shards = _shard_filenames(weight_map)
-    if shards is None:
-        return False
-    return all(
-        _is_root_model_shard_name(name)
-        and (candidate / name).is_file()
-        and _safetensors_header_usable(candidate / name)
-        for name in shards
-    )
-
-
-def _has_complete_merged_weights(candidate: Path) -> bool:
-    """True for unsharded model.safetensors or a complete shard index set."""
-    unsharded = candidate / "model.safetensors"
-    if unsharded.is_file():
-        return _safetensors_header_usable(unsharded)
-    return _has_complete_sharded_weights(candidate)
-
-
-def is_merged_model_dir(path: PathLike) -> bool:
-    """Return True when `path` looks like an exported merged model directory.
-
-    A merged model is a full `save_pretrained` tree: a parseable object
-    `config.json` plus either a usable `model.safetensors` container or every
-    root-local `*.safetensors` shard named in `model.safetensors.index.json`.
-    Nested adapter weights or a leftover `adapter_model.safetensors` do not
-    count.
-    """
-    candidate = Path(path)
-    if not candidate.is_dir():
-        return False
-    return _merged_config_is_object(candidate) and _has_complete_merged_weights(candidate)
 
 
 def find_merged_model_dir(run_dir: Path, merged_dir: str | None = None) -> Path | None:
@@ -143,7 +69,7 @@ def find_merged_model_dir(run_dir: Path, merged_dir: str | None = None) -> Path 
     if merged_dir is not None:
         try:
             candidate = resolve_existing_path(merged_dir, must_be_dir=True)
-        except (FileNotFoundError, ValueError):
+        except (FileNotFoundError, NotADirectoryError, ValueError, RuntimeError):
             # Missing, not-a-dir, empty, or '..' traversal: no merge, not a crash.
             # Library callers get the same "absent" answer the CLI treats as
             # non-fatal for an explicit --merged-dir that does not resolve.
@@ -169,11 +95,22 @@ def _as_str(value: PathLike | None) -> str | None:
     return None if value is None else str(value)
 
 
-def _resolve_export(run_dir: Path, *, allow_unsafe: bool) -> tuple[str | None, str | None]:
+def _resolve_export(
+    run_dir: Path,
+    *,
+    allow_unsafe: bool,
+    checkpoints: list[Path],
+    final_adapter_present: bool,
+) -> tuple[str | None, str | None]:
     """Return the (source_path, source_kind) `export-final-model` would use."""
     try:
-        source = resolve_export_source(run_dir=str(run_dir), allow_unsafe=allow_unsafe)
-    except (ValueError, FileNotFoundError):
+        source = resolve_export_source(
+            run_dir=str(run_dir),
+            allow_unsafe=allow_unsafe,
+            checkpoints=checkpoints,
+            run_adapter_present=final_adapter_present,
+        )
+    except (FileNotFoundError, ValueError):
         return None, None
     kind = "final_adapter" if Path(source) == run_dir else "checkpoint"
     return source, kind
@@ -200,148 +137,6 @@ def _infer_base(adapter_path: PathLike | None) -> tuple[str | None, str | None]:
         base_revision = None
 
     return base_model, base_revision
-
-
-def _adapter_config_usable(adapter_path: PathLike | None) -> bool:
-    """True when adapter_config.json is a JSON object export can parse.
-
-    A valid object is not enough: the default `export-final-model --run-dir`
-    path calls `infer_base_model_from_adapter` and raises unless
-    `base_model_name_or_path` is a non-empty string. `run-status` has no
-    `--base-model` override, so that field must be present for ready.
-    """
-    if adapter_path is None:
-        return False
-    config_path = Path(adapter_path) / "adapter_config.json"
-    try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
-    except (ValueError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, dict):
-        return False
-    base = payload.get("base_model_name_or_path")
-    return isinstance(base, str) and bool(base)
-
-
-def _trainer_state_usable(checkpoint: PathLike | None) -> bool:
-    """True when trainer_state.json parses as a JSON object.
-
-    `list_valid_checkpoints` only requires the file to exist. Trainer.train
-    deserializes it, so a truncated or non-object state is not resume-ready.
-    """
-    if checkpoint is None:
-        return False
-    state_path = Path(checkpoint) / "trainer_state.json"
-    try:
-        payload = json.loads(state_path.read_text(encoding="utf-8"))
-    except (ValueError, json.JSONDecodeError):
-        return False
-    return isinstance(payload, dict)
-
-
-_SAFETENSORS_HEADER_MAX = 100 * 1024 * 1024
-
-
-def _safetensors_header_len_ok(header_len: int) -> bool:
-    """True when header length meets the minimum and stays within the read budget."""
-    if header_len < 8:
-        return False
-    return header_len <= _SAFETENSORS_HEADER_MAX
-
-
-def _is_nonbool_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
-def _safetensors_data_offsets_end(entry: dict[str, Any]) -> int | None:
-    """Return the validated data-region end offset."""
-    offsets = entry.get("data_offsets")
-    if not (isinstance(offsets, list) and len(offsets) == 2):
-        return None
-    start, end = offsets
-    if not _is_nonbool_int(start) or not _is_nonbool_int(end):
-        return None
-    if start < 0 or end < start:
-        return None
-    return end
-
-
-def _safetensors_shape_ok(entry: dict[str, Any]) -> bool:
-    """True when shape is a list of non-negative, non-boolean integers."""
-    shape = entry.get("shape")
-    return isinstance(shape, list) and all(_is_nonbool_int(dim) and dim >= 0 for dim in shape)
-
-
-def _safetensors_tensor_end(entry: Any) -> int | None:
-    """Return the data-region end offset, or None if tensor metadata is invalid."""
-    if not isinstance(entry, dict):
-        return None
-    end = _safetensors_data_offsets_end(entry)
-    if end is None:
-        return None
-    dtype = entry.get("dtype")
-    if not isinstance(dtype, str) or not dtype:
-        return None
-    if not _safetensors_shape_ok(entry):
-        return None
-    return end
-
-
-def _safetensors_data_region_ok(payload: dict[str, Any], file_size: int, header_len: int) -> bool:
-    """True when every tensor's offsets fit inside the file's data region."""
-    ends: list[int] = []
-    for key, entry in payload.items():
-        if key == "__metadata__":
-            continue
-        end = _safetensors_tensor_end(entry)
-        if end is None:
-            return False
-        ends.append(end)
-    return file_size >= 8 + header_len + max(ends, default=0)
-
-
-def _safetensors_header_usable(path: Path) -> bool:
-    """True when `path` is a parseable safetensors container with a full data region."""
-    try:
-        with path.open("rb") as handle:
-            size_bytes = handle.read(8)
-            if len(size_bytes) != 8:
-                return False
-            header_len = int.from_bytes(size_bytes, "little")
-            if not _safetensors_header_len_ok(header_len):
-                return False
-            header = handle.read(header_len)
-            if len(header) != header_len:
-                return False
-            payload = json.loads(header)
-            handle.seek(0, 2)
-            file_size = handle.tell()
-    except (ValueError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, dict):
-        return False
-    return _safetensors_data_region_ok(payload, file_size, header_len)
-
-
-def _adapter_weights_usable(adapter_path: PathLike | None, *, allow_unsafe: bool = False) -> bool:
-    """True when adapter weight files pass a lightweight validity check.
-
-    `is_adapter_artifact` only checks the filename. export-final-model then
-    fails when PEFT/safetensors opens an empty or truncated file.
-    """
-    if adapter_path is None:
-        return False
-    adapter_dir = Path(adapter_path)
-    safetensors_path = adapter_dir / "adapter_model.safetensors"
-    if safetensors_path.is_file() and _safetensors_header_usable(safetensors_path):
-        return True
-    if allow_unsafe:
-        legacy = adapter_dir / "adapter_model.bin"
-        try:
-            return legacy.is_file() and legacy.stat().st_size > 0
-        except OSError:
-            return False
-    return False
 
 
 def build_run_status(
@@ -372,7 +167,12 @@ def build_run_status(
     latest_step = None if latest_checkpoint is None else _checkpoint_step(latest_checkpoint)
 
     final_adapter_present = is_adapter_artifact(resolved_run_dir, allow_unsafe=allow_unsafe)
-    export_source, export_kind = _resolve_export(resolved_run_dir, allow_unsafe=allow_unsafe)
+    export_source, export_kind = _resolve_export(
+        resolved_run_dir,
+        allow_unsafe=allow_unsafe,
+        checkpoints=checkpoints,
+        final_adapter_present=final_adapter_present,
+    )
     base_model, base_revision = _infer_base(export_source or latest_checkpoint)
     # Conventional merged/<run_name> is relative to the logical adapters/
     # parent, which resolve() would lose if the run dir is a symlink.
