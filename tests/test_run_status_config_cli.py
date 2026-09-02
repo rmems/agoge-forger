@@ -203,6 +203,35 @@ def test_dot_run_dir_finds_conventional_merged_sibling(tmp_path, monkeypatch):
     assert report["merged_model"] == {"present": True, "path": str(merged.resolve())}
 
 
+def test_short_relative_run_dir_finds_conventional_merged_sibling(tmp_path, monkeypatch):
+    run_dir = _make_run_dir(tmp_path, name="demo_run")
+    _write_final_adapter(run_dir)
+    merged = _write_merged_model(tmp_path / "merged" / "demo_run")
+    monkeypatch.chdir(run_dir.parent)
+
+    report = build_run_status("demo_run")
+
+    assert report["merged_model"] == {"present": True, "path": str(merged.resolve())}
+
+
+@SKIP_IF_ROOT
+def test_inaccessible_explicit_merged_dir_exits_one(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    protected = tmp_path / "protected"
+    merged = _write_merged_model(protected / "merged")
+    original_mode = protected.stat().st_mode
+    os.chmod(protected, 0)
+    try:
+        result = runner.invoke(app, ["run-status", str(run_dir), "--merged-dir", str(merged)])
+        with pytest.raises(PermissionError):
+            build_run_status(str(run_dir), merged_dir=str(merged))
+    finally:
+        os.chmod(protected, original_mode)
+
+    _assert_clean_exit(result, 1)
+
+
 @SKIP_IF_ROOT
 @pytest.mark.parametrize(
     "target_name",

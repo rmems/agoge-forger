@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
+from ..config import normalize_revision
 from ..logging import logger
 from ..path_safety import resolve_existing_path
 
@@ -105,9 +106,7 @@ def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
 def infer_base_revision_from_adapter(adapter_path: PathLike) -> str | None:
     """Return the Hub revision persisted on a PEFT adapter, if any."""
     revision = _load_adapter_config(adapter_path).get("revision")
-    if revision is None or revision == "":
-        return None
-    return str(revision)
+    return normalize_revision(revision)
 
 
 def resolve_resume_checkpoint(run_dir: str, config) -> str | None:

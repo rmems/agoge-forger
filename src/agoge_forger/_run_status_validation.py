@@ -11,6 +11,7 @@ from transformers import CONFIG_MAPPING
 from ._run_status_artifact_index import artifact_index_usable
 from ._run_status_safetensors import has_complete_merged_weights, safetensors_usable
 from ._run_status_torch_archive import torch_zip_usable
+from .config import normalize_revision
 
 PathLike = str | Path
 
@@ -35,6 +36,15 @@ def _nonempty_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _revision_usable(payload: dict[str, Any]) -> bool:
+    if "revision" not in payload or payload["revision"] is None:
+        return True
+    try:
+        return normalize_revision(payload["revision"]) is not None
+    except TypeError:
+        return False
+
+
 def is_merged_model_dir(path: PathLike) -> bool:
     """True for a complete, indexed merged-model export."""
     candidate = Path(path)
@@ -54,7 +64,9 @@ def adapter_config_usable(adapter_path: PathLike | None) -> bool:
     if payload is None:
         return False
     base = payload.get("base_model_name_or_path")
-    return _nonempty_string(base) and payload.get("peft_type") == "LORA"
+    return bool(
+        _nonempty_string(base) and payload.get("peft_type") == "LORA" and _revision_usable(payload)
+    )
 
 
 def adapter_weights_usable(

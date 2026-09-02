@@ -430,6 +430,14 @@ def test_whitespace_base_model_is_not_export_ready(tmp_path):
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
 
+@pytest.mark.parametrize("revision", ["   ", [], {"branch": "main"}, True])
+def test_invalid_adapter_revision_is_not_export_ready(tmp_path, revision):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir, revision=revision)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
 def test_corrupt_safetensors_does_not_fall_back_to_legacy_bin(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     (run_dir / "adapter_model.safetensors").write_bytes(b"corrupt")

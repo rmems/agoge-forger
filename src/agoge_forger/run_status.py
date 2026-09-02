@@ -204,7 +204,9 @@ def build_run_status(
         final_adapter_present=final_adapter_present,
     )
     base_model, base_revision = _infer_base(export_source or latest_checkpoint)
-    logical_run_dir = Path(run_dir).expanduser()
+    # Anchor relative inputs to the caller's cwd without resolving named
+    # symlinks away from their documented adapters/<name> layout.
+    logical_run_dir = Path(run_dir).expanduser().absolute()
     merged_model = find_merged_model_dir(logical_run_dir, merged_dir)
     run_name = logical_run_dir.name or resolved_run_dir.name
     final_adapter = resolved_run_dir if final_adapter_present else None
