@@ -1,0 +1,57 @@
+tests/test_frozen_artifact_recovery.py
+  s_9d02230d0ab6ec::t_3f5ad9975b4433 115-139,396,413,418,435-436,452
+  s_9d02230d0ab6ec::t_bb36ae5da44b0b 432-434
+  s_9d02230d0ab6ec::t_624f0b25d944ab 374-375,377,380,382,386
+  s_9d02230d0ab6ec::t_b280dc60be89fb 10,416-417,420,422,424-425,427,431,437-451,453-464
+  s_9d02230d0ab6ec::t_5cf3ad49b796dd 423,429
+src/agoge_forger/train/recover.py
+  s_9d02230d0ab6ec::t_bd53327cad3ebe 12,17-22,47-79,81-83,87-89,91,96,130-131,134,136-138,140,143,147,149,153
+  s_9d02230d0ab6ec::t_624f0b25d944ab 80,133,151
+  s_9d02230d0ab6ec::t_74601077f7ebe3 23
+src/agoge_forger/train/trainer.py
+  s_9d02230d0ab6ec::t_cba75c9fb9ea86 19-23,29-34,154-199
+  s_9d02230d0ab6ec::t_74601077f7ebe3 35,38,40
+  s_9d02230d0ab6ec::t_b7d16a82e34587 10-13,305
+src/agoge_forger/_atomic_directory.py
+  s_9d02230d0ab6ec::t_c530e2f6303681 26-45
+  s_9d02230d0ab6ec::t_76030bdb708e35 13,111-127,139-149
+src/agoge_forger/artifacts/safetensors_io.py
+  s_9d02230d0ab6ec::t_280562a8124f2a 5
+  s_9d02230d0ab6ec::t_0fbebc59005660 121,128
+src/agoge_forger/eval/_artifact_validation.py
+  s_9d02230d0ab6ec::t_0fbebc59005660 35,81-99
+  s_9d02230d0ab6ec::t_4782a927deb371 9
+src/agoge_forger/train/frozen_publication.py
+  s_9d02230d0ab6ec::t_0fbebc59005660 1-29,31-99
+tests/test_frozen_publication.py
+  s_9d02230d0ab6ec::t_bb9208e7cf1928 1-26
+docs/contracts/artifact_index.md
+  s_9d02230d0ab6ec::t_7ec51f8f038dc9 100-101
+tests/test_trainer_revision.py
+  s_9d02230d0ab6ec::t_b280dc60be89fb 15,17-21,253,255,259,261-303,305-326
+  s_9d02230d0ab6ec::t_f5804b348dc2c2 24-26,209-219,247-252,254,256-258,260,304
+  s_9d02230d0ab6ec::t_454f756491463b 478-499
+tests/test_atomic_directory.py
+  s_9d02230d0ab6ec::t_bb9208e7cf1928 78-83
+  s_9d02230d0ab6ec::t_3010b18a345aa3 64-77
+docs/artifacts_and_safetensors.md
+  s_9d02230d0ab6ec::t_7ec51f8f038dc9 36-43
+src/agoge_forger/eval/__init__.py
+  s_9d02230d0ab6ec::t_0fbebc59005660 7,18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8b301469f3ffafc165cc2ddb56134f785c186851",
+  "prompts": {},
+  "sessions": {
+    "s_9d02230d0ab6ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05c12-f51c-7140-a693-33864d1c4551",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
