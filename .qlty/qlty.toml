@@ -58,7 +58,7 @@ name = "zizmor"
 # excluding only this rule from test modules.
 [[triage]]
 match.rules = ["bandit:B101"]
-match.file_patterns = ["tests/**"]
+match.file_patterns = ["tests/**", "**/test_*.*"]
 set.ignored = true
 
 # Qlty Cloud attached Lob findings to blank/setup lines in synthetic filesystem
@@ -66,5 +66,5 @@ set.ignored = true
 # TruffleHog scan, so ignore only this detector and only in tests.
 [[triage]]
 match.rules = ["trufflehog:Lob"]
-match.file_patterns = ["tests/**"]
+match.file_patterns = ["tests/**", "**/test_*.*"]
 set.ignored = true
