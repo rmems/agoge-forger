@@ -60,3 +60,11 @@ name = "zizmor"
 match.rules = ["bandit:B101"]
 match.file_patterns = ["tests/**"]
 set.ignored = true
+
+# Qlty Cloud attached Lob findings to blank/setup lines in synthetic filesystem
+# tests. The same exact diff passes the repository secret hook and local
+# TruffleHog scan, so ignore only this detector and only in tests.
+[[triage]]
+match.rules = ["trufflehog:Lob"]
+match.file_patterns = ["tests/**"]
+set.ignored = true

@@ -204,65 +204,29 @@ def test_dot_run_dir_finds_conventional_merged_sibling(tmp_path, monkeypatch):
 
 
 @SKIP_IF_ROOT
-def test_merged_config_permission_error_exits_one(runner, tmp_path):
+@pytest.mark.parametrize(
+    "target_name",
+    ["merged_config", "adapter_config", "trainer_state", "safetensors"],
+)
+def test_artifact_permission_error_exits_one(runner, tmp_path, target_name):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
+    checkpoint = _write_checkpoint(run_dir, 50)
     merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
-    config_path = merged / "config.json"
-    _deny_read_access_or_skip(config_path)
-    try:
-        result = runner.invoke(app, ["run-status", str(run_dir)])
-    finally:
-        os.chmod(config_path, 0o644)
-
-    assert result.exit_code == 1
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-
-
-@SKIP_IF_ROOT
-def test_adapter_config_permission_error_exits_one(runner, tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    config_path = run_dir / "adapter_config.json"
-    _deny_read_access_or_skip(config_path)
-    try:
-        result = runner.invoke(app, ["run-status", str(run_dir)])
-    finally:
-        os.chmod(config_path, 0o644)
-
-    assert result.exit_code == 1
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-
-
-@SKIP_IF_ROOT
-def test_trainer_state_permission_error_exits_one(runner, tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    checkpoint_dir = _write_checkpoint(run_dir, 50)
-    state_path = checkpoint_dir / "trainer_state.json"
-    _deny_read_access_or_skip(state_path)
+    targets = {
+        "merged_config": merged / "config.json",
+        "adapter_config": run_dir / "adapter_config.json",
+        "trainer_state": checkpoint / "trainer_state.json",
+        "safetensors": run_dir / "adapter_model.safetensors",
+    }
+    target = targets[target_name]
+    _deny_read_access_or_skip(target)
     try:
         result = runner.invoke(app, ["run-status", str(run_dir)])
         with pytest.raises(OSError):
             build_run_status(str(run_dir))
     finally:
-        os.chmod(state_path, 0o644)
-
-    assert result.exit_code == 1
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-
-
-@SKIP_IF_ROOT
-def test_safetensors_permission_error_exits_one(runner, tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    weights = run_dir / "adapter_model.safetensors"
-    _deny_read_access_or_skip(weights)
-    try:
-        result = runner.invoke(app, ["run-status", str(run_dir)])
-        with pytest.raises(OSError):
-            build_run_status(str(run_dir))
-    finally:
-        os.chmod(weights, 0o644)
+        os.chmod(target, 0o644)
 
     assert result.exit_code == 1
     assert result.exception is None or isinstance(result.exception, SystemExit)

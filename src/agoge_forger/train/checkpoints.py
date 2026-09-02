@@ -138,8 +138,6 @@ def resolve_export_source(
     adapter_path: str | None = None,
     *,
     allow_unsafe: bool = False,
-    checkpoints: Sequence[Path] | None = None,
-    run_adapter_present: bool | None = None,
 ) -> str:
     if adapter_path:
         safe_adapter_path = str(resolve_existing_path(adapter_path, must_be_dir=True))
@@ -151,16 +149,27 @@ def resolve_export_source(
         raise ValueError("Either run_dir or adapter_path must be provided.")
 
     safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True))
-    if run_adapter_present is None:
-        run_adapter_present = is_adapter_artifact(safe_run_dir, allow_unsafe=allow_unsafe)
+    run_adapter_present = is_adapter_artifact(safe_run_dir, allow_unsafe=allow_unsafe)
+    checkpoints: Sequence[Path] = ()
+    if not run_adapter_present:
+        checkpoints = list_valid_checkpoints(safe_run_dir, allow_unsafe=allow_unsafe)
+    return resolve_export_source_from_snapshot(
+        safe_run_dir,
+        checkpoints,
+        run_adapter_present=run_adapter_present,
+    )
+
+
+def resolve_export_source_from_snapshot(
+    run_dir: str,
+    checkpoints: Sequence[Path],
+    *,
+    run_adapter_present: bool,
+) -> str:
+    """Apply export precedence to one already-collected run snapshot."""
     if run_adapter_present:
-        return safe_run_dir
+        return run_dir
+    if checkpoints:
+        return str(checkpoints[-1])
 
-    if checkpoints is None:
-        checkpoint_path = find_latest_valid_checkpoint(safe_run_dir, allow_unsafe=allow_unsafe)
-    else:
-        checkpoint_path = checkpoints[-1] if checkpoints else None
-    if checkpoint_path:
-        return str(checkpoint_path)
-
-    raise ValueError(f"No exportable adapter artifact found under {safe_run_dir}")
+    raise ValueError(f"No exportable adapter artifact found under {run_dir}")

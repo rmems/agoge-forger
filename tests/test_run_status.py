@@ -258,15 +258,15 @@ def test_export_source_uses_the_same_checkpoint_snapshot(tmp_path, monkeypatch):
     run_dir = _make_run_dir(tmp_path)
     first = _write_checkpoint(run_dir, 50)
     real_resolve_export_source = __import__(
-        "agoge_forger.run_status", fromlist=["resolve_export_source"]
-    ).resolve_export_source
+        "agoge_forger.run_status", fromlist=["resolve_export_source_from_snapshot"]
+    ).resolve_export_source_from_snapshot
 
     def create_checkpoint_then_resolve(*args, **kwargs):
         _write_checkpoint(run_dir, 100)
         return real_resolve_export_source(*args, **kwargs)
 
     monkeypatch.setattr(
-        "agoge_forger.run_status.resolve_export_source",
+        "agoge_forger.run_status.resolve_export_source_from_snapshot",
         create_checkpoint_then_resolve,
     )
 

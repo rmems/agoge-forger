@@ -37,7 +37,7 @@ from .train.checkpoints import (
     infer_base_revision_from_adapter,
     is_adapter_artifact,
     list_valid_checkpoints,
-    resolve_export_source,
+    resolve_export_source_from_snapshot,
 )
 
 SCHEMA_VERSION = 1
@@ -104,15 +104,13 @@ def _as_str(value: PathLike | None) -> str | None:
 def _resolve_export(
     run_dir: Path,
     *,
-    allow_unsafe: bool,
     checkpoints: list[Path],
     final_adapter_present: bool,
 ) -> tuple[str | None, str | None]:
     """Return the (source_path, source_kind) `export-final-model` would use."""
     try:
-        source = resolve_export_source(
-            run_dir=str(run_dir),
-            allow_unsafe=allow_unsafe,
+        source = resolve_export_source_from_snapshot(
+            str(run_dir),
             checkpoints=checkpoints,
             run_adapter_present=final_adapter_present,
         )
@@ -175,7 +173,6 @@ def build_run_status(
     final_adapter_present = is_adapter_artifact(resolved_run_dir, allow_unsafe=allow_unsafe)
     export_source, export_kind = _resolve_export(
         resolved_run_dir,
-        allow_unsafe=allow_unsafe,
         checkpoints=checkpoints,
         final_adapter_present=final_adapter_present,
     )

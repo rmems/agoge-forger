@@ -48,27 +48,36 @@ def _shard_filenames(weight_map: dict[str, Any]) -> set[str] | None:
     return shards or None
 
 
-def _has_complete_sharded_weights(candidate: Path) -> bool:
+def _load_shard_weight_map(candidate: Path) -> dict[str, Any] | None:
     index_path = candidate / "model.safetensors.index.json"
     if not index_path.is_file():
-        return False
+        return None
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
     except ValueError:
-        return False
+        return None
     weight_map = index.get("weight_map") if isinstance(index, dict) else None
     if not isinstance(weight_map, dict) or not weight_map:
+        return None
+    return weight_map
+
+
+def _shards_usable(candidate: Path, shards: set[str]) -> bool:
+    for name in shards:
+        if not _is_root_model_shard_name(name):
+            return False
+        shard = candidate / name
+        if not shard.is_file() or not _safetensors_usable(shard):
+            return False
+    return True
+
+
+def _has_complete_sharded_weights(candidate: Path) -> bool:
+    weight_map = _load_shard_weight_map(candidate)
+    if weight_map is None:
         return False
     shards = _shard_filenames(weight_map)
-    return bool(
-        shards
-        and all(
-            _is_root_model_shard_name(name)
-            and (candidate / name).is_file()
-            and _safetensors_usable(candidate / name)
-            for name in shards
-        )
-    )
+    return shards is not None and _shards_usable(candidate, shards)
 
 
 def _has_complete_merged_weights(candidate: Path) -> bool:
