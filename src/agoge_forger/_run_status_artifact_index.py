@@ -31,7 +31,11 @@ def _artifact_metadata(item: Any) -> tuple[int, str] | None:
     if not isinstance(item, dict):
         return None
     size, digest = item.get("size_bytes"), item.get("sha256")
-    if not isinstance(size, int) or isinstance(size, bool) or not isinstance(digest, str):
+    if not isinstance(size, int):
+        return None
+    if isinstance(size, bool):
+        return None
+    if not isinstance(digest, str):
         return None
     return size, digest
 
