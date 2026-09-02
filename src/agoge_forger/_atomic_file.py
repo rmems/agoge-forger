@@ -20,7 +20,7 @@ def publish_bytes_noreplace(
     writer: PayloadWriter,
 ) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    require_rename_noreplace_support()
+    require_rename_noreplace_support(destination.parent)
     with tempfile.TemporaryDirectory(
         prefix=f".{destination.name}.",
         dir=destination.parent,

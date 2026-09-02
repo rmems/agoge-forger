@@ -9,7 +9,12 @@ from huggingface_hub.utils import HFValidationError, validate_repo_id
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer
 
-from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
+from .._atomic_directory import require_rename_noreplace_support
+from ..artifacts.safetensors_io import (
+    assert_no_unsafe_weight_bins,
+    write_artifact_index,
+    write_artifact_index_noreplace,
+)
 from ..datasets import load_jsonl_dataset
 from ..eval import ArtifactProducerProvenance
 from ..logging import logger
@@ -121,14 +126,13 @@ def _finalize_training_run(config, trainer, finalization: _TrainingFinalization)
     if not config.runtime.allow_unsafe_serialization:
         assert_no_unsafe_weight_bins(out_dir)
 
-    index_path = write_artifact_index(
-        out_dir,
-        producer_provenance=(
-            finalization.producer_provenance.model_dump(mode="json")
-            if finalization.producer_provenance is not None
-            else None
-        ),
-    )
+    if finalization.producer_provenance is None:
+        index_path = write_artifact_index(out_dir)
+    else:
+        index_path = write_artifact_index_noreplace(
+            out_dir,
+            producer_provenance=finalization.producer_provenance.model_dump(mode="json"),
+        )
     logger.info(f"Artifact index written to {index_path}")
 
     vram_used = torch.cuda.max_memory_allocated() / BYTES_PER_GB
@@ -207,19 +211,32 @@ def run_training(config):
 
 
 def _bind_frozen_training_input(config) -> FrozenSplitBinding | None:
-    if config.split_manifest_path is None:
+    if not _validate_frozen_source_config(config):
         return None
+    _reject_frozen_resume(config)
+    _require_empty_frozen_run_directory(config)
+    return bind_frozen_split(config.split_manifest_path, "train")
+
+
+def _bind_frozen_source(config) -> FrozenSplitBinding | None:
+    if not _validate_frozen_source_config(config):
+        return None
+    return bind_frozen_split(config.split_manifest_path, "train")
+
+
+def _validate_frozen_source_config(config) -> bool:
+    if config.split_manifest_path is None:
+        return False
     if config.split_name != "train":
         raise ValueError("frozen training requires split_name: train")
     if config.dataset_text_field != "text":
         raise ValueError("frozen training requires dataset_text_field: text")
     if config.trust_remote_code:
         raise ValueError("frozen training requires trust_remote_code: false")
+    _require_frozen_safe_serialization(config)
     _reject_local_frozen_base(config.model_id)
     _require_frozen_revision(config.revision)
-    _reject_frozen_resume(config)
-    _require_empty_frozen_run_directory(config)
-    return bind_frozen_split(config.split_manifest_path, "train")
+    return True
 
 
 def _reject_local_frozen_base(model_id: str) -> None:
@@ -231,6 +248,13 @@ def _reject_local_frozen_base(model_id: str) -> None:
         raise ValueError(
             "evaluation eligible frozen training requires a Hub model repository"
         ) from exc
+
+
+def _require_frozen_safe_serialization(config) -> None:
+    if not config.runtime.save_safetensors:
+        raise ValueError(
+            "evaluation-eligible frozen training requires runtime.save_safetensors: true"
+        )
 
 
 def _looks_like_local_model(model_id: str) -> bool:
@@ -261,11 +285,12 @@ def _reject_frozen_resume(config) -> None:
 
 def _require_empty_frozen_run_directory(config) -> None:
     run_dir = Path(config.output_dir).expanduser() / config.run_name
-    if not os.path.lexists(run_dir):
-        return
-    if _is_empty_run_directory(run_dir):
-        return
-    raise FileExistsError(f"frozen training requires an empty run directory: {run_dir}")
+    if os.path.lexists(run_dir):
+        if not _is_empty_run_directory(run_dir):
+            raise FileExistsError(f"frozen training requires an empty run directory: {run_dir}")
+    else:
+        run_dir.mkdir(parents=True)
+    require_rename_noreplace_support(run_dir)
 
 
 def _is_empty_run_directory(run_dir: Path) -> bool:

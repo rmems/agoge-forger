@@ -132,8 +132,9 @@ artifact. Contract-relative paths use POSIX separators for relocation between
 Windows and Unix systems, and absolute or drive-prefixed references are
 rejected during schema validation.
 
-Evaluation-eligible frozen training also requires `trust_remote_code: false`;
-legacy mutable `dataset_path` training retains the existing explicit opt-in.
+Evaluation-eligible frozen training also requires `trust_remote_code: false` and
+`runtime.save_safetensors: true`; legacy mutable `dataset_path` training retains
+the existing explicit unsafe-serialization opt-in.
 
 This foundation does not load a model, run inference, choose a checkpoint,
 score generations, or create claim-bearing results. Those #100 capabilities

@@ -26,6 +26,7 @@ from .serving.smoke import run_vllm_smoke
 from .train.checkpoints import infer_base_model_from_adapter, is_adapter_artifact
 from .train.lora import train_lora as _train_lora
 from .train.qlora import train_qlora as _train_qlora
+from .train.recover import recover_frozen_artifact_index as _recover_frozen_artifact_index
 
 app = typer.Typer(help="Agoge Forger CLI")
 _IMMUTABLE_REVISION_HELP = "Immutable Hugging Face revision"
@@ -193,6 +194,15 @@ def export_final_model(
         max_shard_size=max_shard_size,
         trust_remote_code=trust_remote_code,
     )
+
+
+@app.command()
+def recover_frozen_artifact_index(
+    config: str = typer.Option(..., "--config", help="Path to frozen training YAML config"),
+):
+    """Recover the immutable index marker for an otherwise complete frozen run."""
+    recovered = _recover_frozen_artifact_index(load_config(config))
+    logger.info(f"Recovered frozen artifact index at {recovered}")
 
 
 @app.command()

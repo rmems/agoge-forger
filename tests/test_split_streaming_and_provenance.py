@@ -91,6 +91,28 @@ class _NestedGlobalStateTokenizer:
         return encode()
 
 
+class _DefaultDependentTokenizer:
+    name_or_path = TOKENIZER_ID
+    _commit_hash = TOKENIZER_REVISION
+
+    def __call__(self, text: str, prefix: int = 1):
+        return {"input_ids": [prefix, *text.encode()]}
+
+
+class _KeywordDefaultDependentTokenizer:
+    name_or_path = TOKENIZER_ID
+    _commit_hash = TOKENIZER_REVISION
+
+    def __call__(self, text: str, *, suffix: int = 2):
+        return {"input_ids": [*text.encode(), suffix]}
+
+
+class _StaticDefaultDependentTokenizer(_Tokenizer):
+    @staticmethod
+    def mode(fallback: str = "bytes"):
+        return fallback
+
+
 class _FakeBackend:
     def to_str(self):
         return '{"model":"forged"}'
@@ -251,6 +273,19 @@ def test_python_tokenizer_rejects_module_global_behavior():
 def test_python_tokenizer_rejects_nested_module_global_behavior():
     with pytest.raises(ValueError, match="module globals"):
         TokenizerBinding(implementation=_NestedGlobalStateTokenizer())
+
+
+@pytest.mark.parametrize(
+    "tokenizer_type",
+    [
+        _DefaultDependentTokenizer,
+        _KeywordDefaultDependentTokenizer,
+        _StaticDefaultDependentTokenizer,
+    ],
+)
+def test_python_tokenizer_rejects_default_dependent_behavior(tokenizer_type):
+    with pytest.raises(ValueError, match="must not depend on defaults"):
+        TokenizerBinding(implementation=tokenizer_type())
 
 
 def test_fast_shaped_non_hugging_face_tokenizer_cannot_hide_instance_state():

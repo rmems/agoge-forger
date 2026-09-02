@@ -2,7 +2,12 @@ import os
 
 import pytest
 
-from agoge_forger.artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
+from agoge_forger.artifacts import safetensors_io
+from agoge_forger.artifacts.safetensors_io import (
+    assert_no_unsafe_weight_bins,
+    write_artifact_index,
+    write_artifact_index_noreplace,
+)
 
 
 def test_artifact_index_hashes_file(tmp_path):
@@ -62,6 +67,27 @@ def test_artifact_index_writes_producer_provenance(tmp_path):
 
     with open(index_path) as handle:
         assert json.load(handle)["producer_provenance"] == provenance
+
+
+def test_artifact_index_cleans_partial_staging_after_write_failure(tmp_path, monkeypatch):
+    out_dir = tmp_path / "test_out"
+    out_dir.mkdir()
+    (out_dir / "model.safetensors").write_bytes(b"weights")
+
+    def fail_after_partial_write(path, payload):
+        path.write_bytes(payload[:8])
+        raise OSError("disk full")
+
+    monkeypatch.setattr(safetensors_io, "write_fsynced_bytes", fail_after_partial_write)
+
+    with pytest.raises(OSError, match="disk full"):
+        write_artifact_index_noreplace(
+            str(out_dir),
+            producer_provenance={"revision": "a" * 40},
+        )
+
+    assert not (out_dir / "artifact_index.json").exists()
+    assert sorted(path.name for path in out_dir.iterdir()) == ["model.safetensors"]
 
 
 def test_no_bin_outputs_when_safe_serialization_required(tmp_path):

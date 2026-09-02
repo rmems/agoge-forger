@@ -93,8 +93,8 @@ def merge_adapter(
     if revision is None and infer_revision:
         revision = infer_base_revision_from_adapter(adapter_path)
 
+    safe_out_dir = _require_new_output_directory(out_dir)
     with _merge_source(adapter_path, base_model_id, revision, allow_unsafe) as source:
-        safe_out_dir = _require_new_output_directory(out_dir)
         effective_revision = (
             source.provenance.revision if source.provenance is not None else revision
         )
@@ -180,9 +180,9 @@ def _save_merged_output(
 
 
 def _require_new_output_directory(out_dir: str) -> Path:
-    require_rename_noreplace_support()
     safe_out_dir = resolve_output_path(out_dir)
     safe_out_dir.parent.mkdir(parents=True, exist_ok=True)
+    require_rename_noreplace_support(safe_out_dir.parent)
     if os.path.lexists(safe_out_dir):
         raise FileExistsError(
             f"merged-model output directory must not already exist: {safe_out_dir}"

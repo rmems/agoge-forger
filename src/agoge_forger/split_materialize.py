@@ -9,7 +9,9 @@ import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypedDict, Unpack
+from typing import Any, TypedDict
+
+from typing_extensions import Unpack
 
 from ._atomic_directory import rename_noreplace, require_rename_noreplace_support
 from ._source_snapshot import copy_source_snapshot, nearest_existing_output_ancestor
@@ -440,10 +442,11 @@ def materialize_split(
             "exact-content hashing"
         )
     _validate_materialization_paths(source, destination)
-    require_rename_noreplace_support()
+    staging_parent = nearest_existing_output_ancestor(destination)
+    require_rename_noreplace_support(staging_parent)
     with tempfile.TemporaryDirectory(
         prefix=".agoge-split-staging-",
-        dir=nearest_existing_output_ancestor(destination),
+        dir=staging_parent,
     ) as staging_dir:
         staging = Path(staging_dir)
         source_snapshot = staging / "source.jsonl"

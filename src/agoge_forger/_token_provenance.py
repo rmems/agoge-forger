@@ -257,8 +257,7 @@ def _runtime_function_code(
 ) -> Any:
     if require_independent:
         _require_bound_class_closure(function, owner)
-        if function.__defaults__ or function.__kwdefaults__:
-            raise ValueError(f"{_TOKENIZER_IMPLEMENTATION_LABEL} must not depend on defaults")
+        _require_no_function_defaults(function, _TOKENIZER_IMPLEMENTATION_LABEL)
         _require_no_external_dependencies(
             function,
             _TOKENIZER_IMPLEMENTATION_LABEL,
@@ -398,8 +397,14 @@ def _property_code(value: property) -> dict[str, Any]:
 def _pure_function_code(function: Callable[..., Any], label: str) -> dict[str, Any]:
     if set(function.__code__.co_freevars) - {"__class__"}:
         raise ValueError(f"{label} must not depend on closure state")
+    _require_no_function_defaults(function, label)
     _require_no_external_dependencies(function, label)
     return _code_payload(function.__code__)
+
+
+def _require_no_function_defaults(function: Callable[..., Any], label: str) -> None:
+    if function.__defaults__ or function.__kwdefaults__:
+        raise ValueError(f"{label} must not depend on defaults")
 
 
 def _class_state(value: type[Any]) -> dict[str, Any]:
@@ -463,8 +468,7 @@ def _require_serializer_independence(serializer: Serializer) -> None:
     code = serializer.__code__
     if code.co_freevars:
         raise ValueError("serializer implementation must not depend on closure state")
-    if serializer.__defaults__ or serializer.__kwdefaults__:
-        raise ValueError("serializer implementation must not depend on mutable defaults")
+    _require_no_function_defaults(serializer, "serializer implementation")
     _require_no_external_dependencies(serializer, "serializer implementation")
 
 

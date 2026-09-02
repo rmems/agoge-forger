@@ -60,6 +60,30 @@ def test_merge_adapter_rejects_save_safetensors_false():
         )
 
 
+def test_merge_adapter_probes_publication_before_adapter_snapshot(tmp_path, monkeypatch):
+    snapshot = MagicMock()
+    monkeypatch.setattr("agoge_forger.export.merge_adapter._merge_source", snapshot)
+
+    def unsupported(staging_parent):
+        raise OSError("atomic publication unsupported")
+
+    monkeypatch.setattr(
+        "agoge_forger.export.merge_adapter.require_rename_noreplace_support",
+        unsupported,
+    )
+
+    with pytest.raises(OSError, match="atomic publication unsupported"):
+        merge_adapter(
+            "example/base",
+            str(tmp_path / "adapter"),
+            str(tmp_path / "merged"),
+            allow_unsafe=True,
+            infer_revision=False,
+        )
+
+    snapshot.assert_not_called()
+
+
 def _assert_existing_merge_output_rejected(tmp_path, monkeypatch, output):
     adapter = tmp_path / "adapter"
     adapter.mkdir()

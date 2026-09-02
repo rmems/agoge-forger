@@ -4,6 +4,7 @@ These tests mock the trainer's Hub/GPU/dataset side effects and raise out of
 ``load_base_model`` so nothing downloads weights or constructs SFTTrainer.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -35,6 +36,8 @@ def _frozen_config(manifest_path, **updates) -> ExperimentConfig:
         "revision": PINNED_REVISION,
         "split_manifest_path": str(manifest_path),
         "split_name": "train",
+        "output_dir": str(manifest_path.parent / "outputs"),
+        "run_name": "frozen-run",
     }
     values.update(updates)
     return ExperimentConfig(**values)
@@ -196,3 +199,76 @@ def test_frozen_training_rejects_populated_run_directory_before_binding(tmp_path
 
     bind.assert_not_called()
     assert (checkpoint / "adapter_model.safetensors").read_bytes() == b"stale"
+
+
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        {"save_safetensors": False, "allow_unsafe_serialization": False},
+        {"save_safetensors": False, "allow_unsafe_serialization": True},
+    ],
+)
+def test_frozen_training_rejects_unsafe_serialization_before_binding(
+    tmp_path, monkeypatch, runtime
+):
+    manifest_path = tmp_path / "split_manifest.json"
+    manifest_path.write_text("{}\n")
+    bind = MagicMock()
+    monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", bind)
+
+    with pytest.raises(ValueError, match="runtime.save_safetensors: true"):
+        _bind_frozen_training_input(_frozen_config(manifest_path, runtime=runtime))
+
+    bind.assert_not_called()
+
+
+def test_run_training_rejects_unsafe_frozen_config_before_model_loading(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "split_manifest.json"
+    manifest_path.write_text("{}\n")
+    config = _frozen_config(
+        manifest_path,
+        runtime={"save_safetensors": False, "allow_unsafe_serialization": True},
+    )
+    load_model = MagicMock()
+    bind = MagicMock()
+    _patch_preflight(monkeypatch)
+    monkeypatch.setattr("agoge_forger.train.trainer.load_base_model", load_model)
+    monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", bind)
+
+    with pytest.raises(ValueError, match="runtime.save_safetensors: true"):
+        run_training(config)
+
+    bind.assert_not_called()
+    load_model.assert_not_called()
+    assert not (Path(config.output_dir) / config.run_name).exists()
+
+
+def test_legacy_training_retains_unsafe_serialization_opt_in(tmp_path):
+    config = ExperimentConfig(
+        model_id="org/model",
+        dataset_path=str(tmp_path / "mutable.jsonl"),
+        runtime={"save_safetensors": False, "allow_unsafe_serialization": True},
+    )
+
+    assert _bind_frozen_training_input(config) is None
+
+
+def test_frozen_publication_probe_fails_before_binding_or_model_loading(tmp_path, monkeypatch):
+    manifest_path = tmp_path / "split_manifest.json"
+    manifest_path.write_text("{}\n")
+    config = _frozen_config(manifest_path)
+    bind = MagicMock()
+    load_model = MagicMock()
+    _patch_preflight(monkeypatch)
+    monkeypatch.setattr("agoge_forger.train.trainer.bind_frozen_split", bind)
+    monkeypatch.setattr("agoge_forger.train.trainer.load_base_model", load_model)
+    monkeypatch.setattr(
+        "agoge_forger.train.trainer.require_rename_noreplace_support",
+        MagicMock(side_effect=OSError("atomic publication unsupported")),
+    )
+
+    with pytest.raises(OSError, match="atomic publication unsupported"):
+        run_training(config)
+
+    bind.assert_not_called()
+    load_model.assert_not_called()

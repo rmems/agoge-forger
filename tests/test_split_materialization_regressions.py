@@ -472,7 +472,8 @@ def test_materialization_rejects_unsupported_atomic_publication_before_staging(
     _write_rows(source, _text_rows())
     copy_source = pytest.fail
 
-    def unsupported():
+    def unsupported(staging_parent):
+        assert staging_parent == tmp_path
         raise OSError("atomic publication unsupported")
 
     monkeypatch.setattr(split_materialize, "require_rename_noreplace_support", unsupported)

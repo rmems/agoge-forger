@@ -2,8 +2,10 @@ import glob
 import hashlib
 import json
 import os
+from pathlib import Path
 from typing import Any
 
+from .._atomic_file import publish_bytes_noreplace, write_fsynced_bytes
 from ..logging import logger
 
 try:
@@ -82,6 +84,40 @@ def write_artifact_index(
     producer_provenance: dict[str, object] | None = None,
     recorded_output_dir: str | None = None,
 ) -> str:
+    index_path, payload = _artifact_index_payload(
+        output_dir,
+        producer_provenance=producer_provenance,
+        recorded_output_dir=recorded_output_dir,
+    )
+    with open(index_path, "wb") as handle:
+        handle.write(payload)
+    return index_path
+
+
+def write_artifact_index_noreplace(
+    output_dir: str,
+    *,
+    producer_provenance: dict[str, object],
+) -> str:
+    index_path, payload = _artifact_index_payload(
+        output_dir,
+        producer_provenance=producer_provenance,
+    )
+    publish_bytes_noreplace(
+        Path(index_path),
+        payload,
+        refusal="refusing to overwrite frozen artifact index",
+        writer=write_fsynced_bytes,
+    )
+    return index_path
+
+
+def _artifact_index_payload(
+    output_dir: str,
+    *,
+    producer_provenance: dict[str, object] | None,
+    recorded_output_dir: str | None = None,
+) -> tuple[str, bytes]:
     index_path = os.path.join(output_dir, "artifact_index.json")
     resolved_index_path = os.path.abspath(index_path)
     artifacts = []
@@ -103,7 +139,4 @@ def write_artifact_index(
     if producer_provenance is not None:
         index["producer_provenance"] = producer_provenance
 
-    with open(index_path, "w") as f:
-        json.dump(index, f, indent=2)
-
-    return index_path
+    return index_path, json.dumps(index, indent=2).encode("utf-8")

@@ -12,3 +12,20 @@ Every training and merge run generates an `artifact_index.json`. This file conta
 
 ## Blocking Unsafe Binaries
 By default, the framework will raise an error if any `pytorch_model.bin` or `adapter_model.bin` is created. You must explicitly configure `allow_unsafe_serialization: true` in your run config if an older model architecture strictly requires legacy saving formats.
+
+That legacy opt-in does not make pickle-based output evaluation eligible. Frozen
+training always requires `runtime.save_safetensors: true`.
+
+## Recovering a Frozen Artifact Index
+
+If a completed frozen run saved its root adapter and tokenizer but final
+`artifact_index.json` publication failed, recover only that final commit marker:
+
+```bash
+agoge recover-frozen-artifact-index --config configs/the-original-frozen-run.yaml
+```
+
+Recovery rebinds the exact frozen split, verifies the pinned base identity and
+safetensors-only root adapter, and performs no model loading, checkpoint resume,
+or retraining. A malformed old marker is preserved in a sibling quarantine file.
+The command cannot repair incomplete model or tokenizer serialization.
