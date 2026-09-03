@@ -1,0 +1,59 @@
+src/agoge_forger/_run_status_architecture.py
+  s_9d02230d0ab6ec::t_9d403f1c40bf8d 1-88
+tests/test_run_status.py
+  s_9d02230d0ab6ec::t_dfb9528917fd28 166
+  s_9d02230d0ab6ec::t_c88003fde6d16a 406-407,420,772
+  s_9d02230d0ab6ec::t_050b1fce19f681 102-103,145-158,216-221,235,268,274
+  s_9d02230d0ab6ec::t_2cb5c7531f5968 744-771,773-779,781-788,790-795
+  s_9d02230d0ab6ec::t_55670bbfc429c2 780,789
+  s_9d02230d0ab6ec::t_75c31bc3a75801 76-90,284-293
+src/agoge_forger/_run_status_trainer_state.py
+  s_9d02230d0ab6ec::t_17be468240b374 161,235-236
+  s_9d02230d0ab6ec::t_683ff3db7b7fb5 162,205-224,234,237,241-244
+tests/test_run_status_artifacts.py
+  s_9d02230d0ab6ec::t_d536b22415a546 593
+  s_9d02230d0ab6ec::t_f018f745f8da91 9,28,731-747,754-756,758-769
+  s_9d02230d0ab6ec::t_53609275eaeca3 757
+  s_9d02230d0ab6ec::t_9f44e730941ff2 361-364,366-373
+  s_9d02230d0ab6ec::t_75c31bc3a75801 339-346,682-685,697-702,704-705,708-712,724-729
+  s_9d02230d0ab6ec::t_56c39d063fa18a 168-182,691-694,718-721
+  s_9d02230d0ab6ec::t_e64f9629cb8023 21,654,657,680-681,686-690,695-696,703,706-707,713-717,722-723,730
+  s_9d02230d0ab6ec::t_e23cb3ff08a9a5 748-753
+  s_9d02230d0ab6ec::t_bcadbd1e158afb 365
+  s_9d02230d0ab6ec::t_e9a535d6a5890d 43,46,664-665,786-787,791,799,807
+  s_9d02230d0ab6ec::t_097c6a89b4d74c 14,142-145
+src/agoge_forger/_run_status_artifact_index.py
+  s_9d02230d0ab6ec::t_3f5811d981bcd3 16
+src/agoge_forger/_run_status_validation.py
+  s_9d02230d0ab6ec::t_53c47cc073e2b4 11-17,76-77,79-92,94-102,105-108,142-146,192
+  s_9d02230d0ab6ec::t_7afe744a388760 10,18,22-27,103,109-121,185,193-196,220,224
+  s_9d02230d0ab6ec::t_2560d89195ff83 222-223
+  s_9d02230d0ab6ec::t_9d403f1c40bf8d 20,60,78,93,104
+  s_9d02230d0ab6ec::t_95f4b8f6014ef4 183,197-201,204-219,221,225
+src/agoge_forger/_run_status_safetensors.py
+  s_9d02230d0ab6ec::t_523a8f0431801f 81
+src/agoge_forger/_run_status_lora.py
+  s_9d02230d0ab6ec::t_c1299a40932160 142-146,149
+  s_9d02230d0ab6ec::t_7afe744a388760 5,17-23,55,57,59,104,112,129,140,147
+  s_9d02230d0ab6ec::t_53c47cc073e2b4 137,139,141
+  s_9d02230d0ab6ec::t_a656960cda7cf5 133-135
+  s_9d02230d0ab6ec::t_d7cf2fb27ef4de 13-14,54,56,58,71,110-111,113-116,138
+tests/test_run_status_output.py
+  s_9d02230d0ab6ec::t_9c0c5353bb5554 136,146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6e1d25181ba4bc8a16087d37259d7da47b89bbce",
+  "prompts": {},
+  "sessions": {
+    "s_9d02230d0ab6ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05c12-f51c-7140-a693-33864d1c4551",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
