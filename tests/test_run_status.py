@@ -48,6 +48,32 @@ SKIP_IF_ROOT = pytest.mark.skipif(
     reason="chmod-based permission denial is ineffective when running as root",
 )
 
+TINY_LLAMA_CONFIG = {
+    "model_type": "llama",
+    "vocab_size": 16,
+    "hidden_size": 8,
+    "intermediate_size": 16,
+    "num_hidden_layers": 1,
+    "num_attention_heads": 2,
+    "num_key_value_heads": 2,
+    "max_position_embeddings": 16,
+    "tie_word_embeddings": False,
+}
+TINY_LLAMA_SHAPES = {
+    "model.embed_tokens.weight": (16, 8),
+    "model.layers.0.self_attn.q_proj.weight": (8, 8),
+    "model.layers.0.self_attn.k_proj.weight": (8, 8),
+    "model.layers.0.self_attn.v_proj.weight": (8, 8),
+    "model.layers.0.self_attn.o_proj.weight": (8, 8),
+    "model.layers.0.mlp.gate_proj.weight": (16, 8),
+    "model.layers.0.mlp.up_proj.weight": (16, 8),
+    "model.layers.0.mlp.down_proj.weight": (8, 16),
+    "model.layers.0.input_layernorm.weight": (8,),
+    "model.layers.0.post_attention_layernorm.weight": (8,),
+    "model.norm.weight": (8,),
+    "lm_head.weight": (16, 8),
+}
+
 
 @pytest.fixture
 def runner() -> CliRunner:
@@ -110,10 +136,24 @@ def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=No
     (directory / "adapter_config.json").write_text(json.dumps(payload))
 
 
+def _optimizer_state(step=1, shapes=((1, 1), (1, 1))):
+    return {
+        "state": {
+            parameter_id: {
+                "step": torch.tensor(float(step)),
+                "exp_avg": torch.zeros(shape),
+                "exp_avg_sq": torch.zeros(shape),
+            }
+            for parameter_id, shape in enumerate(shapes)
+        },
+        "param_groups": [{"params": list(range(len(shapes)))}],
+    }
+
+
 def _write_torch_state(path, payload=None):
     if payload is None:
         payloads = {
-            "optimizer.pt": {"state": {}, "param_groups": [{"params": [0]}]},
+            "optimizer.pt": _optimizer_state(),
             "scheduler.pt": {"last_epoch": 0, "_step_count": 1},
             "rng_state.pth": {
                 "python": random.getstate(),
@@ -146,7 +186,7 @@ def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B", revision=None)
     (checkpoint_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
     _write_torch_state(
         checkpoint_dir / "optimizer.pt",
-        {"state": {0: {}}, "param_groups": [{"params": [0]}]},
+        _optimizer_state(step),
     )
     _write_torch_state(
         checkpoint_dir / "scheduler.pt",
@@ -179,8 +219,8 @@ def _write_legacy_bin_adapter(root, base_model="Qwen/Qwen3.5-0.5B"):
 
 def _write_merged_model(path):
     path.mkdir(parents=True)
-    (path / "config.json").write_text('{"model_type": "llama"}')
-    (path / "model.safetensors").write_bytes(_minimal_safetensors())
+    (path / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
+    (path / "model.safetensors").write_bytes(_safetensors_with_shapes(TINY_LLAMA_SHAPES))
     (path / "tokenizer_config.json").write_text("{}")
     write_artifact_index(str(path))
     return path
@@ -580,6 +620,69 @@ def test_nested_optimizer_field_names_are_not_top_level_state(tmp_path):
         b"X\x05\x00\x00\x00stateq\x03X\x0c\x00\x00\x00param_groupsq\x04es."
     )
     _write_torch_state(checkpoint_dir / "optimizer.pt", payload=nested)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_empty_per_parameter_optimizer_state_is_not_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    _write_torch_state(
+        checkpoint_dir / "optimizer.pt",
+        {"state": {0: {}}, "param_groups": [{"params": [0]}]},
+    )
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_optimizer_moment_shapes_must_match_trainable_adapter_tensors(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    unrelated = {
+        "state": {
+            parameter_id: {
+                "step": torch.tensor(50.0),
+                "exp_avg": torch.zeros(999),
+                "exp_avg_sq": torch.zeros(999),
+            }
+            for parameter_id in (0, 1)
+        },
+        "param_groups": [{"params": [0, 1]}],
+    }
+    _write_torch_state(checkpoint_dir / "optimizer.pt", unrelated)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_optimizer_state_must_cover_every_trainable_adapter_tensor(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    _write_torch_state(checkpoint_dir / "optimizer.pt", _optimizer_state(50, ((1, 1),)))
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"exp_avg": torch.zeros(1), "exp_avg_sq": torch.zeros(1)},
+        {"step": torch.tensor(50.0), "exp_avg_sq": torch.zeros(1)},
+        {"step": torch.tensor(50.0), "exp_avg": torch.zeros(1)},
+        {
+            "step": torch.tensor(50.0),
+            "exp_avg": torch.zeros(1),
+            "exp_avg_sq": torch.zeros(2),
+        },
+    ],
+    ids=["missing-step", "missing-first-moment", "missing-second-moment", "shape-mismatch"],
+)
+def test_incomplete_per_parameter_optimizer_state_is_not_resume_ready(tmp_path, entry):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    _write_torch_state(
+        checkpoint_dir / "optimizer.pt",
+        {"state": {0: entry}, "param_groups": [{"params": [0]}]},
+    )
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 

@@ -233,6 +233,24 @@ def test_inaccessible_explicit_merged_dir_exits_one(runner, tmp_path):
 
 
 @SKIP_IF_ROOT
+def test_inaccessible_conventional_merged_dir_exits_one(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged_parent = tmp_path / "merged"
+    _write_merged_model(merged_parent / run_dir.name)
+    original_mode = merged_parent.stat().st_mode
+    os.chmod(merged_parent, 0)
+    try:
+        result = runner.invoke(app, ["run-status", str(run_dir)])
+        with pytest.raises(PermissionError):
+            build_run_status(str(run_dir))
+    finally:
+        os.chmod(merged_parent, original_mode)
+
+    _assert_clean_exit(result, 1)
+
+
+@SKIP_IF_ROOT
 @pytest.mark.parametrize(
     "target_name",
     ["merged_config", "adapter_config", "trainer_state", "safetensors"],

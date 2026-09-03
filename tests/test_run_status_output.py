@@ -88,6 +88,17 @@ def test_table_escapes_ansi_controls_in_run_name_and_run_dir(tmp_path):
     assert "\\u001b[31mevil\\u001b[0m" in table
 
 
+def test_table_escapes_unicode_format_controls(tmp_path):
+    """Bidi and other Cf controls must not visually reorder table fields."""
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir, base_model="safe\u202ereversed")
+
+    table = format_run_status_table(build_run_status(str(run_dir)))
+
+    assert "\u202e" not in table
+    assert "safe\\u202ereversed" in table
+
+
 def test_table_renderer_covers_every_report_row(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_checkpoint(run_dir, 30)

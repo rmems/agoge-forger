@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -67,10 +69,51 @@ def _valid_int(value: Any, *, minimum: int | None = None) -> bool:
     )
 
 
-def _optimizer_state_entries_usable(state: Any) -> bool:
+def _cpu_contiguous_tensor(value: Any) -> bool:
+    return bool(
+        isinstance(value, torch.Tensor)
+        and value.layout == torch.strided
+        and value.device.type == "cpu"
+        and value.is_contiguous()
+    )
+
+
+def _optimizer_moments_usable(exp_avg: Any, exp_avg_sq: Any) -> bool:
+    if not (_cpu_contiguous_tensor(exp_avg) and _cpu_contiguous_tensor(exp_avg_sq)):
+        return False
+    return all(
+        (
+            exp_avg.is_floating_point(),
+            exp_avg_sq.is_floating_point(),
+            exp_avg.dtype == exp_avg_sq.dtype,
+            exp_avg.shape == exp_avg_sq.shape,
+            exp_avg.numel() > 0,
+        )
+    )
+
+
+def _optimizer_step_usable(value: Any, checkpoint_step: int) -> bool:
+    if not (_cpu_contiguous_tensor(value) and value.ndim == 0 and value.is_floating_point()):
+        return False
+    step = float(value.item())
+    return math.isfinite(step) and step.is_integer() and 0 < step <= checkpoint_step
+
+
+def _optimizer_state_entry_usable(value: Any, checkpoint_step: int) -> bool:
+    return bool(
+        isinstance(value, dict)
+        and _optimizer_step_usable(value.get("step"), checkpoint_step)
+        and _optimizer_moments_usable(value.get("exp_avg"), value.get("exp_avg_sq"))
+    )
+
+
+def _optimizer_state_entries_usable(state: Any, checkpoint_step: int) -> bool:
     return bool(
         isinstance(state, dict)
-        and all(_valid_int(key) and isinstance(value, dict) for key, value in state.items())
+        and all(
+            _valid_int(key) and _optimizer_state_entry_usable(value, checkpoint_step)
+            for key, value in state.items()
+        )
     )
 
 
@@ -100,13 +143,30 @@ def _optimizer_parameter_ids(groups: Any) -> list[Any] | None:
     return parameter_ids
 
 
-def _optimizer_payload_usable(payload: dict[str, Any] | None) -> bool:
-    if payload is None or not _optimizer_state_entries_usable(payload.get("state")):
+def _optimizer_shapes_match_adapter(
+    state: dict[int, dict[str, Any]],
+    adapter_shapes: dict[str, tuple[int, ...]],
+) -> bool:
+    optimizer_shapes = Counter(tuple(entry["exp_avg"].shape) for entry in state.values())
+    return optimizer_shapes == Counter(adapter_shapes.values())
+
+
+def _optimizer_payload_usable(
+    payload: dict[str, Any] | None,
+    checkpoint_step: int,
+    adapter_shapes: dict[str, tuple[int, ...]],
+) -> bool:
+    if payload is None or not _optimizer_state_entries_usable(
+        payload.get("state"), checkpoint_step
+    ):
         return False
     parameter_ids = _optimizer_parameter_ids(payload.get("param_groups"))
     if parameter_ids is None or len(parameter_ids) != len(set(parameter_ids)):
         return False
-    return set(payload["state"]) == set(parameter_ids)
+    state = payload["state"]
+    return set(state) == set(parameter_ids) and _optimizer_shapes_match_adapter(
+        state, adapter_shapes
+    )
 
 
 def _scheduler_payload_usable(payload: dict[str, Any] | None, step: int) -> bool:
@@ -152,14 +212,19 @@ def _rng_payload_usable(payload: dict[str, Any] | None) -> bool:
     return _cuda_rng_state_usable(payload.get("cuda"))
 
 
-def trainer_state_usable(checkpoint: str | Path | None) -> bool:
+def trainer_state_usable(
+    checkpoint: str | Path | None,
+    adapter_shapes: dict[str, tuple[int, ...]],
+) -> bool:
     if checkpoint is None:
         return False
     checkpoint_dir = Path(checkpoint)
     step = _trainer_state_step(checkpoint_dir)
     return bool(
         step is not None
-        and _optimizer_payload_usable(torch_mapping(checkpoint_dir / "optimizer.pt"))
+        and _optimizer_payload_usable(
+            torch_mapping(checkpoint_dir / "optimizer.pt"), step, adapter_shapes
+        )
         and _scheduler_payload_usable(torch_mapping(checkpoint_dir / "scheduler.pt"), step)
         and _rng_state_usable(checkpoint_dir)
     )

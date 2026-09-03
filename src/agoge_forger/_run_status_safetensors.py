@@ -84,31 +84,34 @@ def _load_shard_weight_map(candidate: Path) -> dict[str, Any] | None:
     return weight_map if isinstance(weight_map, dict) and weight_map else None
 
 
-def _load_shard_keys(candidate: Path, shards: set[str]) -> dict[str, set[str]] | None:
-    shard_keys: dict[str, set[str]] = {}
+def _load_shard_shapes(
+    candidate: Path,
+    shards: set[str],
+) -> dict[str, dict[str, tuple[int, ...]]] | None:
+    shard_shapes: dict[str, dict[str, tuple[int, ...]]] = {}
     for name in shards:
         if not _is_root_model_shard_name(name):
             return None
         shard = candidate / name
         if not shard.is_file():
             return None
-        keys = safetensors_keys(shard)
-        if not keys:
+        shapes = safetensors_shapes(shard)
+        if not shapes:
             return None
-        shard_keys[name] = keys
-    return shard_keys
+        shard_shapes[name] = shapes
+    return shard_shapes
 
 
 def _weight_map_matches_shards(
     weight_map: dict[str, Any],
-    shard_keys: dict[str, set[str]],
+    shard_shapes: dict[str, dict[str, tuple[int, ...]]],
 ) -> bool:
-    indexed_keys: dict[str, set[str]] = {name: set() for name in shard_keys}
+    indexed_keys: dict[str, set[str]] = {name: set() for name in shard_shapes}
     for tensor_name, shard_name in weight_map.items():
         if not isinstance(shard_name, str) or shard_name not in indexed_keys:
             return False
         indexed_keys[shard_name].add(tensor_name)
-    return indexed_keys == shard_keys
+    return indexed_keys == {name: set(shapes) for name, shapes in shard_shapes.items()}
 
 
 def _physical_model_shards(candidate: Path) -> set[str]:
@@ -119,21 +122,44 @@ def _shard_set_usable(candidate: Path, shards: set[str]) -> bool:
     return shards == _physical_model_shards(candidate) and _numbered_shards_complete(shards)
 
 
-def _has_complete_sharded_weights(candidate: Path) -> bool:
+def _unsharded_layout_usable(candidate: Path) -> bool:
+    shard_index = candidate / "model.safetensors.index.json"
+    if shard_index.exists() or shard_index.is_symlink():
+        return False
+    return _physical_model_shards(candidate) == {"model.safetensors"}
+
+
+def _complete_sharded_shapes(candidate: Path) -> dict[str, tuple[int, ...]] | None:
     weight_map = _load_shard_weight_map(candidate)
     if weight_map is None:
-        return False
+        return None
     shards = _shard_filenames(weight_map)
     if shards is None:
-        return False
+        return None
     if not _shard_set_usable(candidate, shards):
-        return False
-    shard_keys = _load_shard_keys(candidate, shards)
-    return shard_keys is not None and _weight_map_matches_shards(weight_map, shard_keys)
+        return None
+    shard_shapes = _load_shard_shapes(candidate, shards)
+    if shard_shapes is None or not _weight_map_matches_shards(weight_map, shard_shapes):
+        return None
+    return {
+        tensor_name: shape
+        for shapes in shard_shapes.values()
+        for tensor_name, shape in shapes.items()
+    }
 
 
-def has_complete_merged_weights(candidate: Path) -> bool:
+def merged_safetensors_shapes(candidate: Path) -> dict[str, tuple[int, ...]] | None:
+    """Return one complete root weight inventory without materializing tensors."""
     unsharded = candidate / "model.safetensors"
     if unsharded.is_file():
-        return safetensors_usable(unsharded)
-    return _has_complete_sharded_weights(candidate)
+        if not _unsharded_layout_usable(candidate):
+            return None
+        return safetensors_shapes(unsharded)
+    return _complete_sharded_shapes(candidate)
+
+
+def has_complete_merged_weights(
+    candidate: Path,
+    expected_shapes: dict[str, tuple[int, ...]],
+) -> bool:
+    return merged_safetensors_shapes(candidate) == expected_shapes

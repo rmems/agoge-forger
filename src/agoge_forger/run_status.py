@@ -23,6 +23,9 @@ from ._run_status_validation import (
     adapter_config_usable as _adapter_config_usable,
 )
 from ._run_status_validation import (
+    adapter_weight_shapes as _adapter_weight_shapes,
+)
+from ._run_status_validation import (
     adapter_weights_usable as _adapter_weights_usable,
 )
 from ._run_status_validation import (
@@ -87,11 +90,13 @@ def find_merged_model_dir(run_dir: Path, merged_dir: str | None = None) -> Path 
     # then; a named symlink must keep its logical parent.
     probe_dir = run_dir if run_dir.name else run_dir.resolve()
     conventional = probe_dir.parent.parent / "merged" / probe_dir.name
-    if not is_merged_model_dir(conventional):
+    try:
+        candidate = resolve_existing_path(str(conventional), must_be_dir=True)
+    except (FileNotFoundError, NotADirectoryError, ValueError, RuntimeError):
         return None
-    # Discovery used the logical path; emit an absolute one so
-    # merged_model.path does not depend on the caller's cwd.
-    return conventional.resolve()
+    if not is_merged_model_dir(candidate):
+        return None
+    return candidate
 
 
 def _as_str(value: PathLike | None) -> str | None:
@@ -157,10 +162,11 @@ def _artifact_status(path: Path | None) -> dict[str, Any]:
 
 
 def _resume_status(checkpoint: Path | None, *, allow_unsafe: bool) -> dict[str, Any]:
+    adapter_shapes = _adapter_weight_shapes(checkpoint, allow_unsafe=allow_unsafe)
     ready = bool(
         checkpoint is not None
-        and _trainer_state_usable(checkpoint)
-        and _adapter_weights_usable(checkpoint, allow_unsafe=allow_unsafe)
+        and adapter_shapes is not None
+        and _trainer_state_usable(checkpoint, adapter_shapes)
     )
     return {"ready": ready, "checkpoint_path": _as_str(checkpoint)}
 
@@ -231,13 +237,16 @@ def _yes_no(value: bool) -> str:
 
 
 def _escape_controls(text: str) -> str:
-    """Escape Unicode Cc controls so table cells cannot drive the terminal.
+    """Escape Unicode Cc/Cf controls so table cells cannot spoof the terminal.
 
     Adapter metadata and paths can carry ANSI or other control bytes into
     `format_run_status_table`. Render those as backslash-uXXXX escapes
     instead of emitting them raw (CWE-150 / CodeRabbit on #96).
     """
-    return "".join(f"\\u{ord(ch):04x}" if unicodedata.category(ch) == "Cc" else ch for ch in text)
+    unsafe_categories = {"Cc", "Cf"}
+    return "".join(
+        f"\\u{ord(ch):04x}" if unicodedata.category(ch) in unsafe_categories else ch for ch in text
+    )
 
 
 def _or_dash(value: Any) -> str:

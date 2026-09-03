@@ -8,6 +8,8 @@ import pytest
 import torch
 from test_run_status import (
     SKIP_IF_ROOT,
+    TINY_LLAMA_CONFIG,
+    TINY_LLAMA_SHAPES,
     _deny_read_access_or_skip,
     _make_run_dir,
     _minimal_safetensors,
@@ -124,45 +126,28 @@ def test_merged_dir_with_only_nested_safetensors_is_not_a_merged_model(tmp_path)
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
 
 
-@pytest.mark.parametrize(
-    ("weight_map", "shard_tensors"),
-    [
-        (
-            {
-                "a": "model-00001-of-00002.safetensors",
-                "b": "model-00002-of-00002.safetensors",
-            },
-            {
-                "model-00001-of-00002.safetensors": ("a",),
-                "model-00002-of-00002.safetensors": ("b",),
-            },
-        ),
-        (
-            {
-                "model.embed_tokens.weight": "model-00001-of-00001.safetensors",
-                "model.norm.weight": "model-00001-of-00001.safetensors",
-            },
-            {
-                "model-00001-of-00001.safetensors": (
-                    "model.embed_tokens.weight",
-                    "model.norm.weight",
-                )
-            },
-        ),
-    ],
-    ids=["multiple-shards", "shared-shard"],
-)
-def test_sharded_merged_model_is_recognised(tmp_path, weight_map, shard_tensors):
+@pytest.mark.parametrize("shard_count", [1, 2], ids=["shared-shard", "multiple-shards"])
+def test_sharded_merged_model_is_recognised(tmp_path, shard_count):
     """Indexed exports allow distinct shards and tensors sharing a shard."""
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
     merged = tmp_path / "merged" / run_dir.name
     merged.mkdir(parents=True)
-    (merged / "config.json").write_text('{"model_type": "llama"}')
+    (merged / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
     (merged / "tokenizer_config.json").write_text("{}")
+    shard_names = [
+        f"model-{ordinal:05d}-of-{shard_count:05d}.safetensors"
+        for ordinal in range(1, shard_count + 1)
+    ]
+    shard_tensors = {name: {} for name in shard_names}
+    weight_map = {}
+    for index, (tensor_name, shape) in enumerate(TINY_LLAMA_SHAPES.items()):
+        shard_name = shard_names[index % shard_count]
+        shard_tensors[shard_name][tensor_name] = shape
+        weight_map[tensor_name] = shard_name
     (merged / "model.safetensors.index.json").write_text(json.dumps({"weight_map": weight_map}))
-    for shard_name, tensor_names in shard_tensors.items():
-        (merged / shard_name).write_bytes(_safetensors_with_tensors(*tensor_names))
+    for shard_name, tensor_shapes in shard_tensors.items():
+        (merged / shard_name).write_bytes(_safetensors_with_shapes(tensor_shapes))
     write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is True
@@ -356,6 +341,90 @@ def test_merged_config_requires_recognized_local_model_type(tmp_path):
     write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
+
+
+def test_merged_config_requires_causal_lm_model_type(tmp_path):
+    from agoge_forger._run_status_validation import _local_causal_lm_config
+
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    (merged / "config.json").write_text('{"model_type": "vit"}')
+
+    assert _local_causal_lm_config(merged) is None
+
+
+def test_merged_weights_must_match_complete_local_architecture(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "model.safetensors").write_bytes(
+        _safetensors_with_shapes({"unrelated.weight": (8, 8)})
+    )
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_merged_weight_shapes_must_match_local_architecture(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    wrong_shapes = dict(TINY_LLAMA_SHAPES)
+    wrong_shapes["model.norm.weight"] = (7,)
+    (merged / "model.safetensors").write_bytes(_safetensors_with_shapes(wrong_shapes))
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_unsharded_model_rejects_simultaneous_shard_index(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {}}))
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_unsharded_model_rejects_stale_numbered_shard(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "model-00001-of-00001.safetensors").write_bytes(
+        _safetensors_with_shapes(TINY_LLAMA_SHAPES)
+    )
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_unsharded_model_rejects_extra_root_model_safetensors(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "consolidated.safetensors").write_bytes(
+        _safetensors_with_shapes({"foreign.weight": (1,)})
+    )
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
+@pytest.mark.parametrize(
+    ("model_type", "multiplicity_key"),
+    [("llama", "num_hidden_layers"), ("bart", "decoder_layers")],
+)
+def test_huge_architecture_is_rejected_before_meta_model_construction(
+    tmp_path, monkeypatch, model_type, multiplicity_key
+):
+    from agoge_forger import _run_status_validation as validation
+
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    config_payload = (
+        dict(TINY_LLAMA_CONFIG) if model_type == "llama" else {"model_type": model_type}
+    )
+    config_payload[multiplicity_key] = 1_000_000_000
+    (merged / "config.json").write_text(json.dumps(config_payload))
+    config = validation._local_causal_lm_config(merged)
+
+    def fail_construction(*args, **kwargs):
+        raise AssertionError("untrusted dimensions must be bounded before model construction")
+
+    monkeypatch.setattr(validation.AutoModelForCausalLM, "from_config", fail_construction)
+
+    assert validation._causal_lm_shapes(config) is None
 
 
 def test_symlinked_artifact_index_is_not_a_completion_marker(tmp_path):
