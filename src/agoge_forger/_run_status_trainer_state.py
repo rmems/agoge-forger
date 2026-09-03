@@ -92,11 +92,17 @@ def _optimizer_moments_usable(exp_avg: Any, exp_avg_sq: Any) -> bool:
     )
 
 
+def _optimizer_step_tensor_usable(value: Any) -> bool:
+    if not _cpu_contiguous_tensor(value):
+        return False
+    return value.ndim == 0 and value.is_floating_point()
+
+
 def _optimizer_step_usable(value: Any, checkpoint_step: int) -> bool:
-    if not (_cpu_contiguous_tensor(value) and value.ndim == 0 and value.is_floating_point()):
+    if not _optimizer_step_tensor_usable(value):
         return False
     step = float(value.item())
-    return math.isfinite(step) and step.is_integer() and 0 < step <= checkpoint_step
+    return all((math.isfinite(step), step.is_integer(), step > 0, step <= checkpoint_step))
 
 
 def _optimizer_state_entry_usable(value: Any, checkpoint_step: int) -> bool:
