@@ -430,6 +430,14 @@ def test_whitespace_base_model_is_not_export_ready(tmp_path):
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
 
+def test_unrelated_safetensor_keys_are_not_lora_weights(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_tensors("foreign.weight"))
+    _write_adapter_config(run_dir)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
 @pytest.mark.parametrize("revision", ["   ", [], {"branch": "main"}, True])
 def test_invalid_adapter_revision_is_not_export_ready(tmp_path, revision):
     run_dir = _make_run_dir(tmp_path)

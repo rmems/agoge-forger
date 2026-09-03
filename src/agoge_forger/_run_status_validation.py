@@ -9,8 +9,8 @@ from typing import Any
 from transformers import CONFIG_MAPPING
 
 from ._run_status_artifact_index import artifact_index_usable
-from ._run_status_safetensors import has_complete_merged_weights, safetensors_usable
-from ._run_status_torch_archive import torch_zip_usable
+from ._run_status_safetensors import has_complete_merged_weights, safetensors_keys
+from ._run_status_torch_archive import torch_zip_metadata
 from .config import normalize_revision
 
 PathLike = str | Path
@@ -43,6 +43,15 @@ def _revision_usable(payload: dict[str, Any]) -> bool:
         return normalize_revision(payload["revision"]) is not None
     except TypeError:
         return False
+
+
+def _lora_keys_usable(keys: set[str] | None) -> bool:
+    if not keys:
+        return False
+    pairs = (("lora_A", "lora_B"), ("lora_embedding_A", "lora_embedding_B"))
+    return any(
+        left in key and key.replace(left, right, 1) in keys for key in keys for left, right in pairs
+    )
 
 
 def is_merged_model_dir(path: PathLike) -> bool:
@@ -80,9 +89,9 @@ def adapter_weights_usable(
     adapter_dir = Path(adapter_path)
     safetensors_path = adapter_dir / "adapter_model.safetensors"
     if safetensors_path.is_file():
-        return safetensors_usable(safetensors_path)
+        return _lora_keys_usable(safetensors_keys(safetensors_path))
     if allow_unsafe:
         legacy = adapter_dir / "adapter_model.bin"
         if legacy.is_file():
-            return torch_zip_usable(legacy)
+            return _lora_keys_usable(torch_zip_metadata(legacy, require_data_record=True))
     return False

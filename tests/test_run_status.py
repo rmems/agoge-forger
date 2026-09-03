@@ -52,8 +52,11 @@ def runner() -> CliRunner:
 
 
 def _minimal_safetensors() -> bytes:
-    """Tiny valid safetensors container with one tensor."""
-    return _safetensors_with_tensors("weight")
+    """Tiny valid PEFT LoRA safetensors container with one A/B pair."""
+    return _safetensors_with_tensors(
+        "base_model.model.layer.lora_A.weight",
+        "base_model.model.layer.lora_B.weight",
+    )
 
 
 def _safetensors_with_tensors(*names: str) -> bytes:
@@ -92,9 +95,16 @@ def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=No
 
 def _write_torch_state(path, payload=None):
     if payload is None:
-        payload = b"\x80\x02}q\x00."  # pickle protocol 2 encoding of an empty dict
+        payloads = {
+            "optimizer.pt": b"\x80\x02}q\x00(X\x05\x00\x00\x00stateq\x01}q\x02X\x0c\x00\x00\x00param_groupsq\x03]q\x04u.",
+            "scheduler.pt": b"\x80\x02}q\x00(X\n\x00\x00\x00last_epochq\x01K\x00X\x0b\x00\x00\x00_step_countq\x02K\x01u.",
+            "rng_state.pth": b"\x80\x02}q\x00(X\x06\x00\x00\x00pythonq\x01NX\x05\x00\x00\x00numpyq\x02NX\x03\x00\x00\x00cpuq\x03Nu.",
+            "adapter_model.bin": b"\x80\x02}q\x00(X$\x00\x00\x00base_model.model.layer.lora_A.weightq\x01K\x01X$\x00\x00\x00base_model.model.layer.lora_B.weightq\x02K\x02u.",
+        }
+        payload = payloads[path.name]
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("archive/data.pkl", payload)
+        archive.writestr("archive/data/0", b"\0")
         archive.writestr("archive/version", b"3\n")
         archive.writestr("archive/.data/serialization_id", b"0")
 
@@ -506,6 +516,15 @@ def test_torch_zip_with_invalid_pickle_is_not_resume_ready(tmp_path, state_name)
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
     _write_torch_state(checkpoint_dir / state_name, payload=b"not a pickle")
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize("state_name", ["optimizer.pt", "scheduler.pt", "rng_state.pth"])
+def test_torch_zip_with_empty_state_is_not_resume_ready(tmp_path, state_name):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    _write_torch_state(checkpoint_dir / state_name, payload=b"\x80\x02}q\x00.")
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 

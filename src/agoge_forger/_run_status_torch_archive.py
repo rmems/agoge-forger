@@ -21,34 +21,35 @@ def _archive_root(names: list[str]) -> str | None:
     return roots.pop() if len(roots) == 1 else None
 
 
-def _pickle_metadata_usable(archive: zipfile.ZipFile, name: str) -> bool:
+def _pickle_metadata_strings(archive: zipfile.ZipFile, name: str) -> set[str] | None:
     with archive.open(name) as stream:
         payload = stream.read(_MAX_PICKLE_METADATA_BYTES + 1)
     if not payload or len(payload) > _MAX_PICKLE_METADATA_BYTES:
-        return False
+        return None
     try:
         pickletools.dis(payload, out=_NullWriter())
     except (ValueError, EOFError):
-        return False
-    return True
+        return None
+    return {argument for _, argument, _ in pickletools.genops(payload) if isinstance(argument, str)}
 
 
-def torch_zip_usable(path: Path) -> bool:
-    """Validate a PyTorch ZIP and its pickle syntax without deserializing it."""
+def torch_zip_metadata(path: Path, *, require_data_record: bool = False) -> set[str] | None:
+    """Return static pickle strings from a structurally valid PyTorch ZIP."""
     if path.is_symlink() or not path.is_file():
-        return False
+        return None
     try:
         with path.open("rb") as handle, zipfile.ZipFile(handle) as archive:
             names = archive.namelist()
             root = _archive_root(names)
             if root is None:
-                return False
+                return None
             data_name = f"{root}/data.pkl"
             required = {data_name, f"{root}/version", f"{root}/.data/serialization_id"}
-            return bool(
-                required.issubset(names)
-                and archive.testzip() is None
-                and _pickle_metadata_usable(archive, data_name)
-            )
+            data_prefix = f"{root}/data/"
+            if not required.issubset(names) or archive.testzip() is not None:
+                return None
+            if require_data_record and not any(name.startswith(data_prefix) for name in names):
+                return None
+            return _pickle_metadata_strings(archive, data_name)
     except (RuntimeError, zipfile.BadZipFile):
-        return False
+        return None

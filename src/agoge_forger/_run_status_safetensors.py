@@ -12,7 +12,7 @@ from safetensors import SafetensorError, safe_open
 _NUMBERED_SHARD_RE = re.compile(r"model-(\d+)-of-(\d+)\.safetensors")
 
 
-def _safetensors_keys(path: Path) -> set[str] | None:
+def safetensors_keys(path: Path) -> set[str] | None:
     if path.is_symlink():
         return None
     try:
@@ -23,7 +23,7 @@ def _safetensors_keys(path: Path) -> set[str] | None:
 
 
 def safetensors_usable(path: Path) -> bool:
-    return bool(_safetensors_keys(path))
+    return bool(safetensors_keys(path))
 
 
 def _is_root_model_shard_name(name: str) -> bool:
@@ -84,7 +84,7 @@ def _load_shard_keys(candidate: Path, shards: set[str]) -> dict[str, set[str]] |
         shard = candidate / name
         if not shard.is_file():
             return None
-        keys = _safetensors_keys(shard)
+        keys = safetensors_keys(shard)
         if not keys:
             return None
         shard_keys[name] = keys

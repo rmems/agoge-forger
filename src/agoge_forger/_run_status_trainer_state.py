@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ._run_status_torch_archive import torch_zip_usable
+from ._run_status_torch_archive import torch_zip_metadata
 
 _CHECKPOINT_RE = re.compile(r"checkpoint-(\d+)")
 
@@ -42,11 +42,21 @@ def _trainer_state_matches_checkpoint(checkpoint: Path) -> bool:
 def _rng_state_usable(checkpoint: Path) -> bool:
     single = checkpoint / "rng_state.pth"
     if single.is_file():
-        return torch_zip_usable(single)
+        return _torch_state_usable(single, {"python", "numpy", "cpu"}, require_data_record=True)
     # Transformers does not persist the original world size in safe JSON.
     # Rank filenames cannot prove that trailing states are present, so report
     # distributed checkpoints as not ready instead of returning a false positive.
     return False
+
+
+def _torch_state_usable(
+    path: Path,
+    required_fields: set[str],
+    *,
+    require_data_record: bool = False,
+) -> bool:
+    fields = torch_zip_metadata(path, require_data_record=require_data_record)
+    return fields is not None and required_fields.issubset(fields)
 
 
 def trainer_state_usable(checkpoint: str | Path | None) -> bool:
@@ -55,7 +65,7 @@ def trainer_state_usable(checkpoint: str | Path | None) -> bool:
     checkpoint_dir = Path(checkpoint)
     return bool(
         _trainer_state_matches_checkpoint(checkpoint_dir)
-        and torch_zip_usable(checkpoint_dir / "optimizer.pt")
-        and torch_zip_usable(checkpoint_dir / "scheduler.pt")
+        and _torch_state_usable(checkpoint_dir / "optimizer.pt", {"state", "param_groups"})
+        and _torch_state_usable(checkpoint_dir / "scheduler.pt", {"last_epoch", "_step_count"})
         and _rng_state_usable(checkpoint_dir)
     )
