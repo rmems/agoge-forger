@@ -158,7 +158,8 @@ def _adamw_group_flags_usable(group: dict[str, Any]) -> bool:
         group.get(field) is None or isinstance(group.get(field), bool)
         for field in _ADAMW_NULLABLE_BOOL_FIELDS
     )
-    return required and nullable and group.get("decoupled_weight_decay") is True
+    decoupled = "decoupled_weight_decay" not in group or group["decoupled_weight_decay"] is True
+    return required and nullable and decoupled
 
 
 def _group_parameter_ids(group: Any) -> list[Any] | None:
@@ -201,6 +202,26 @@ def _optimizer_shapes_match_adapter(
     return optimizer_shapes == Counter(adapter_shapes.values())
 
 
+def _amsgrad_state_entry_usable(entry: Any) -> bool:
+    return bool(
+        isinstance(entry, dict)
+        and _optimizer_moments_usable(entry.get("exp_avg_sq"), entry.get("max_exp_avg_sq"))
+    )
+
+
+def _amsgrad_group_states_usable(group: Any, state: dict[int, dict[str, Any]]) -> bool:
+    parameter_ids = _group_parameter_ids(group)
+    if parameter_ids is None:
+        return False
+    if not group["amsgrad"]:
+        return True
+    return all(_amsgrad_state_entry_usable(state.get(param)) for param in parameter_ids)
+
+
+def _amsgrad_states_usable(groups: list[Any], state: dict[int, dict[str, Any]]) -> bool:
+    return all(_amsgrad_group_states_usable(group, state) for group in groups)
+
+
 def _optimizer_payload_usable(
     payload: dict[str, Any] | None,
     checkpoint_step: int,
@@ -210,12 +231,17 @@ def _optimizer_payload_usable(
         payload.get("state"), checkpoint_step
     ):
         return False
-    parameter_ids = _optimizer_parameter_ids(payload.get("param_groups"))
+    groups = payload.get("param_groups")
+    if not isinstance(groups, list):
+        return False
+    parameter_ids = _optimizer_parameter_ids(groups)
     if parameter_ids is None or len(parameter_ids) != len(set(parameter_ids)):
         return False
     state = payload["state"]
-    return set(state) == set(parameter_ids) and _optimizer_shapes_match_adapter(
-        state, adapter_shapes
+    return bool(
+        set(state) == set(parameter_ids)
+        and _optimizer_shapes_match_adapter(state, adapter_shapes)
+        and _amsgrad_states_usable(groups, state)
     )
 
 

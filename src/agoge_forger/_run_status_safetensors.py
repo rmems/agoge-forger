@@ -78,7 +78,7 @@ def _load_shard_weight_map(candidate: Path) -> dict[str, Any] | None:
         return None
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
-    except ValueError:
+    except (RecursionError, ValueError):
         return None
     weight_map = index.get("weight_map") if isinstance(index, dict) else None
     return weight_map if isinstance(weight_map, dict) and weight_map else None

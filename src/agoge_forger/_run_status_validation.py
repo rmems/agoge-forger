@@ -7,24 +7,29 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from transformers import CONFIG_MAPPING, MODEL_FOR_CAUSAL_LM_MAPPING, AutoModelForCausalLM
+from torch import nn
+from transformers import (
+    CONFIG_MAPPING,
+    MODEL_FOR_CAUSAL_LM_MAPPING,
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+)
+from transformers.pytorch_utils import Conv1D
 
+from ._run_status_architecture import architecture_resources_bounded
 from ._run_status_artifact_index import artifact_index_usable
-from ._run_status_lora import load_lora_config, lora_config_usable, lora_shapes_usable
+from ._run_status_lora import (
+    BaseModuleDimensions,
+    load_lora_config,
+    lora_config_usable,
+    lora_shapes_usable,
+)
 from ._run_status_safetensors import has_complete_merged_weights, safetensors_shapes
 from ._run_status_torch_archive import torch_mapping
 from .config import normalize_revision
 
 PathLike = str | Path
-
-_MAX_ARCHITECTURE_MULTIPLICITY = 4_096
-_MAX_ARCHITECTURE_DIMENSION = 16_777_216
-_MAX_ARCHITECTURE_MODULES = 65_536
-_MULTIPLICITY_TERMS = ("layer", "block", "expert", "stage", "head")
-_MULTIPLICITY_SUFFIXES = tuple(
-    suffix for term in _MULTIPLICITY_TERMS for suffix in (f"_{term}", f"_{term}s")
-)
-_MULTIPLICITY_KEYS = {"depth", "depths", "n_head", "n_heads", "n_layer", "n_layers"}
 
 
 def _load_json_object(path: Path) -> dict[str, Any] | None:
@@ -51,81 +56,8 @@ def _local_causal_lm_config(candidate: Path) -> Any:
     return config if type(config) in MODEL_FOR_CAUSAL_LM_MAPPING else None
 
 
-def _multiplicity_key(key: str) -> bool:
-    prefixed = key.startswith("num_") and any(term in key for term in _MULTIPLICITY_TERMS)
-    return any((key in _MULTIPLICITY_KEYS, key.endswith(_MULTIPLICITY_SUFFIXES), prefixed))
-
-
-def _integer_resource_bounded(key: str, value: int) -> bool:
-    if value > _MAX_ARCHITECTURE_DIMENSION:
-        return False
-    if _multiplicity_key(key):
-        return value <= _MAX_ARCHITECTURE_MULTIPLICITY
-    return True
-
-
-def _direct_multiplicity_entry(key: Any, value: Any, terms: tuple[str, ...]) -> bool:
-    if not isinstance(value, int) or isinstance(value, bool):
-        return False
-    if value <= 0:
-        return False
-    key_text = str(key)
-    if not _multiplicity_key(key_text):
-        return False
-    return any(term in key_text for term in terms)
-
-
-def _direct_multiplicity(value: dict[Any, Any], terms: tuple[str, ...]) -> int:
-    counts = [
-        child for key, child in value.items() if _direct_multiplicity_entry(key, child, terms)
-    ]
-    return max(counts, default=1)
-
-
-def _combined_module_count_bounded(value: dict[Any, Any]) -> bool:
-    structural = _direct_multiplicity(value, ("layer", "block", "stage", "depth"))
-    experts = _direct_multiplicity(value, ("expert",))
-    return structural * experts <= _MAX_ARCHITECTURE_MODULES
-
-
-def _mapping_resources_bounded(value: dict[Any, Any]) -> bool:
-    return (
-        len(value) <= _MAX_ARCHITECTURE_MULTIPLICITY
-        and _combined_module_count_bounded(value)
-        and all(
-            _architecture_value_bounded(str(child_key), child) for child_key, child in value.items()
-        )
-    )
-
-
-def _sequence_resources_bounded(key: str, value: list[Any] | tuple[Any, ...]) -> bool:
-    return len(value) <= _MAX_ARCHITECTURE_MULTIPLICITY and all(
-        _architecture_value_bounded(key, child) for child in value
-    )
-
-
-def _architecture_value_bounded(key: str, value: Any) -> bool:
-    if isinstance(value, bool) or value is None:
-        return True
-    if isinstance(value, int):
-        return _integer_resource_bounded(key, value)
-    if isinstance(value, dict):
-        return _mapping_resources_bounded(value)
-    if isinstance(value, (list, tuple)):
-        return _sequence_resources_bounded(key, value)
-    return True
-
-
-def _architecture_resources_bounded(config: Any) -> bool:
-    try:
-        payload = config.to_dict()
-    except (AttributeError, TypeError, ValueError):
-        return False
-    return isinstance(payload, dict) and _architecture_value_bounded("", payload)
-
-
 def _causal_lm_shapes(config: Any) -> dict[str, tuple[int, ...]] | None:
-    if not _architecture_resources_bounded(config):
+    if not architecture_resources_bounded(config):
         return None
     try:
         with torch.device("meta"):
@@ -137,6 +69,56 @@ def _causal_lm_shapes(config: Any) -> dict[str, tuple[int, ...]] | None:
             for name, value in model.state_dict().items()
             if name not in ignored and name not in tied
         }
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _tokenizer_usable(candidate: Path) -> bool:
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 - network and remote code disabled
+            candidate,
+            local_files_only=True,
+            trust_remote_code=False,
+        )
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return False
+    return len(tokenizer) > 0
+
+
+def _adapter_base_config(config: Any) -> Any:
+    base_model = config.base_model_name_or_path
+    if not isinstance(base_model, str) or not base_model.strip():
+        return None
+    try:
+        base_config = AutoConfig.from_pretrained(  # nosec B615 - network and remote code disabled
+            base_model,
+            local_files_only=True,
+            trust_remote_code=False,
+        )
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+    return base_config if type(base_config) in MODEL_FOR_CAUSAL_LM_MAPPING else None
+
+
+def _base_module_dimensions(config: Any) -> dict[str, BaseModuleDimensions] | None:
+    if not architecture_resources_bounded(config):
+        return None
+    try:
+        with torch.device("meta"):
+            model = AutoModelForCausalLM.from_config(config, trust_remote_code=False)
+        dimensions = {}
+        for name, module in model.named_modules():
+            weight = getattr(module, "weight", None)
+            if not isinstance(weight, torch.Tensor) or weight.ndim != 2:
+                continue
+            direct_orientation = isinstance(module, (Conv1D, nn.Embedding))
+            input_axis, output_axis = (0, 1) if direct_orientation else (1, 0)
+            dimensions[name] = BaseModuleDimensions(
+                input_size=weight.shape[input_axis],
+                output_size=weight.shape[output_axis],
+                embedding=isinstance(module, nn.Embedding),
+            )
+        return dimensions
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
         return None
 
@@ -157,7 +139,11 @@ def _revision_usable(payload: dict[str, Any]) -> bool:
 def is_merged_model_dir(path: PathLike) -> bool:
     """True for a complete, indexed merged-model export."""
     candidate = Path(path)
-    if not candidate.is_dir() or not artifact_index_usable(candidate):
+    if (
+        not candidate.is_dir()
+        or not artifact_index_usable(candidate)
+        or not _tokenizer_usable(candidate)
+    ):
         return False
     config = _local_causal_lm_config(candidate)
     expected_shapes = None if config is None else _causal_lm_shapes(config)
@@ -194,27 +180,49 @@ def _legacy_lora_shapes(path: Path) -> dict[str, tuple[int, ...]]:
     }
 
 
-def adapter_weight_shapes(
+def _adapter_validation_context(
     adapter_path: PathLike | None,
-    *,
-    allow_unsafe: bool = False,
-) -> dict[str, tuple[int, ...]] | None:
-    """Return a complete, config-compatible adapter tensor inventory."""
+) -> tuple[Path, Any, dict[str, BaseModuleDimensions]] | None:
     if adapter_path is None:
         return None
     adapter_dir = Path(adapter_path)
     config = _adapter_lora_config(adapter_dir)
     if config is None:
         return None
+    base_config = _adapter_base_config(config)
+    base_modules = None if base_config is None else _base_module_dimensions(base_config)
+    if base_modules is None:
+        return None
+    return adapter_dir, config, base_modules
+
+
+def _serialized_lora_shapes(
+    adapter_dir: Path, allow_unsafe: bool
+) -> dict[str, tuple[int, ...]] | None:
     safetensors_path = adapter_dir / "adapter_model.safetensors"
     if safetensors_path.is_file():
-        shapes = safetensors_shapes(safetensors_path)
-        return shapes if lora_shapes_usable(shapes, config) else None
-    if allow_unsafe:
-        legacy = adapter_dir / "adapter_model.bin"
-        if legacy.is_file():
-            shapes = _legacy_lora_shapes(legacy)
-            return shapes if lora_shapes_usable(shapes, config) else None
+        return safetensors_shapes(safetensors_path)
+    legacy = adapter_dir / "adapter_model.bin"
+    if allow_unsafe and legacy.is_file():
+        return _legacy_lora_shapes(legacy)
+    return None
+
+
+def adapter_weight_shapes(
+    adapter_path: PathLike | None,
+    *,
+    allow_unsafe: bool = False,
+) -> dict[str, tuple[int, ...]] | None:
+    """Return a complete, config-compatible adapter tensor inventory."""
+    context = _adapter_validation_context(adapter_path)
+    if context is None:
+        return None
+    adapter_dir, config, base_modules = context
+    shapes = _serialized_lora_shapes(adapter_dir, allow_unsafe)
+    if shapes is None:
+        return None
+    if lora_shapes_usable(shapes, config, base_modules):
+        return shapes
     return None
 
 

@@ -6,22 +6,26 @@ from pathlib import Path
 
 import pytest
 import torch
+from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 from test_run_status import (
     SKIP_IF_ROOT,
     TINY_LLAMA_CONFIG,
     TINY_LLAMA_SHAPES,
+    TINY_TOKENIZER,
     _deny_read_access_or_skip,
     _make_run_dir,
     _minimal_safetensors,
     _safetensors_with_dtype,
     _safetensors_with_shapes,
     _safetensors_with_tensors,
+    _test_base_model_path,
     _write_adapter_config,
     _write_checkpoint,
     _write_final_adapter,
     _write_legacy_bin_adapter,
     _write_merged_model,
 )
+from transformers import AutoModelForCausalLM, GPT2Config
 from typer.testing import CliRunner
 
 from agoge_forger.artifacts.safetensors_io import write_artifact_index
@@ -36,9 +40,10 @@ def runner() -> CliRunner:
 
 def _write_lora_config(run_dir: Path, **overrides) -> None:
     payload = {
-        "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
+        "base_model_name_or_path": str(_test_base_model_path(run_dir)),
         "peft_type": "LORA",
         "r": 1,
+        "target_modules": ["q_proj"],
         **overrides,
     }
     (run_dir / "adapter_config.json").write_text(json.dumps(payload))
@@ -134,7 +139,10 @@ def test_sharded_merged_model_is_recognised(tmp_path, shard_count):
     merged = tmp_path / "merged" / run_dir.name
     merged.mkdir(parents=True)
     (merged / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
-    (merged / "tokenizer_config.json").write_text("{}")
+    (merged / "tokenizer.json").write_text(json.dumps(TINY_TOKENIZER))
+    (merged / "tokenizer_config.json").write_text(
+        json.dumps({"tokenizer_class": "PreTrainedTokenizerFast", "unk_token": "<unk>"})
+    )
     shard_names = [
         f"model-{ordinal:05d}-of-{shard_count:05d}.safetensors"
         for ordinal in range(1, shard_count + 1)
@@ -155,6 +163,21 @@ def test_sharded_merged_model_is_recognised(tmp_path, shard_count):
         "present": True,
         "path": str(merged.resolve()),
     }
+
+
+def test_deeply_nested_shard_index_fails_closed(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    (merged / "model.safetensors").rename(merged / "model-00001-of-00001.safetensors")
+    nested = '{"weight_map":' + "[" * 100_000 + "{}" + "]" * 100_000 + "}"
+    (merged / "model.safetensors.index.json").write_text(nested)
+    write_artifact_index(str(merged))
+
+    result = runner.invoke(app, ["run-status", str(run_dir)])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["merged_model"] == {"present": False, "path": None}
 
 
 def test_shard_index_tensor_must_exist_in_designated_shard(tmp_path):
@@ -313,6 +336,14 @@ def test_merged_model_requires_completed_tokenizer_export(tmp_path):
     assert is_merged_model_dir(merged) is False
 
 
+def test_merged_model_requires_usable_tokenizer_inventory(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "tokenizer.json").unlink()
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
 def test_merged_model_requires_final_artifact_index(tmp_path):
     merged = _write_merged_model(tmp_path / "merged")
     (merged / "artifact_index.json").unlink(missing_ok=True)
@@ -325,6 +356,19 @@ def test_stale_artifact_index_is_not_a_completion_marker(tmp_path):
     (merged / "model.safetensors").write_bytes(_safetensors_with_tensors("replacement"))
 
     assert is_merged_model_dir(merged) is False
+
+
+def test_deeply_nested_artifact_index_fails_closed(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    nested = '{"artifacts":' + "[" * 100_000 + "{}" + "]" * 100_000 + "}"
+    (merged / "artifact_index.json").write_text(nested)
+
+    result = runner.invoke(app, ["run-status", str(run_dir)])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["merged_model"] == {"present": False, "path": None}
 
 
 def test_merged_config_requires_model_type(tmp_path):
@@ -546,7 +590,7 @@ def test_legacy_bin_adapter_is_accepted_with_allow_unsafe(runner, tmp_path):
     assert report["final_adapter"] == {"present": True, "path": str(run_dir.resolve())}
     assert report["export"]["ready"] is True
     assert report["export"]["source_kind"] == "final_adapter"
-    assert report["base_model"] == "Qwen/Qwen3.5-0.5B"
+    assert report["base_model"] == str(run_dir / ".test-base-model")
 
     result = runner.invoke(app, ["run-status", str(run_dir), "--allow-unsafe-serialization"])
     assert result.exit_code == 0
@@ -607,18 +651,18 @@ def test_nonpositive_lora_rank_is_not_export_ready(tmp_path):
     "case",
     [
         (((1,), (1,)), 1, False),
-        (((1, 4), (8, 1)), 2, False),
+        (((1, 8), (8, 1)), 2, False),
         (((1, 0), (8, 1)), 1, False),
         (((1, 4), (0, 1)), 1, False),
-        (((2, 4), (8, 2)), 2, True),
+        (((2, 8), (8, 2)), 2, True),
     ],
 )
 def test_lora_shapes_must_match_config_rank(tmp_path, case, legacy):
     shapes, rank, expected = case
     run_dir = _make_run_dir(tmp_path)
     tensors = {
-        "base_model.model.layer.lora_A.weight": torch.zeros(shapes[0]),
-        "base_model.model.layer.lora_B.weight": torch.zeros(shapes[1]),
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": torch.zeros(shapes[0]),
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": torch.zeros(shapes[1]),
     }
     if legacy:
         torch.save(tensors, run_dir / "adapter_model.bin")
@@ -631,6 +675,98 @@ def test_lora_shapes_must_match_config_rank(tmp_path, case, legacy):
 
     report = build_run_status(str(run_dir), allow_unsafe=legacy)
     assert report["export"]["ready"] is expected
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])
+def test_lora_non_rank_dimensions_must_match_targeted_base_module(tmp_path, legacy):
+    run_dir = _make_run_dir(tmp_path)
+    base_model = tmp_path / "base-model"
+    base_model.mkdir()
+    (base_model / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
+    shapes = {
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 1),
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (1, 1),
+    }
+    if legacy:
+        torch.save(
+            {key: torch.zeros(shape) for key, shape in shapes.items()},
+            run_dir / "adapter_model.bin",
+        )
+    else:
+        (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
+    _write_lora_config(
+        run_dir,
+        base_model_name_or_path=str(base_model),
+        target_modules=["q_proj"],
+    )
+
+    assert build_run_status(str(run_dir), allow_unsafe=legacy)["export"]["ready"] is False
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])
+def test_lora_weights_must_cover_every_base_module_selected_by_target(tmp_path, legacy):
+    run_dir = _make_run_dir(tmp_path)
+    base_model = tmp_path / "base-model"
+    base_model.mkdir()
+    config = dict(TINY_LLAMA_CONFIG, num_hidden_layers=2)
+    (base_model / "config.json").write_text(json.dumps(config))
+    shapes = {
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
+    }
+    if legacy:
+        torch.save(
+            {key: torch.zeros(shape) for key, shape in shapes.items()},
+            run_dir / "adapter_model.bin",
+        )
+    else:
+        (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
+    _write_lora_config(
+        run_dir,
+        base_model_name_or_path=str(base_model),
+        target_modules=["q_proj"],
+    )
+
+    assert build_run_status(str(run_dir), allow_unsafe=legacy)["export"]["ready"] is False
+
+
+def test_genuine_peft_conv1d_lora_uses_transformers_input_output_orientation(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    base_model = tmp_path / "base-model"
+    base_model.mkdir()
+    base_config = GPT2Config(
+        n_layer=1,
+        n_head=2,
+        n_embd=8,
+        n_positions=16,
+        n_ctx=16,
+        vocab_size=16,
+        bos_token_id=0,
+        eos_token_id=1,
+    )
+    (base_model / "config.json").write_text(base_config.to_json_string())
+    lora_config = LoraConfig(
+        r=2,
+        target_modules=["c_attn"],
+        task_type="CAUSAL_LM",
+        fan_in_fan_out=True,
+    )
+    with torch.device("meta"):
+        base = AutoModelForCausalLM.from_config(base_config, trust_remote_code=False)
+        peft_model = get_peft_model(base, lora_config)
+    peft_model.peft_config["default"].base_model_name_or_path = str(base_model)
+    shapes = {
+        key: tuple(value.shape) for key, value in get_peft_model_state_dict(peft_model).items()
+    }
+    (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
+    _write_lora_config(
+        run_dir,
+        base_model_name_or_path=str(base_model),
+        r=2,
+        target_modules=["c_attn"],
+    )
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is True
 
 
 @pytest.mark.parametrize("rank_pattern", [{"[": 1}, ["layer"]])
@@ -647,12 +783,12 @@ def test_rank_pattern_suffix_overrides_default_lora_rank(tmp_path):
     (run_dir / "adapter_model.safetensors").write_bytes(
         _safetensors_with_shapes(
             {
-                "base_model.model.layer.lora_A.weight": (2, 4),
-                "base_model.model.layer.lora_B.weight": (8, 2),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (2, 8),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 2),
             }
         )
     )
-    _write_lora_config(run_dir, rank_pattern={"layer": 2})
+    _write_lora_config(run_dir, rank_pattern={"q_proj": 2})
 
     assert build_run_status(str(run_dir))["export"]["ready"] is True
 
@@ -660,7 +796,7 @@ def test_rank_pattern_suffix_overrides_default_lora_rank(tmp_path):
 def test_lora_weights_must_match_configured_target_modules(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    _write_lora_config(run_dir, target_modules=["q_proj"])
+    _write_lora_config(run_dir, target_modules=["v_proj"])
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
@@ -668,7 +804,7 @@ def test_lora_weights_must_match_configured_target_modules(tmp_path):
 def test_lora_weights_must_cover_every_configured_target(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    _write_lora_config(run_dir, target_modules=["layer", "v_proj"])
+    _write_lora_config(run_dir, target_modules=["q_proj", "v_proj"])
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 

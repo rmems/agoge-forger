@@ -133,7 +133,7 @@ def test_base_revision_is_surfaced_when_pinned(tmp_path):
 
     report = build_run_status(str(run_dir))
 
-    assert report["base_model"] == "Qwen/Qwen3.5-0.5B"
+    assert report["base_model"] == str(run_dir / ".test-base-model")
     assert report["base_revision"] == "deadbeefcafe"
 
 
@@ -143,5 +143,5 @@ def test_base_revision_is_null_when_absent(tmp_path):
 
     report = build_run_status(str(run_dir))
 
-    assert report["base_model"] == "Qwen/Qwen3.5-0.5B"
+    assert report["base_model"] == str(run_dir / "checkpoint-40" / ".test-base-model")
     assert report["base_revision"] is None

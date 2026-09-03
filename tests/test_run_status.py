@@ -73,6 +73,21 @@ TINY_LLAMA_SHAPES = {
     "model.norm.weight": (8,),
     "lm_head.weight": (16, 8),
 }
+TINY_TOKENIZER = {
+    "version": "1.0",
+    "truncation": None,
+    "padding": None,
+    "added_tokens": [],
+    "normalizer": None,
+    "pre_tokenizer": {"type": "Whitespace"},
+    "post_processor": None,
+    "decoder": None,
+    "model": {
+        "type": "WordLevel",
+        "vocab": {"<unk>": 0, "hello": 1},
+        "unk_token": "<unk>",
+    },
+}
 
 
 @pytest.fixture
@@ -84,8 +99,8 @@ def _minimal_safetensors() -> bytes:
     """Tiny valid PEFT LoRA safetensors container with one A/B pair."""
     return _safetensors_with_shapes(
         {
-            "base_model.model.layer.lora_A.weight": (1, 1),
-            "base_model.model.layer.lora_B.weight": (1, 1),
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
         }
     )
 
@@ -127,8 +142,20 @@ def _header_without_data_region() -> bytes:
     return len(header).to_bytes(8, "little") + header
 
 
-def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=None, rank=1):
-    payload = {"peft_type": "LORA", "r": rank, "target_modules": ["layer"]}
+_DEFAULT_BASE_MODEL = object()
+
+
+def _test_base_model_path(directory: Path) -> Path:
+    base_model = directory / ".test-base-model"
+    base_model.mkdir(exist_ok=True)
+    (base_model / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
+    return base_model.resolve()
+
+
+def _write_adapter_config(directory, base_model=_DEFAULT_BASE_MODEL, revision=None, rank=1):
+    payload = {"peft_type": "LORA", "r": rank, "target_modules": ["q_proj"]}
+    if base_model is _DEFAULT_BASE_MODEL:
+        base_model = str(_test_base_model_path(directory))
     if base_model is not None:
         payload["base_model_name_or_path"] = base_model
     if revision is not None:
@@ -136,7 +163,7 @@ def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=No
     (directory / "adapter_config.json").write_text(json.dumps(payload))
 
 
-def _optimizer_state(step=1, shapes=((1, 1), (1, 1))):
+def _optimizer_state(step=1, shapes=((1, 8), (8, 1))):
     def adamw_group(params, weight_decay):
         return {
             "lr": 0.001,
@@ -186,8 +213,12 @@ def _write_torch_state(path, payload=None):
                 "cuda": torch.zeros(16, dtype=torch.uint8),
             },
             "adapter_model.bin": {
-                "base_model.model.layer.lora_A.weight": torch.zeros(1, 1),
-                "base_model.model.layer.lora_B.weight": torch.zeros(1, 1),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (
+                    torch.zeros(1, 8)
+                ),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (
+                    torch.zeros(8, 1)
+                ),
             },
         }
         payload = payloads[path.name]
@@ -201,7 +232,7 @@ def _write_torch_state(path, payload=None):
         archive.writestr("archive/.data/serialization_id", b"0")
 
 
-def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B", revision=None):
+def _write_checkpoint(root, step, base_model=_DEFAULT_BASE_MODEL, revision=None):
     checkpoint_dir = root / f"checkpoint-{step}"
     checkpoint_dir.mkdir(parents=True)
     (checkpoint_dir / "trainer_state.json").write_text(
@@ -234,13 +265,13 @@ def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B", revision=None)
     return checkpoint_dir
 
 
-def _write_final_adapter(root, base_model="Qwen/Qwen3.5-0.5B", revision=None):
+def _write_final_adapter(root, base_model=_DEFAULT_BASE_MODEL, revision=None):
     (root / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
     _write_adapter_config(root, base_model=base_model, revision=revision)
     return root
 
 
-def _write_legacy_bin_adapter(root, base_model="Qwen/Qwen3.5-0.5B"):
+def _write_legacy_bin_adapter(root, base_model=_DEFAULT_BASE_MODEL):
     _write_torch_state(root / "adapter_model.bin")
     _write_adapter_config(root, base_model=base_model)
     return root
@@ -250,7 +281,16 @@ def _write_merged_model(path):
     path.mkdir(parents=True)
     (path / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
     (path / "model.safetensors").write_bytes(_safetensors_with_shapes(TINY_LLAMA_SHAPES))
-    (path / "tokenizer_config.json").write_text("{}")
+    (path / "tokenizer.json").write_text(json.dumps(TINY_TOKENIZER))
+    (path / "tokenizer_config.json").write_text(
+        json.dumps(
+            {
+                "tokenizer_class": "PreTrainedTokenizerFast",
+                "unk_token": "<unk>",
+                "model_max_length": 16,
+            }
+        )
+    )
     write_artifact_index(str(path))
     return path
 
@@ -363,8 +403,8 @@ def test_empty_run_dir_cli_exits_zero(runner, tmp_path):
 def test_checkpoints_only_run_is_resume_ready(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     # Written newest-first to prove the report sorts by step, not by mtime.
-    latest = _write_checkpoint(run_dir, 100, base_model="Qwen/Qwen3.5-0.5B")
-    _write_checkpoint(run_dir, 50, base_model="Qwen/Qwen3.5-0.5B")
+    latest = _write_checkpoint(run_dir, 100)
+    _write_checkpoint(run_dir, 50)
 
     report = build_run_status(str(run_dir))
 
@@ -377,7 +417,7 @@ def test_checkpoints_only_run_is_resume_ready(tmp_path):
     assert report["export"]["ready"] is True
     assert report["export"]["source_kind"] == "checkpoint"
     assert report["export"]["source_path"] == str(latest.resolve())
-    assert report["base_model"] == "Qwen/Qwen3.5-0.5B"
+    assert report["base_model"] == str(latest / ".test-base-model")
 
 
 def test_latest_checkpoint_is_always_drawn_from_the_reported_steps(tmp_path):
@@ -696,6 +736,58 @@ def test_optimizer_parameter_group_requires_adamw_hyperparameters(tmp_path):
     checkpoint_dir = _write_checkpoint(run_dir, 50)
     payload = _optimizer_state(50)
     payload["param_groups"] = [{"params": [0, 1]}]
+    _write_torch_state(checkpoint_dir / "optimizer.pt", payload)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_older_adamw_group_without_decoupled_marker_is_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    payload = _optimizer_state(50)
+    for group in payload["param_groups"]:
+        group.pop("decoupled_weight_decay")
+    _write_torch_state(checkpoint_dir / "optimizer.pt", payload)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is True
+
+
+def test_amsgrad_requires_maximum_second_moment_for_each_group_parameter(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    payload = _optimizer_state(50)
+    payload["param_groups"][0]["amsgrad"] = True
+    _write_torch_state(checkpoint_dir / "optimizer.pt", payload)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_amsgrad_maximum_second_moments_match_their_parameter_group(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    payload = _optimizer_state(50)
+    payload["param_groups"][0]["params"] = [0]
+    payload["param_groups"][0]["amsgrad"] = True
+    payload["param_groups"][1]["params"] = [1]
+    payload["state"][0]["max_exp_avg_sq"] = torch.zeros(1, 8)
+    _write_torch_state(checkpoint_dir / "optimizer.pt", payload)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is True
+
+
+@pytest.mark.parametrize(
+    "maximum",
+    [torch.zeros(2), torch.zeros(1, 8, dtype=torch.float64), "not-a-tensor"],
+    ids=["wrong-shape", "wrong-dtype", "wrong-type"],
+)
+def test_amsgrad_rejects_incompatible_maximum_second_moment(tmp_path, maximum):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    payload = _optimizer_state(50)
+    payload["param_groups"][0]["amsgrad"] = True
+    for state in payload["state"].values():
+        state["max_exp_avg_sq"] = torch.zeros_like(state["exp_avg_sq"])
+    payload["state"][0]["max_exp_avg_sq"] = maximum
     _write_torch_state(checkpoint_dir / "optimizer.pt", payload)
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False

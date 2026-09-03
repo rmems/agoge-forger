@@ -13,7 +13,7 @@ def _load_index(path: Path) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError:
+    except (RecursionError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
 
