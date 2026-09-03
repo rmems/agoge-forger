@@ -1,0 +1,53 @@
+tests/test_run_status_config_cli.py
+  s_9d02230d0ab6ec::t_392de485bad81a 236-252
+tests/test_run_status.py
+  s_9d02230d0ab6ec::t_ac6af068f1c0b4 627-637
+  s_9d02230d0ab6ec::t_ca7afd6dcda35a 666-689
+  s_9d02230d0ab6ec::t_d056fe473f2352 638-659,661-664
+  s_9d02230d0ab6ec::t_dd5b3748003d15 51-75,222-223
+  s_9d02230d0ab6ec::t_f04322328902a1 140-141,143-146,148,150-152,156,189
+  s_9d02230d0ab6ec::t_402bcf7a9ebbbb 139,142,147,149,660
+src/agoge_forger/run_status.py
+  s_9d02230d0ab6ec::t_1a0ec2f368ba9a 93-95,97-99,240,246-249
+  s_9d02230d0ab6ec::t_a89bb4b4adf934 26-27,165,168-169
+src/agoge_forger/_run_status_safetensors.py
+  s_9d02230d0ab6ec::t_903a7c9464d319 87-91,98-99,101-102,107,109,114,132,141-148,151-152,157-165
+  s_9d02230d0ab6ec::t_b3cda9ffd9e355 135,138,140
+  s_9d02230d0ab6ec::t_b733eeed1ac096 125-131,155-156
+tests/test_run_status_artifacts.py
+  s_9d02230d0ab6ec::t_dd5b3748003d15 11-12,129-130,136,138-147,149-150,346,348-352,354-370
+  s_9d02230d0ab6ec::t_f43aa284cd6fea 376-403,411-414,419-429
+  s_9d02230d0ab6ec::t_728aaaec08636f 347,353
+  s_9d02230d0ab6ec::t_e3b5bdd6a03bcc 404-410,416-418
+src/agoge_forger/_run_status_trainer_state.py
+  s_9d02230d0ab6ec::t_29a3bac2534a1a 72-80,82-83
+  s_9d02230d0ab6ec::t_214930f6bf79a4 84-91,96
+  s_9d02230d0ab6ec::t_5fa66684ddda8c 6,81,92-95,97-110,113-116,159-161
+  s_9d02230d0ab6ec::t_b200553019156d 10,146-158,166-169,215-218,225-227
+src/agoge_forger/_run_status_validation.py
+  s_9d02230d0ab6ec::t_d16fcbdb9d7382 10,40,44-45,47
+  s_9d02230d0ab6ec::t_cccd469e0fce09 41-43
+  s_9d02230d0ab6ec::t_b733eeed1ac096 20-22,51-52,78-81,83,85,87,90-97,99-100
+  s_9d02230d0ab6ec::t_903a7c9464d319 39,46,48-50,88-89,98,101-112,131-135
+  s_9d02230d0ab6ec::t_256dd019807c7f 23-26,53-57,59-61
+  s_9d02230d0ab6ec::t_470bbd867f0d5f 58,62-77,82,84,86
+  s_9d02230d0ab6ec::t_5542e816fc91c1 168,172-173,175,179,182-183,187-198
+tests/test_run_status_output.py
+  s_9d02230d0ab6ec::t_392de485bad81a 91-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "42cb6efc9d957e16194927e2cd6ca23aa77d1c41",
+  "prompts": {},
+  "sessions": {
+    "s_9d02230d0ab6ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05c12-f51c-7140-a693-33864d1c4551",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
