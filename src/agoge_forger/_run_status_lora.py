@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -33,12 +34,32 @@ def _dropout_usable(config: LoraConfig) -> bool:
     )
 
 
+def _finite_number(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _alphas_usable(config: LoraConfig) -> bool:
+    pattern = config.alpha_pattern or {}
+    return bool(
+        isinstance(pattern, dict)
+        and _finite_number(config.lora_alpha)
+        and all(_MODULE_PATTERN_RE.fullmatch(key) for key in pattern)
+        and all(_finite_number(alpha) for alpha in pattern.values())
+    )
+
+
 def load_lora_config(payload: dict[str, Any]) -> LoraConfig | None:
     if payload.get("peft_type") != "LORA":
         return None
     try:
         config = LoraConfig(**payload)
-        return config if _ranks_usable(config) and _dropout_usable(config) else None
+        valid = _ranks_usable(config) and _dropout_usable(config) and _alphas_usable(config)
+        return config if valid else None
     except (AssertionError, AttributeError, ImportError, KeyError, TypeError, ValueError):
         return None
 
@@ -84,6 +105,35 @@ def _pair_shapes_usable(
     )
 
 
+def _literal_targets_usable(targets: Any) -> bool:
+    return bool(
+        not isinstance(targets, str)
+        and targets
+        and all(isinstance(target, str) and bool(target) for target in targets)
+    )
+
+
+def _module_matches_literal_targets(module: str, targets: Any) -> bool:
+    candidates = {module, module.removeprefix("base_model.model.")}
+    return any(
+        candidate == target or candidate.endswith(f".{target}")
+        for candidate in candidates
+        for target in targets
+    )
+
+
+def _targets_cover_modules(config: LoraConfig, modules: set[str]) -> bool:
+    targets = config.target_modules
+    if targets is None:
+        return True
+    if not _literal_targets_usable(targets):
+        return False
+    return all(_module_matches_literal_targets(module, targets) for module in modules) and all(
+        any(_module_matches_literal_targets(module, {target}) for module in modules)
+        for target in targets
+    )
+
+
 def _recognized_pairs(shapes: dict[str, tuple[int, ...]]) -> dict[str, tuple[str, str, str]]:
     pairs = {key: _pair_for_key(key) for key in shapes}
     return {key: pair for key, pair in pairs.items() if pair is not None}
@@ -107,6 +157,11 @@ def _left_pair_shapes_usable(
     return True
 
 
+def _left_pair_modules(pairs: dict[str, tuple[str, str, str]]) -> set[str]:
+    right_segments = {"lora_B", "lora_embedding_B"}
+    return {module for module, segment, _ in pairs.values() if segment not in right_segments}
+
+
 def lora_shapes_usable(
     shapes: dict[str, tuple[int, ...]] | None,
     config: LoraConfig,
@@ -115,5 +170,8 @@ def lora_shapes_usable(
         return False
     pairs = _recognized_pairs(shapes)
     return bool(
-        pairs and _pair_set_complete(pairs) and _left_pair_shapes_usable(shapes, pairs, config)
+        pairs
+        and _pair_set_complete(pairs)
+        and _targets_cover_modules(config, _left_pair_modules(pairs))
+        and _left_pair_shapes_usable(shapes, pairs, config)
     )

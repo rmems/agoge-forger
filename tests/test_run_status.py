@@ -102,7 +102,7 @@ def _header_without_data_region() -> bytes:
 
 
 def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=None, rank=1):
-    payload = {"peft_type": "LORA", "r": rank}
+    payload = {"peft_type": "LORA", "r": rank, "target_modules": ["layer"]}
     if base_model is not None:
         payload["base_model_name_or_path"] = base_model
     if revision is not None:
@@ -119,6 +119,7 @@ def _write_torch_state(path, payload=None):
                 "python": random.getstate(),
                 "numpy": np.random.get_state(),
                 "cpu": torch.random.get_rng_state(),
+                "cuda": torch.zeros(16, dtype=torch.uint8),
             },
             "adapter_model.bin": {
                 "base_model.model.layer.lora_A.weight": torch.zeros(1, 1),
@@ -143,8 +144,23 @@ def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B", revision=None)
         json.dumps({"global_step": step, "train_batch_size": 1})
     )
     (checkpoint_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
-    for state_name in ("optimizer.pt", "scheduler.pt", "rng_state.pth"):
-        _write_torch_state(checkpoint_dir / state_name)
+    _write_torch_state(
+        checkpoint_dir / "optimizer.pt",
+        {"state": {0: {}}, "param_groups": [{"params": [0]}]},
+    )
+    _write_torch_state(
+        checkpoint_dir / "scheduler.pt",
+        {"last_epoch": step, "_step_count": step + 1},
+    )
+    _write_torch_state(
+        checkpoint_dir / "rng_state.pth",
+        {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "cpu": torch.random.get_rng_state(),
+            "cuda": torch.zeros(16, dtype=torch.uint8),
+        },
+    )
     _write_adapter_config(checkpoint_dir, base_model=base_model, revision=revision)
     return checkpoint_dir
 
@@ -573,8 +589,16 @@ def test_nested_optimizer_field_names_are_not_top_level_state(tmp_path):
     [
         ("optimizer.pt", {"state": None, "param_groups": [{"params": []}]}),
         ("optimizer.pt", {"state": {}, "param_groups": [{"params": None}]}),
+        ("optimizer.pt", {"state": {}, "param_groups": [{"params": [0]}]}),
+        ("optimizer.pt", {"state": {0: {}}, "param_groups": [{"params": [0, 1]}]}),
+        ("optimizer.pt", {"state": {0: {}, 1: {}}, "param_groups": [{"params": [0]}]}),
+        ("optimizer.pt", {"state": {0: {}}, "param_groups": [{"params": [0, 0]}]}),
         ("scheduler.pt", {"last_epoch": None, "_step_count": 1}),
         ("scheduler.pt", {"last_epoch": 0, "_step_count": "1"}),
+        ("scheduler.pt", {"last_epoch": 50.0, "_step_count": 51}),
+        ("scheduler.pt", {"last_epoch": 50, "_step_count": 51.0}),
+        ("scheduler.pt", {"last_epoch": 0, "_step_count": 1}),
+        ("scheduler.pt", {"last_epoch": 50, "_step_count": 50}),
     ],
 )
 def test_malformed_training_state_values_are_not_resume_ready(tmp_path, state_name, payload):
@@ -585,7 +609,7 @@ def test_malformed_training_state_values_are_not_resume_ready(tmp_path, state_na
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
 
-@pytest.mark.parametrize("field", ["python", "numpy", "cpu"])
+@pytest.mark.parametrize("field", ["python", "numpy", "cpu", "cuda"])
 def test_malformed_rng_state_values_are_not_resume_ready(tmp_path, field):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
@@ -593,9 +617,34 @@ def test_malformed_rng_state_values_are_not_resume_ready(tmp_path, field):
         "python": random.getstate(),
         "numpy": np.random.get_state(),
         "cpu": torch.random.get_rng_state(),
+        "cuda": torch.zeros(16, dtype=torch.uint8),
     }
     payload[field] = None
     _write_torch_state(checkpoint_dir / "rng_state.pth", payload)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    "cuda_state",
+    [
+        torch.zeros(1, dtype=torch.uint8),
+        torch.zeros(16),
+        torch.tensor([0] * 8 + [1] + [0] * 7, dtype=torch.uint8),
+    ],
+)
+def test_malformed_cuda_rng_state_is_not_resume_ready(tmp_path, cuda_state):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    _write_torch_state(
+        checkpoint_dir / "rng_state.pth",
+        {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "cpu": torch.random.get_rng_state(),
+            "cuda": cuda_state,
+        },
+    )
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 

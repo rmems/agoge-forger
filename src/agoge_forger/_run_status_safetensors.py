@@ -103,10 +103,16 @@ def _weight_map_matches_shards(
     weight_map: dict[str, Any],
     shard_keys: dict[str, set[str]],
 ) -> bool:
+    indexed_keys: dict[str, set[str]] = {name: set() for name in shard_keys}
     for tensor_name, shard_name in weight_map.items():
-        if not isinstance(shard_name, str) or tensor_name not in shard_keys[shard_name]:
+        if not isinstance(shard_name, str) or shard_name not in indexed_keys:
             return False
-    return True
+        indexed_keys[shard_name].add(tensor_name)
+    return indexed_keys == shard_keys
+
+
+def _physical_model_shards(candidate: Path) -> set[str]:
+    return {entry.name for entry in candidate.iterdir() if _is_root_model_shard_name(entry.name)}
 
 
 def _has_complete_sharded_weights(candidate: Path) -> bool:
@@ -114,7 +120,11 @@ def _has_complete_sharded_weights(candidate: Path) -> bool:
     if weight_map is None:
         return False
     shards = _shard_filenames(weight_map)
-    if shards is None or not _numbered_shards_complete(shards):
+    if (
+        shards is None
+        or shards != _physical_model_shards(candidate)
+        or not _numbered_shards_complete(shards)
+    ):
         return False
     shard_keys = _load_shard_keys(candidate, shards)
     return shard_keys is not None and _weight_map_matches_shards(weight_map, shard_keys)

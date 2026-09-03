@@ -177,6 +177,32 @@ def test_shard_index_tensor_must_exist_in_designated_shard(tmp_path):
     assert is_merged_model_dir(merged) is False
 
 
+def test_shard_index_must_cover_every_serialized_tensor(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "model.safetensors").unlink()
+    shard_name = "model-00001-of-00001.safetensors"
+    (merged / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"a": shard_name}})
+    )
+    (merged / shard_name).write_bytes(_safetensors_with_tensors("a", "b"))
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_shard_index_must_cover_every_physical_shard(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "model.safetensors").unlink()
+    indexed = "model-00001-of-00001.safetensors"
+    extra = "model-00002-of-00002.safetensors"
+    (merged / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {"a": indexed}}))
+    (merged / indexed).write_bytes(_safetensors_with_tensors("a"))
+    (merged / extra).write_bytes(_safetensors_with_tensors("b"))
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
 def test_numbered_shard_series_must_be_complete(tmp_path):
     merged = _write_merged_model(tmp_path / "merged")
     (merged / "model.safetensors").unlink()
@@ -555,6 +581,79 @@ def test_rank_pattern_suffix_overrides_default_lora_rank(tmp_path):
     )
 
     assert build_run_status(str(run_dir))["export"]["ready"] is True
+
+
+def test_lora_weights_must_match_configured_target_modules(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    (run_dir / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
+                "peft_type": "LORA",
+                "r": 1,
+                "target_modules": ["q_proj"],
+            }
+        )
+    )
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+def test_lora_weights_must_cover_every_configured_target(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    (run_dir / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
+                "peft_type": "LORA",
+                "r": 1,
+                "target_modules": ["layer", "v_proj"],
+            }
+        )
+    )
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+@pytest.mark.parametrize("alpha", ["bad", True, float("nan"), float("inf"), 10**1000])
+def test_lora_alpha_must_be_a_finite_number(tmp_path, alpha):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    (run_dir / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
+                "peft_type": "LORA",
+                "r": 1,
+                "lora_alpha": alpha,
+            }
+        )
+    )
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    "alpha_pattern",
+    [{"layer": "bad"}, {"layer": float("inf")}, {"[": 1}],
+)
+def test_lora_alpha_pattern_must_be_usable(tmp_path, alpha_pattern):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    (run_dir / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
+                "peft_type": "LORA",
+                "r": 1,
+                "alpha_pattern": alpha_pattern,
+            }
+        )
+    )
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
 
 
 @pytest.mark.parametrize("revision", ["   ", [], {"branch": "main"}, True])
