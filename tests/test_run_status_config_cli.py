@@ -48,6 +48,20 @@ def test_malformed_adapter_config_yields_null_base_model(runner, tmp_path):
     assert json.loads(result.stdout)["schema_version"] == 1
 
 
+def test_deeply_nested_adapter_config_yields_null_base_model(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
+    nested = '{"base_model_name_or_path":"org/model","nested":' + "[" * 100_000
+    nested += "0" + "]" * 100_000 + "}"
+    (run_dir / "adapter_config.json").write_text(nested)
+
+    report = build_run_status(str(run_dir))
+
+    assert report["base_model"] is None
+    assert report["base_revision"] is None
+    assert report["export"]["ready"] is False
+
+
 @pytest.mark.parametrize("payload", [["org/model"], {"id": "org/model"}, True, 1])
 def test_non_string_base_model_field_yields_null_base_model(tmp_path, payload):
     """A truthy non-string base_model_name_or_path must not leak into the report."""

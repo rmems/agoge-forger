@@ -21,7 +21,7 @@ from test_run_status import (
     _write_final_adapter,
     _write_legacy_bin_adapter,
 )
-from transformers import AutoModelForCausalLM, GPT2Config
+from transformers import AutoModelForCausalLM, GPT2Config, LlamaConfig
 from typer.testing import CliRunner
 
 from agoge_forger.cli import app
@@ -57,6 +57,17 @@ def _write_lora_weights(
         )
         return
     (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
+
+
+def _write_base_weights(base_model: Path, model) -> None:
+    ignored = set(getattr(model, "_keys_to_ignore_on_save", None) or ())
+    tied = set(model.all_tied_weights_keys or {})
+    shapes = {
+        name: tuple(value.shape)
+        for name, value in model.state_dict().items()
+        if name not in ignored and name not in tied
+    }
+    (base_model / "model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
 
 
 # --------------------------------------------------------------------------
@@ -109,6 +120,23 @@ def test_whitespace_base_model_is_not_export_ready(tmp_path):
 
     assert report["base_model"] is None
     assert report["export"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    "weights",
+    [None, {"foreign.weight": (1,)}],
+    ids=["missing", "wrong-inventory"],
+)
+def test_local_base_model_weights_must_match_its_config(tmp_path, weights):
+    run_dir = _make_run_dir(tmp_path)
+    base_model = tmp_path / "base-model"
+    base_model.mkdir()
+    (base_model / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
+    if weights is not None:
+        (base_model / "model.safetensors").write_bytes(_safetensors_with_shapes(weights))
+    _write_final_adapter(run_dir, base_model=str(base_model))
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
 
 
 def test_unrelated_safetensor_keys_are_not_lora_weights(tmp_path):
@@ -234,6 +262,7 @@ def test_genuine_peft_conv1d_lora_uses_transformers_input_output_orientation(tmp
     )
     with torch.device("meta"):
         base = AutoModelForCausalLM.from_config(base_config, trust_remote_code=False)
+        _write_base_weights(base_model, base)
         peft_model = get_peft_model(base, lora_config)
     peft_model.peft_config["default"].base_model_name_or_path = str(base_model)
     shapes = {
@@ -248,6 +277,74 @@ def test_genuine_peft_conv1d_lora_uses_transformers_input_output_orientation(tmp
     )
 
     assert build_run_status(str(run_dir))["export"]["ready"] is True
+
+
+def test_genuine_peft_dora_magnitude_vector_is_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    base_model = tmp_path / "base-model"
+    base_model.mkdir()
+    base_config = LlamaConfig(**TINY_LLAMA_CONFIG)
+    (base_model / "config.json").write_text(base_config.to_json_string())
+    lora_config = LoraConfig(
+        r=2,
+        target_modules=["q_proj"],
+        task_type="CAUSAL_LM",
+        use_dora=True,
+    )
+    with torch.device("meta"):
+        base = AutoModelForCausalLM.from_config(base_config, trust_remote_code=False)
+        _write_base_weights(base_model, base)
+        peft_model = get_peft_model(base, lora_config)
+    peft_model.peft_config["default"].base_model_name_or_path = str(base_model)
+    shapes = {
+        key: tuple(value.shape) for key, value in get_peft_model_state_dict(peft_model).items()
+    }
+    (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
+    _write_lora_config(
+        run_dir,
+        base_model_name_or_path=str(base_model),
+        r=2,
+        target_modules=["q_proj"],
+        use_dora=True,
+    )
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is True
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])
+@pytest.mark.parametrize(
+    "magnitude_shape", [None, (7,), (8, 1)], ids=["missing", "wrong-size", "matrix"]
+)
+def test_dora_requires_complete_correctly_shaped_magnitude_vectors(
+    tmp_path, legacy, magnitude_shape
+):
+    run_dir = _make_run_dir(tmp_path)
+    shapes = {
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (2, 8),
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 2),
+    }
+    if magnitude_shape is not None:
+        shapes["base_model.model.model.layers.0.self_attn.q_proj.lora_magnitude_vector"] = (
+            magnitude_shape
+        )
+    _write_lora_weights(run_dir, shapes, legacy=legacy)
+    _write_lora_config(run_dir, r=2, use_dora=True)
+
+    assert build_run_status(str(run_dir), allow_unsafe=legacy)["export"]["ready"] is False
+
+
+@pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])
+def test_non_dora_rejects_magnitude_vectors(tmp_path, legacy):
+    run_dir = _make_run_dir(tmp_path)
+    shapes = {
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
+        "base_model.model.model.layers.0.self_attn.q_proj.lora_magnitude_vector": (8,),
+    }
+    _write_lora_weights(run_dir, shapes, legacy=legacy)
+    _write_lora_config(run_dir, use_dora=False)
+
+    assert build_run_status(str(run_dir), allow_unsafe=legacy)["export"]["ready"] is False
 
 
 @pytest.mark.parametrize("rank_pattern", [{"[": 1}, ["layer"]])

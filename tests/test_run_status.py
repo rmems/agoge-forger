@@ -113,15 +113,20 @@ def _safetensors_with_tensors(*names: str) -> bytes:
     return _safetensors_with_shapes({name: (1,) for name in names})
 
 
-def _safetensors_with_shapes(shapes: dict[str, tuple[int, ...]]) -> bytes:
+def _safetensors_with_shapes(
+    shapes: dict[str, tuple[int, ...]],
+    *,
+    dtype: str = "F32",
+    element_size: int = 4,
+) -> bytes:
     offset = 0
     payload = {}
     for name, shape in shapes.items():
-        size = 4
+        size = element_size
         for dimension in shape:
             size *= dimension
         payload[name] = {
-            "dtype": "F32",
+            "dtype": dtype,
             "shape": list(shape),
             "data_offsets": [offset, offset + size],
         }
@@ -145,6 +150,7 @@ def _test_base_model_path(directory: Path) -> Path:
     base_model = directory / ".test-base-model"
     base_model.mkdir(exist_ok=True)
     (base_model / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
+    (base_model / "model.safetensors").write_bytes(_safetensors_with_shapes(TINY_LLAMA_SHAPES))
     return base_model.resolve()
 
 
@@ -604,6 +610,48 @@ def test_unsupported_safetensors_dtype_is_not_export_ready(tmp_path):
     _write_adapter_config(run_dir)
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    ("dtype", "element_size"),
+    [("BOOL", 1), ("I32", 4)],
+)
+def test_non_floating_lora_weights_are_not_export_ready(tmp_path, dtype, element_size):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(
+        _safetensors_with_shapes(
+            {
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
+            },
+            dtype=dtype,
+            element_size=element_size,
+        )
+    )
+    _write_adapter_config(run_dir)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    ("dtype", "element_size"),
+    [("BF16", 2), ("F16", 2), ("F32", 4), ("F64", 8)],
+)
+def test_floating_lora_weights_remain_export_ready(tmp_path, dtype, element_size):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(
+        _safetensors_with_shapes(
+            {
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
+            },
+            dtype=dtype,
+            element_size=element_size,
+        )
+    )
+    _write_adapter_config(run_dir)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is True
 
 
 def test_empty_checkpoint_weights_are_not_resume_ready(tmp_path):

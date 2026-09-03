@@ -23,10 +23,14 @@ def safetensors_shapes(path: Path) -> dict[str, tuple[int, ...]] | None:
         return None
     try:
         with safe_open(path, framework="pt", device="cpu") as weights:
-            return {
-                key: tuple(weights.get_slice(key).get_shape())
-                for key in weights.keys()  # noqa: SIM118 - safe_open is not iterable
-            }
+            shapes = {}
+            for key in weights.keys():  # noqa: SIM118 - safe_open is not iterable
+                tensor = weights.get_slice(key)
+                dtype = tensor.get_dtype()
+                if dtype != "BF16" and not dtype.startswith("F"):
+                    return None
+                shapes[key] = tuple(tensor.get_shape())
+            return shapes
     except SafetensorError:
         return None
 

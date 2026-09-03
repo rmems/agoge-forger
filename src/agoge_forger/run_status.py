@@ -55,6 +55,7 @@ _ADAPTER_CONFIG_ERRORS = (
     KeyError,
     TypeError,
     AttributeError,
+    RecursionError,
 )
 
 

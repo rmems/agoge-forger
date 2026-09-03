@@ -19,6 +19,8 @@ from transformers.pytorch_utils import Conv1D
 
 from ._run_status_architecture import architecture_resources_bounded
 from ._run_status_artifact_index import artifact_index_usable
+from ._run_status_base_model import causal_lm_shapes as _causal_lm_shapes
+from ._run_status_base_model import local_base_weights_usable
 from ._run_status_lora import (
     BaseModuleDimensions,
     load_lora_config,
@@ -54,23 +56,6 @@ def _local_causal_lm_config(candidate: Path) -> Any:
     except (AttributeError, ImportError, OSError, TypeError, ValueError):
         return None
     return config if type(config) in MODEL_FOR_CAUSAL_LM_MAPPING else None
-
-
-def _causal_lm_shapes(config: Any) -> dict[str, tuple[int, ...]] | None:
-    if not architecture_resources_bounded(config):
-        return None
-    try:
-        with torch.device("meta"):
-            model = AutoModelForCausalLM.from_config(config, trust_remote_code=False)
-        ignored = set(getattr(model, "_keys_to_ignore_on_save", None) or ())
-        tied = set(model.all_tied_weights_keys or {})
-        return {
-            name: tuple(value.shape)
-            for name, value in model.state_dict().items()
-            if name not in ignored and name not in tied
-        }
-    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-        return None
 
 
 def _offline_pretrained(
@@ -112,7 +97,12 @@ def _adapter_base_config(config: Any) -> Any:
         )
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
         return None
-    return base_config if type(base_config) in MODEL_FOR_CAUSAL_LM_MAPPING else None
+    return (
+        base_config
+        if type(base_config) in MODEL_FOR_CAUSAL_LM_MAPPING
+        and local_base_weights_usable(base_model, base_config)
+        else None
+    )
 
 
 def _base_module_dimensions(config: Any) -> dict[str, BaseModuleDimensions] | None:

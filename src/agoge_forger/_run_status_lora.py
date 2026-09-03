@@ -143,6 +143,26 @@ def _left_pair_modules(pairs: dict[str, tuple[str, str, str]]) -> set[str]:
     return {module for module, segment, _ in pairs.values() if segment not in right_segments}
 
 
+def _dora_shapes_usable(
+    shapes: dict[str, Shape],
+    modules: set[str],
+    config: LoraConfig,
+    base_modules: dict[str, BaseModuleDimensions],
+) -> bool:
+    actual = {
+        key: shape for key, shape in shapes.items() if "lora_magnitude_vector" in key.split(".")
+    }
+    if not config.use_dora:
+        return not actual
+    expected = {}
+    for module in modules:
+        base = base_modules.get(module.removeprefix(_BASE_MODEL_PREFIX))
+        if base is None:
+            return False
+        expected[f"{module}.lora_magnitude_vector"] = (base.output_size,)
+    return actual == expected
+
+
 def lora_shapes_usable(
     shapes: dict[str, tuple[int, ...]] | None,
     config: LoraConfig,
@@ -165,5 +185,6 @@ def lora_shapes_usable(
         _targets_cover_modules(targets, modules),
         normalized_modules == expected_modules,
         _left_pair_shapes_usable(shapes, pairs, config, base_modules),
+        _dora_shapes_usable(shapes, modules, config, base_modules),
     )
     return all(checks)

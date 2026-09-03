@@ -615,6 +615,24 @@ def test_unsupported_merged_safetensors_dtype_is_not_present(tmp_path):
     assert is_merged_model_dir(merged) is False
 
 
+@pytest.mark.parametrize(
+    ("dtype", "element_size"),
+    [("BOOL", 1), ("I32", 4)],
+)
+def test_non_floating_merged_weights_are_not_present(tmp_path, dtype, element_size):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "model.safetensors").write_bytes(
+        _safetensors_with_shapes(
+            TINY_LLAMA_SHAPES,
+            dtype=dtype,
+            element_size=element_size,
+        )
+    )
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
 def test_explicit_merged_dir_is_honored(runner, tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
