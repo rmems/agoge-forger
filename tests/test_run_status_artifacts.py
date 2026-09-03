@@ -5,12 +5,14 @@ import os
 from pathlib import Path
 
 import pytest
+import torch
 from test_run_status import (
     SKIP_IF_ROOT,
     _deny_read_access_or_skip,
     _make_run_dir,
     _minimal_safetensors,
     _safetensors_with_dtype,
+    _safetensors_with_shapes,
     _safetensors_with_tensors,
     _write_adapter_config,
     _write_checkpoint,
@@ -462,6 +464,96 @@ def test_nonpositive_lora_rank_is_not_export_ready(tmp_path):
     )
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    ("shapes", "rank", "expected"),
+    [
+        (((1,), (1,)), 1, False),
+        (((1, 4), (8, 1)), 2, False),
+        (((1, 0), (8, 1)), 1, False),
+        (((1, 4), (0, 1)), 1, False),
+        (((2, 4), (8, 2)), 2, True),
+    ],
+)
+def test_safetensors_lora_shapes_must_match_config_rank(tmp_path, shapes, rank, expected):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(
+        _safetensors_with_shapes(
+            {
+                "base_model.model.layer.lora_A.weight": shapes[0],
+                "base_model.model.layer.lora_B.weight": shapes[1],
+            }
+        )
+    )
+    _write_adapter_config(run_dir, rank=rank)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is expected
+
+
+@pytest.mark.parametrize(
+    ("shapes", "rank", "expected"),
+    [
+        (((1,), (1,)), 1, False),
+        (((1, 4), (8, 1)), 2, False),
+        (((1, 0), (8, 1)), 1, False),
+        (((1, 4), (0, 1)), 1, False),
+        (((2, 4), (8, 2)), 2, True),
+    ],
+)
+def test_legacy_lora_shapes_must_match_config_rank(tmp_path, shapes, rank, expected):
+    run_dir = _make_run_dir(tmp_path)
+    torch.save(
+        {
+            "base_model.model.layer.lora_A.weight": torch.zeros(shapes[0]),
+            "base_model.model.layer.lora_B.weight": torch.zeros(shapes[1]),
+        },
+        run_dir / "adapter_model.bin",
+    )
+    _write_adapter_config(run_dir, rank=rank)
+
+    assert build_run_status(str(run_dir), allow_unsafe=True)["export"]["ready"] is expected
+
+
+def test_invalid_rank_pattern_does_not_crash_run_status(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    _write_final_adapter(run_dir)
+    (run_dir / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
+                "peft_type": "LORA",
+                "r": 1,
+                "rank_pattern": {"[": 1},
+            }
+        )
+    )
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+def test_rank_pattern_suffix_overrides_default_lora_rank(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(
+        _safetensors_with_shapes(
+            {
+                "base_model.model.layer.lora_A.weight": (2, 4),
+                "base_model.model.layer.lora_B.weight": (8, 2),
+            }
+        )
+    )
+    (run_dir / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
+                "peft_type": "LORA",
+                "r": 1,
+                "rank_pattern": {"layer": 2},
+            }
+        )
+    )
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is True
 
 
 @pytest.mark.parametrize("revision", ["   ", [], {"branch": "main"}, True])

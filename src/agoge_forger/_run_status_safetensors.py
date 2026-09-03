@@ -13,11 +13,19 @@ _NUMBERED_SHARD_RE = re.compile(r"model-(\d+)-of-(\d+)\.safetensors")
 
 
 def safetensors_keys(path: Path) -> set[str] | None:
+    shapes = safetensors_shapes(path)
+    return None if shapes is None else set(shapes)
+
+
+def safetensors_shapes(path: Path) -> dict[str, tuple[int, ...]] | None:
     if path.is_symlink():
         return None
     try:
         with safe_open(path, framework="pt", device="cpu") as weights:
-            return set(weights.keys())
+            return {
+                key: tuple(weights.get_slice(key).get_shape())
+                for key in weights.keys()  # noqa: SIM118 - safe_open is not iterable
+            }
     except SafetensorError:
         return None
 

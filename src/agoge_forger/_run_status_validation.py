@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from peft import LoraConfig
+import torch
 from transformers import CONFIG_MAPPING
 
 from ._run_status_artifact_index import artifact_index_usable
-from ._run_status_safetensors import has_complete_merged_weights, safetensors_keys
-from ._run_status_torch_archive import torch_zip_metadata
+from ._run_status_lora import load_lora_config, lora_config_usable, lora_shapes_usable
+from ._run_status_safetensors import has_complete_merged_weights, safetensors_shapes
+from ._run_status_torch_archive import torch_mapping
 from .config import normalize_revision
 
 PathLike = str | Path
@@ -46,40 +47,6 @@ def _revision_usable(payload: dict[str, Any]) -> bool:
         return False
 
 
-def _lora_keys_usable(keys: set[str] | None) -> bool:
-    if not keys:
-        return False
-    pairs = (("lora_A", "lora_B"), ("lora_embedding_A", "lora_embedding_B"))
-    for key in keys:
-        parts = key.split(".")
-        for left, right in pairs:
-            if left not in parts:
-                continue
-            counterpart = parts.copy()
-            counterpart[counterpart.index(left)] = right
-            if ".".join(counterpart) in keys:
-                return True
-    return False
-
-
-def _positive_rank(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value > 0
-
-
-def _lora_config_usable(payload: dict[str, Any]) -> bool:
-    try:
-        config = LoraConfig(**payload)
-    except (ImportError, TypeError, ValueError):
-        return False
-    return bool(
-        _positive_rank(config.r)
-        and all(_positive_rank(rank) for rank in (config.rank_pattern or {}).values())
-        and isinstance(config.lora_dropout, (int, float))
-        and not isinstance(config.lora_dropout, bool)
-        and 0 <= config.lora_dropout <= 1
-    )
-
-
 def is_merged_model_dir(path: PathLike) -> bool:
     """True for a complete, indexed merged-model export."""
     candidate = Path(path)
@@ -103,8 +70,22 @@ def adapter_config_usable(adapter_path: PathLike | None) -> bool:
         _nonempty_string(base)
         and payload.get("peft_type") == "LORA"
         and _revision_usable(payload)
-        and _lora_config_usable(payload)
+        and lora_config_usable(payload)
     )
+
+
+def _adapter_lora_config(adapter_dir: Path) -> Any:
+    payload = _load_json_object(adapter_dir / "adapter_config.json")
+    return None if payload is None else load_lora_config(payload)
+
+
+def _legacy_lora_shapes(path: Path) -> dict[str, tuple[int, ...]]:
+    payload = torch_mapping(path)
+    return {
+        key: tuple(value.shape)
+        for key, value in (payload or {}).items()
+        if isinstance(value, torch.Tensor)
+    }
 
 
 def adapter_weights_usable(
@@ -116,11 +97,14 @@ def adapter_weights_usable(
     if adapter_path is None:
         return False
     adapter_dir = Path(adapter_path)
+    config = _adapter_lora_config(adapter_dir)
+    if config is None:
+        return False
     safetensors_path = adapter_dir / "adapter_model.safetensors"
     if safetensors_path.is_file():
-        return _lora_keys_usable(safetensors_keys(safetensors_path))
+        return lora_shapes_usable(safetensors_shapes(safetensors_path), config)
     if allow_unsafe:
         legacy = adapter_dir / "adapter_model.bin"
         if legacy.is_file():
-            return _lora_keys_usable(torch_zip_metadata(legacy, require_data_record=True))
+            return lora_shapes_usable(_legacy_lora_shapes(legacy), config)
     return False

@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import zipfile
 from pathlib import Path
 
+import numpy as np
 import pytest
+import torch
 from typer.testing import CliRunner
 
 from agoge_forger.artifacts.safetensors_io import write_artifact_index
@@ -53,20 +56,34 @@ def runner() -> CliRunner:
 
 def _minimal_safetensors() -> bytes:
     """Tiny valid PEFT LoRA safetensors container with one A/B pair."""
-    return _safetensors_with_tensors(
-        "base_model.model.layer.lora_A.weight",
-        "base_model.model.layer.lora_B.weight",
+    return _safetensors_with_shapes(
+        {
+            "base_model.model.layer.lora_A.weight": (1, 1),
+            "base_model.model.layer.lora_B.weight": (1, 1),
+        }
     )
 
 
 def _safetensors_with_tensors(*names: str) -> bytes:
-    payload = {
-        name: {"dtype": "F32", "shape": [1], "data_offsets": [index * 4, (index + 1) * 4]}
-        for index, name in enumerate(names)
-    }
+    return _safetensors_with_shapes({name: (1,) for name in names})
+
+
+def _safetensors_with_shapes(shapes: dict[str, tuple[int, ...]]) -> bytes:
+    offset = 0
+    payload = {}
+    for name, shape in shapes.items():
+        size = 4
+        for dimension in shape:
+            size *= dimension
+        payload[name] = {
+            "dtype": "F32",
+            "shape": list(shape),
+            "data_offsets": [offset, offset + size],
+        }
+        offset += size
     header = json.dumps(payload, separators=(",", ":")).encode()
     header += b" " * ((8 - len(header) % 8) % 8)
-    return len(header).to_bytes(8, "little") + header + b"\0" * (4 * len(names))
+    return len(header).to_bytes(8, "little") + header + b"\0" * offset
 
 
 def _safetensors_with_dtype(dtype: str) -> bytes:
@@ -84,8 +101,8 @@ def _header_without_data_region() -> bytes:
     return len(header).to_bytes(8, "little") + header
 
 
-def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=None):
-    payload = {"peft_type": "LORA"}
+def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=None, rank=1):
+    payload = {"peft_type": "LORA", "r": rank}
     if base_model is not None:
         payload["base_model_name_or_path"] = base_model
     if revision is not None:
@@ -96,12 +113,22 @@ def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=No
 def _write_torch_state(path, payload=None):
     if payload is None:
         payloads = {
-            "optimizer.pt": b"\x80\x02}q\x00(X\x05\x00\x00\x00stateq\x01}q\x02X\x0c\x00\x00\x00param_groupsq\x03]q\x04u.",
-            "scheduler.pt": b"\x80\x02}q\x00(X\n\x00\x00\x00last_epochq\x01K\x00X\x0b\x00\x00\x00_step_countq\x02K\x01u.",
-            "rng_state.pth": b"\x80\x02}q\x00(X\x06\x00\x00\x00pythonq\x01NX\x05\x00\x00\x00numpyq\x02NX\x03\x00\x00\x00cpuq\x03Nu.",
-            "adapter_model.bin": b"\x80\x02}q\x00(X$\x00\x00\x00base_model.model.layer.lora_A.weightq\x01K\x01X$\x00\x00\x00base_model.model.layer.lora_B.weightq\x02K\x02u.",
+            "optimizer.pt": {"state": {}, "param_groups": [{"params": [0]}]},
+            "scheduler.pt": {"last_epoch": 0, "_step_count": 1},
+            "rng_state.pth": {
+                "python": random.getstate(),
+                "numpy": np.random.get_state(),
+                "cpu": torch.random.get_rng_state(),
+            },
+            "adapter_model.bin": {
+                "base_model.model.layer.lora_A.weight": torch.zeros(1, 1),
+                "base_model.model.layer.lora_B.weight": torch.zeros(1, 1),
+            },
         }
         payload = payloads[path.name]
+    if not isinstance(payload, bytes):
+        torch.save(payload, path)
+        return
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("archive/data.pkl", payload)
         archive.writestr("archive/data/0", b"\0")
@@ -537,6 +564,54 @@ def test_nested_optimizer_field_names_are_not_top_level_state(tmp_path):
         b"X\x05\x00\x00\x00stateq\x03X\x0c\x00\x00\x00param_groupsq\x04es."
     )
     _write_torch_state(checkpoint_dir / "optimizer.pt", payload=nested)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    ("state_name", "payload"),
+    [
+        ("optimizer.pt", {"state": None, "param_groups": [{"params": []}]}),
+        ("optimizer.pt", {"state": {}, "param_groups": [{"params": None}]}),
+        ("scheduler.pt", {"last_epoch": None, "_step_count": 1}),
+        ("scheduler.pt", {"last_epoch": 0, "_step_count": "1"}),
+    ],
+)
+def test_malformed_training_state_values_are_not_resume_ready(tmp_path, state_name, payload):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    _write_torch_state(checkpoint_dir / state_name, payload)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize("field", ["python", "numpy", "cpu"])
+def test_malformed_rng_state_values_are_not_resume_ready(tmp_path, field):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    payload = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "cpu": torch.random.get_rng_state(),
+    }
+    payload[field] = None
+    _write_torch_state(checkpoint_dir / "rng_state.pth", payload)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_non_lora_checkpoint_config_is_not_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    (checkpoint_dir / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
+                "peft_type": "IA3",
+                "r": 1,
+            }
+        )
+    )
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
