@@ -30,7 +30,7 @@ from ._run_status_validation import (
 )
 from .path_safety import resolve_existing_path
 from .train.checkpoints import (
-    _checkpoint_step,
+    checkpoint_step,
     infer_base_model_from_adapter,
     infer_base_revision_from_adapter,
     is_adapter_artifact,
@@ -146,8 +146,8 @@ def _checkpoint_status(checkpoints: list[Path]) -> tuple[Path | None, dict[str, 
     latest = checkpoints[-1] if checkpoints else None
     return latest, {
         "valid_count": len(checkpoints),
-        "steps": [_checkpoint_step(path) for path in checkpoints],
-        "latest_step": None if latest is None else _checkpoint_step(latest),
+        "steps": [checkpoint_step(path) for path in checkpoints],
+        "latest_step": None if latest is None else checkpoint_step(latest),
         "latest_path": _as_str(latest),
     }
 

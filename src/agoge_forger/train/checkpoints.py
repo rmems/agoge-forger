@@ -15,7 +15,7 @@ LEGACY_ADAPTER_WEIGHT_FILES = ("adapter_model.bin",)
 PathLike = str | Path
 
 
-def _checkpoint_step(path: Path) -> int:
+def checkpoint_step(path: Path) -> int:
     match = CHECKPOINT_RE.match(path.name)
     if not match:
         return -1
@@ -61,7 +61,7 @@ def is_valid_checkpoint(path: PathLike, *, allow_unsafe: bool = False) -> bool:
     checkpoint_dir = Path(path)
     if not checkpoint_dir.is_dir():
         return False
-    if _checkpoint_step(checkpoint_dir) < 0:
+    if checkpoint_step(checkpoint_dir) < 0:
         return False
     if not (checkpoint_dir / "trainer_state.json").is_file():
         return False
@@ -75,7 +75,7 @@ def list_valid_checkpoints(run_dir: PathLike, *, allow_unsafe: bool = False) -> 
     checkpoints = [
         path for path in root.iterdir() if is_valid_checkpoint(path, allow_unsafe=allow_unsafe)
     ]
-    checkpoints.sort(key=_checkpoint_step)
+    checkpoints.sort(key=checkpoint_step)
     return checkpoints
 
 
