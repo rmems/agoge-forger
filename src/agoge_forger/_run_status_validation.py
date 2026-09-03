@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from peft import LoraConfig
 from transformers import CONFIG_MAPPING
 
 from ._run_status_artifact_index import artifact_index_usable
@@ -49,8 +50,33 @@ def _lora_keys_usable(keys: set[str] | None) -> bool:
     if not keys:
         return False
     pairs = (("lora_A", "lora_B"), ("lora_embedding_A", "lora_embedding_B"))
-    return any(
-        left in key and key.replace(left, right, 1) in keys for key in keys for left, right in pairs
+    for key in keys:
+        parts = key.split(".")
+        for left, right in pairs:
+            if left not in parts:
+                continue
+            counterpart = parts.copy()
+            counterpart[counterpart.index(left)] = right
+            if ".".join(counterpart) in keys:
+                return True
+    return False
+
+
+def _positive_rank(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _lora_config_usable(payload: dict[str, Any]) -> bool:
+    try:
+        config = LoraConfig(**payload)
+    except (ImportError, TypeError, ValueError):
+        return False
+    return bool(
+        _positive_rank(config.r)
+        and all(_positive_rank(rank) for rank in (config.rank_pattern or {}).values())
+        and isinstance(config.lora_dropout, (int, float))
+        and not isinstance(config.lora_dropout, bool)
+        and 0 <= config.lora_dropout <= 1
     )
 
 
@@ -74,7 +100,10 @@ def adapter_config_usable(adapter_path: PathLike | None) -> bool:
         return False
     base = payload.get("base_model_name_or_path")
     return bool(
-        _nonempty_string(base) and payload.get("peft_type") == "LORA" and _revision_usable(payload)
+        _nonempty_string(base)
+        and payload.get("peft_type") == "LORA"
+        and _revision_usable(payload)
+        and _lora_config_usable(payload)
     )
 
 

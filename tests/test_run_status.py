@@ -529,6 +529,18 @@ def test_torch_zip_with_empty_state_is_not_resume_ready(tmp_path, state_name):
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
 
+def test_nested_optimizer_field_names_are_not_top_level_state(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    nested = (
+        b"\x80\x02}q\x00X\x04\x00\x00\x00junkq\x01]q\x02("
+        b"X\x05\x00\x00\x00stateq\x03X\x0c\x00\x00\x00param_groupsq\x04es."
+    )
+    _write_torch_state(checkpoint_dir / "optimizer.pt", payload=nested)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
 def test_trainer_state_step_must_match_checkpoint_name(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
