@@ -1,0 +1,21 @@
+src/agoge_forger/run_status.py
+  s_9d02230d0ab6ec::t_0b62be09732b66 33,149-150
+src/agoge_forger/train/checkpoints.py
+  s_9d02230d0ab6ec::t_0b62be09732b66 18,64,78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "217040a7be0f634a5c6966f61f87eca95a86c420",
+  "prompts": {},
+  "sessions": {
+    "s_9d02230d0ab6ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05c12-f51c-7140-a693-33864d1c4551",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
