@@ -104,9 +104,12 @@ def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
 
 
 def infer_base_revision_from_adapter(adapter_path: PathLike) -> str | None:
-    """Return the Hub revision persisted on a PEFT adapter, if any."""
+    """Return a usable Hub revision, degrading malformed adapter metadata."""
     revision = _load_adapter_config(adapter_path).get("revision")
-    return normalize_revision(revision)
+    try:
+        return normalize_revision(revision)
+    except TypeError:
+        return None
 
 
 def resolve_resume_checkpoint(run_dir: str, config) -> str | None:
@@ -169,6 +172,6 @@ def resolve_export_source_from_snapshot(
     if run_adapter_present:
         return run_dir
     if checkpoints:
-        return str(checkpoints[-1])
+        return str(max(checkpoints, key=checkpoint_step))
 
     raise ValueError(f"No exportable adapter artifact found under {run_dir}")

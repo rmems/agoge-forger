@@ -99,6 +99,17 @@ def test_table_escapes_unicode_format_controls(tmp_path):
     assert "safe\\u202ereversed" in table
 
 
+def test_table_escapes_lone_unicode_surrogates(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    report = build_run_status(str(run_dir))
+    report["base_model"] = "bad\ud800value"
+
+    table = format_run_status_table(report)
+
+    assert "bad\\ud800value" in table
+    assert b"bad\\ud800value" in table.encode("utf-8")
+
+
 def test_table_renderer_covers_every_report_row(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_checkpoint(run_dir, 30)

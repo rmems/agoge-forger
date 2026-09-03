@@ -74,5 +74,5 @@ set.ignored = true
 # without mutating global RNG state; Generator uses an incompatible state shape.
 [[triage]]
 match.rules = ["radarlint-python:python:S6711"]
-match.file_patterns = ["src/agoge_forger/_run_status_trainer_state.py"]
+match.file_patterns = ["src/agoge_forger/_run_status_rng.py"]
 set.ignored = true

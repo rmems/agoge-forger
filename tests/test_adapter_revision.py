@@ -33,6 +33,13 @@ def test_infer_base_revision_from_adapter(tmp_path):
     assert infer_base_revision_from_adapter(empty) is None
 
 
+@pytest.mark.parametrize("revision", [1.5, ["main"], {"branch": "main"}, True])
+def test_infer_invalid_adapter_revision_degrades_to_none(tmp_path, revision):
+    adapter = _write_adapter(tmp_path / "invalid", revision=revision)
+
+    assert infer_base_revision_from_adapter(adapter) is None
+
+
 def test_smoke_eval_forwards_adapter_revision_to_load_base_model(monkeypatch, tmp_path):
     adapter = _write_adapter(tmp_path / "adapter")
     captured: dict[str, object] = {}

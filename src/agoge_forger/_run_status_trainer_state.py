@@ -1,19 +1,17 @@
-"""Non-executing Trainer-state integrity checks used by run-status."""
+"""Restricted Trainer-state integrity checks used by run-status."""
 
 from __future__ import annotations
 
 import json
 import math
-import random
 import re
-import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import torch
 
+from ._run_status_rng import _rng_state_usable
 from ._run_status_torch_archive import torch_mapping
 
 _CHECKPOINT_RE = re.compile(r"checkpoint-(\d+)")
@@ -22,11 +20,11 @@ _ADAMW_NULLABLE_BOOL_FIELDS = ("foreach", "fused")
 
 
 def _json_object(path: Path) -> dict[str, Any] | None:
-    if not path.is_file():
+    if path.is_symlink() or not path.is_file():
         return None
     try:
         payload: Any = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -34,14 +32,9 @@ def _json_object(path: Path) -> dict[str, Any] | None:
 def _trainer_metadata_usable(payload: dict[str, Any], step: int) -> bool:
     global_step = payload.get("global_step")
     train_batch_size = payload.get("train_batch_size")
-    return bool(
-        isinstance(global_step, int)
-        and not isinstance(global_step, bool)
-        and global_step == step
-        and isinstance(train_batch_size, int)
-        and not isinstance(train_batch_size, bool)
-        and train_batch_size > 0
-    )
+    if not _valid_int(global_step) or not _valid_int(train_batch_size, minimum=1):
+        return False
+    return global_step == step
 
 
 def _trainer_state_step(checkpoint: Path) -> int | None:
@@ -51,16 +44,6 @@ def _trainer_state_step(checkpoint: Path) -> int | None:
         return None
     step = int(match.group(1))
     return step if _trainer_metadata_usable(payload, step) else None
-
-
-def _rng_state_usable(checkpoint: Path) -> bool:
-    single = checkpoint / "rng_state.pth"
-    if single.is_file():
-        return _rng_payload_usable(torch_mapping(single, allow_numpy=True))
-    # Transformers does not persist the original world size in safe JSON.
-    # Rank filenames cannot prove that trailing states are present, so report
-    # distributed checkpoints as not ready instead of returning a false positive.
-    return False
 
 
 def _valid_int(value: Any, *, minimum: int | None = None) -> bool:
@@ -274,38 +257,6 @@ def _scheduler_payload_usable(
     )
 
 
-def _cuda_tensor_usable(value: Any) -> bool:
-    return bool(
-        isinstance(value, torch.Tensor)
-        and value.layout == torch.strided
-        and value.device.type == "cpu"
-        and value.dtype == torch.uint8
-        and value.is_contiguous()
-        and value.numel() in {8, 16}
-    )
-
-
-def _cuda_rng_state_usable(value: Any) -> bool:
-    if not _cuda_tensor_usable(value):
-        return False
-    if value.numel() == 8:
-        return True
-    offset = int.from_bytes(bytes(value[8:16].tolist()), byteorder=sys.byteorder, signed=True)
-    return offset >= 0 and offset % 4 == 0
-
-
-def _rng_payload_usable(payload: dict[str, Any] | None) -> bool:
-    if payload is None:
-        return False
-    try:
-        random.Random().setstate(payload["python"])  # nosec B311 - validates saved RNG state
-        np.random.RandomState().set_state(payload["numpy"])
-        torch.Generator(device="cpu").set_state(payload["cpu"])
-    except (KeyError, TypeError, ValueError, RuntimeError):
-        return False
-    return _cuda_rng_state_usable(payload.get("cuda"))
-
-
 def trainer_state_usable(
     checkpoint: str | Path | None,
     adapter_shapes: dict[str, tuple[int, ...]],
@@ -314,7 +265,7 @@ def trainer_state_usable(
         return False
     checkpoint_dir = Path(checkpoint)
     step = _trainer_state_step(checkpoint_dir)
-    optimizer = torch_mapping(checkpoint_dir / "optimizer.pt")
+    optimizer = torch_mapping(checkpoint_dir / "optimizer.pt", require_data_record=True)
     groups = None if optimizer is None else optimizer.get("param_groups")
     group_count = len(groups) if isinstance(groups, list) and groups else None
     if step is None or group_count is None:

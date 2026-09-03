@@ -204,9 +204,9 @@ def _exit_on_path_error(exc: BaseException) -> NoReturn:
 
 
 def _resolve_run_status_run_dir(run_dir: str) -> str:
-    # RuntimeError: `Path.expanduser()` raises it for a `~user` prefix naming an
-    # account with no resolvable home directory, and it is neither an OSError
-    # nor a ValueError.
+    # Keep RuntimeError in the controlled boundary for platforms whose user-home
+    # expansion can raise it; POSIX normally leaves an unknown `~user` unresolved,
+    # which becomes FileNotFoundError during strict resolution.
     try:
         return str(resolve_existing_path(run_dir, must_be_dir=True))
     except _RUN_STATUS_PATH_ERRORS as e:

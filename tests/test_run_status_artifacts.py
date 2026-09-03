@@ -3,29 +3,22 @@
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-import torch
-from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 from test_run_status import (
-    SKIP_IF_ROOT,
     TINY_LLAMA_CONFIG,
     TINY_LLAMA_SHAPES,
     TINY_TOKENIZER,
-    _deny_read_access_or_skip,
     _make_run_dir,
     _minimal_safetensors,
     _safetensors_with_dtype,
     _safetensors_with_shapes,
     _safetensors_with_tensors,
-    _test_base_model_path,
-    _write_adapter_config,
     _write_checkpoint,
     _write_final_adapter,
-    _write_legacy_bin_adapter,
     _write_merged_model,
 )
-from transformers import AutoModelForCausalLM, GPT2Config
 from typer.testing import CliRunner
 
 from agoge_forger.artifacts.safetensors_io import write_artifact_index
@@ -36,17 +29,6 @@ from agoge_forger.run_status import build_run_status, find_merged_model_dir, is_
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
-
-
-def _write_lora_config(run_dir: Path, **overrides) -> None:
-    payload = {
-        "base_model_name_or_path": str(_test_base_model_path(run_dir)),
-        "peft_type": "LORA",
-        "r": 1,
-        "target_modules": ["q_proj"],
-        **overrides,
-    }
-    (run_dir / "adapter_config.json").write_text(json.dumps(payload))
 
 
 # 6. Merged model discovery
@@ -91,9 +73,9 @@ def test_merged_model_absent_when_never_exported(tmp_path):
 def test_merged_dir_without_config_json_is_not_a_merged_model(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    merged = tmp_path / "merged" / run_dir.name
-    merged.mkdir(parents=True)
-    (merged / "model.safetensors").write_text("merged-weights")
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    (merged / "config.json").unlink()
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
@@ -103,12 +85,11 @@ def test_merged_dir_without_config_json_is_not_a_merged_model(tmp_path):
 def test_non_model_weights_are_not_a_merged_model(tmp_path, weight_name):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    merged = tmp_path / "merged" / run_dir.name
-    merged.mkdir(parents=True)
-    (merged / "config.json").write_text('{"model_type": "llama"}')
-    (merged / "tokenizer_config.json").write_text("{}")
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    (merged / "model.safetensors").unlink()
     if weight_name is not None:
         (merged / weight_name).write_bytes(_minimal_safetensors())
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
@@ -123,9 +104,10 @@ def test_merged_dir_with_only_nested_safetensors_is_not_a_merged_model(tmp_path)
     """
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    merged = tmp_path / "merged" / run_dir.name
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    (merged / "model.safetensors").unlink()
     _write_checkpoint(merged, 10)
-    (merged / "config.json").write_text('{"model_type": "llama"}')
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
@@ -178,6 +160,32 @@ def test_deeply_nested_shard_index_fails_closed(runner, tmp_path):
 
     assert result.exit_code == 0
     assert json.loads(result.stdout)["merged_model"] == {"present": False, "path": None}
+
+
+def test_shard_index_must_not_be_a_symlink(tmp_path):
+    from agoge_forger._run_status_safetensors import _load_shard_weight_map
+
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    external = tmp_path / "external-index.json"
+    external.write_text(json.dumps({"weight_map": {"weight": "model-00001-of-00001.safetensors"}}))
+    (merged / "model.safetensors.index.json").symlink_to(external)
+
+    assert _load_shard_weight_map(merged) is None
+
+
+def test_shard_index_has_a_bounded_metadata_size(tmp_path):
+    from agoge_forger._run_status_safetensors import _load_shard_weight_map
+
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    payload = {
+        "weight_map": {"weight": "model-00001-of-00001.safetensors"},
+        "padding": "x" * (4 * 1024 * 1024),
+    }
+    (merged / "model.safetensors.index.json").write_text(json.dumps(payload))
+
+    assert _load_shard_weight_map(merged) is None
 
 
 def test_shard_index_tensor_must_exist_in_designated_shard(tmp_path):
@@ -248,15 +256,10 @@ def test_absurd_shard_total_is_rejected_without_expanding_range(monkeypatch):
 def test_truncated_merged_config_is_not_a_merged_model(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    merged = tmp_path / "merged" / run_dir.name
-    merged.mkdir(parents=True)
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
     (merged / "config.json").write_text("{not json")
-    (merged / "model.safetensors").write_text("merged-weights")
+    write_artifact_index(str(merged))
 
-    assert is_merged_model_dir(merged) is False
-    assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
-
-    (merged / "model.safetensors").write_bytes(b"")
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
 
@@ -264,20 +267,25 @@ def test_truncated_merged_config_is_not_a_merged_model(tmp_path):
 def test_incomplete_shard_set_is_not_a_merged_model(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    merged = tmp_path / "merged" / run_dir.name
-    merged.mkdir(parents=True)
-    (merged / "config.json").write_text('{"model_type": "llama"}')
-    (merged / "model.safetensors.index.json").write_text(
-        json.dumps(
-            {
-                "weight_map": {
-                    "a": "model-00001-of-00002.safetensors",
-                    "b": "model-00002-of-00002.safetensors",
-                }
-            }
-        )
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    (merged / "model.safetensors").unlink()
+    shard_names = (
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
     )
-    (merged / "model-00001-of-00002.safetensors").write_text("shard-1")
+    weight_map = {
+        tensor_name: shard_names[index % 2] for index, tensor_name in enumerate(TINY_LLAMA_SHAPES)
+    }
+    (merged / "model.safetensors.index.json").write_text(json.dumps({"weight_map": weight_map}))
+    first_shapes = {
+        name: shape
+        for name, shape in TINY_LLAMA_SHAPES.items()
+        if weight_map[name] == shard_names[0]
+    }
+    (merged / "model-00001-of-00002.safetensors").write_bytes(
+        _safetensors_with_shapes(first_shapes)
+    )
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
@@ -287,13 +295,15 @@ def test_shard_index_rejects_adapter_filename(tmp_path):
     """weight_map must name root-local model shards, not leftover adapter files."""
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    merged = tmp_path / "merged" / run_dir.name
-    merged.mkdir(parents=True)
-    (merged / "config.json").write_text('{"model_type": "llama"}')
-    (merged / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    (merged / "model.safetensors").unlink()
+    (merged / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(TINY_LLAMA_SHAPES))
     (merged / "model.safetensors.index.json").write_text(
-        json.dumps({"weight_map": {"a": "adapter_model.safetensors"}})
+        json.dumps(
+            {"weight_map": {name: "adapter_model.safetensors" for name in TINY_LLAMA_SHAPES}}
+        )
     )
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
     assert build_run_status(str(run_dir))["merged_model"] == {"present": False, "path": None}
@@ -304,12 +314,14 @@ def test_shard_index_rejects_out_of_directory_filename(tmp_path):
     _write_final_adapter(run_dir)
     elsewhere = tmp_path / "other"
     elsewhere.mkdir()
-    (elsewhere / "model.safetensors").write_bytes(_minimal_safetensors())
-    merged = tmp_path / "merged" / run_dir.name
-    merged.mkdir(parents=True)
-    (merged / "config.json").write_text('{"model_type": "llama"}')
+    (elsewhere / "model.safetensors").write_bytes(_safetensors_with_shapes(TINY_LLAMA_SHAPES))
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
+    (merged / "model.safetensors").unlink()
     rel = os.path.relpath(elsewhere / "model.safetensors", merged)
-    (merged / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {"a": rel}}))
+    (merged / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": dict.fromkeys(TINY_LLAMA_SHAPES, rel)})
+    )
+    write_artifact_index(str(merged))
 
     assert "/" in rel or rel.startswith("..")
     assert is_merged_model_dir(merged) is False
@@ -319,19 +331,18 @@ def test_shard_index_rejects_out_of_directory_filename(tmp_path):
 def test_truncated_merged_weights_are_not_present(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    merged = tmp_path / "merged" / run_dir.name
-    merged.mkdir(parents=True)
-    (merged / "config.json").write_text('{"model_type": "llama"}')
+    merged = _write_merged_model(tmp_path / "merged" / run_dir.name)
     (merged / "model.safetensors").write_text("merged-weights")
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
 
 
 def test_merged_model_requires_completed_tokenizer_export(tmp_path):
-    merged = tmp_path / "merged"
-    merged.mkdir()
-    (merged / "config.json").write_text('{"model_type": "llama"}')
-    (merged / "model.safetensors").write_bytes(_minimal_safetensors())
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "tokenizer.json").unlink()
+    (merged / "tokenizer_config.json").unlink()
+    write_artifact_index(str(merged))
 
     assert is_merged_model_dir(merged) is False
 
@@ -512,6 +523,77 @@ def test_symlinked_artifact_index_is_not_a_completion_marker(tmp_path):
     assert is_merged_model_dir(merged) is False
 
 
+def test_broken_symlink_in_artifact_tree_is_not_ignored(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "broken-tokenizer-link").symlink_to(tmp_path / "missing-tokenizer")
+
+    assert is_merged_model_dir(merged) is False
+
+
+def test_validation_json_loader_rejects_symlinked_metadata(tmp_path):
+    from agoge_forger._run_status_validation import _load_json_object
+
+    external = tmp_path / "external.json"
+    external.write_text("{}")
+    linked = tmp_path / "adapter_config.json"
+    linked.symlink_to(external)
+
+    assert _load_json_object(linked) is None
+
+
+def test_offline_pretrained_loader_preserves_security_flags(tmp_path):
+    from agoge_forger import _run_status_validation as validation
+
+    calls = []
+
+    class Factory:
+        @staticmethod
+        def from_pretrained(source, **kwargs):
+            calls.append((source, kwargs))
+            return "loaded"
+
+    assert validation._offline_pretrained(Factory, tmp_path) == "loaded"
+    assert calls == [(tmp_path, {"local_files_only": True, "trust_remote_code": False})]
+
+
+def test_adapter_base_config_forwards_pinned_revision_and_security_flags(monkeypatch):
+    from agoge_forger import _run_status_validation as validation
+
+    calls = []
+    loaded = validation.CONFIG_MAPPING["llama"]()
+
+    def load(source, **kwargs):
+        calls.append((source, kwargs))
+        return loaded
+
+    monkeypatch.setattr(validation.AutoConfig, "from_pretrained", load)
+    adapter = SimpleNamespace(
+        base_model_name_or_path="org/base-model",
+        revision="deadbeefcafe",
+    )
+
+    assert validation._adapter_base_config(adapter) is loaded
+    assert calls == [
+        (
+            "org/base-model",
+            {
+                "revision": "deadbeefcafe",
+                "local_files_only": True,
+                "trust_remote_code": False,
+            },
+        )
+    ]
+
+
+def test_validation_json_loader_fails_closed_on_deep_json(tmp_path):
+    from agoge_forger._run_status_validation import _load_json_object
+
+    metadata = tmp_path / "adapter_config.json"
+    metadata.write_text('{"nested":' + "[" * 100_000 + "{}" + "]" * 100_000 + "}")
+
+    assert _load_json_object(metadata) is None
+
+
 def test_symlinked_merged_weights_are_not_standalone(tmp_path):
     external = tmp_path / "external.safetensors"
     external.write_bytes(_minimal_safetensors())
@@ -561,303 +643,3 @@ def test_explicit_missing_merged_dir_reports_absent_and_exits_zero(runner, tmp_p
     result = runner.invoke(app, ["run-status", str(run_dir), "--merged-dir", str(missing)])
     assert result.exit_code == 0
     assert json.loads(result.stdout)["merged_model"] == {"present": False, "path": None}
-
-
-# --------------------------------------------------------------------------
-# 7. Safetensors policy
-# --------------------------------------------------------------------------
-
-
-def test_legacy_bin_adapter_is_rejected_by_default(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_legacy_bin_adapter(run_dir)
-
-    report = build_run_status(str(run_dir))
-
-    assert report["allow_unsafe_serialization"] is False
-    assert report["final_adapter"] == {"present": False, "path": None}
-    assert report["export"] == {"ready": False, "source_path": None, "source_kind": None}
-    assert report["base_model"] is None
-
-
-def test_legacy_bin_adapter_is_accepted_with_allow_unsafe(runner, tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_legacy_bin_adapter(run_dir)
-
-    report = build_run_status(str(run_dir), allow_unsafe=True)
-
-    assert report["allow_unsafe_serialization"] is True
-    assert report["final_adapter"] == {"present": True, "path": str(run_dir.resolve())}
-    assert report["export"]["ready"] is True
-    assert report["export"]["source_kind"] == "final_adapter"
-    assert report["base_model"] == str(run_dir / ".test-base-model")
-
-    result = runner.invoke(app, ["run-status", str(run_dir), "--allow-unsafe-serialization"])
-    assert result.exit_code == 0
-    assert json.loads(result.stdout) == report
-
-
-def test_malformed_legacy_bin_is_not_export_ready(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_legacy_bin_adapter(run_dir)
-    (run_dir / "adapter_model.bin").write_bytes(b"not a torch archive")
-
-    assert build_run_status(str(run_dir), allow_unsafe=True)["export"]["ready"] is False
-
-
-def test_whitespace_base_model_is_not_export_ready(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir, base_model="   ")
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-def test_unrelated_safetensor_keys_are_not_lora_weights(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_tensors("foreign.weight"))
-    _write_adapter_config(run_dir)
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-def test_lora_key_names_must_use_recognized_segments(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    (run_dir / "adapter_model.safetensors").write_bytes(
-        _safetensors_with_tensors("fake_lora_A_extra", "fake_lora_B_extra")
-    )
-    _write_adapter_config(run_dir)
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-def test_nonpositive_lora_rank_is_not_export_ready(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    (run_dir / "adapter_config.json").write_text(
-        json.dumps(
-            {
-                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
-                "peft_type": "LORA",
-                "r": 0,
-            }
-        )
-    )
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-@pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])
-@pytest.mark.parametrize(
-    "case",
-    [
-        (((1,), (1,)), 1, False),
-        (((1, 8), (8, 1)), 2, False),
-        (((1, 0), (8, 1)), 1, False),
-        (((1, 4), (0, 1)), 1, False),
-        (((2, 8), (8, 2)), 2, True),
-    ],
-)
-def test_lora_shapes_must_match_config_rank(tmp_path, case, legacy):
-    shapes, rank, expected = case
-    run_dir = _make_run_dir(tmp_path)
-    tensors = {
-        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": torch.zeros(shapes[0]),
-        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": torch.zeros(shapes[1]),
-    }
-    if legacy:
-        torch.save(tensors, run_dir / "adapter_model.bin")
-    else:
-        safetensor_shapes = {key: tuple(tensor.shape) for key, tensor in tensors.items()}
-        (run_dir / "adapter_model.safetensors").write_bytes(
-            _safetensors_with_shapes(safetensor_shapes)
-        )
-    _write_adapter_config(run_dir, rank=rank)
-
-    report = build_run_status(str(run_dir), allow_unsafe=legacy)
-    assert report["export"]["ready"] is expected
-
-
-@pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])
-def test_lora_non_rank_dimensions_must_match_targeted_base_module(tmp_path, legacy):
-    run_dir = _make_run_dir(tmp_path)
-    base_model = tmp_path / "base-model"
-    base_model.mkdir()
-    (base_model / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
-    shapes = {
-        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 1),
-        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (1, 1),
-    }
-    if legacy:
-        torch.save(
-            {key: torch.zeros(shape) for key, shape in shapes.items()},
-            run_dir / "adapter_model.bin",
-        )
-    else:
-        (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
-    _write_lora_config(
-        run_dir,
-        base_model_name_or_path=str(base_model),
-        target_modules=["q_proj"],
-    )
-
-    assert build_run_status(str(run_dir), allow_unsafe=legacy)["export"]["ready"] is False
-
-
-@pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])
-def test_lora_weights_must_cover_every_base_module_selected_by_target(tmp_path, legacy):
-    run_dir = _make_run_dir(tmp_path)
-    base_model = tmp_path / "base-model"
-    base_model.mkdir()
-    config = dict(TINY_LLAMA_CONFIG, num_hidden_layers=2)
-    (base_model / "config.json").write_text(json.dumps(config))
-    shapes = {
-        "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
-        "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
-    }
-    if legacy:
-        torch.save(
-            {key: torch.zeros(shape) for key, shape in shapes.items()},
-            run_dir / "adapter_model.bin",
-        )
-    else:
-        (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
-    _write_lora_config(
-        run_dir,
-        base_model_name_or_path=str(base_model),
-        target_modules=["q_proj"],
-    )
-
-    assert build_run_status(str(run_dir), allow_unsafe=legacy)["export"]["ready"] is False
-
-
-def test_genuine_peft_conv1d_lora_uses_transformers_input_output_orientation(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    base_model = tmp_path / "base-model"
-    base_model.mkdir()
-    base_config = GPT2Config(
-        n_layer=1,
-        n_head=2,
-        n_embd=8,
-        n_positions=16,
-        n_ctx=16,
-        vocab_size=16,
-        bos_token_id=0,
-        eos_token_id=1,
-    )
-    (base_model / "config.json").write_text(base_config.to_json_string())
-    lora_config = LoraConfig(
-        r=2,
-        target_modules=["c_attn"],
-        task_type="CAUSAL_LM",
-        fan_in_fan_out=True,
-    )
-    with torch.device("meta"):
-        base = AutoModelForCausalLM.from_config(base_config, trust_remote_code=False)
-        peft_model = get_peft_model(base, lora_config)
-    peft_model.peft_config["default"].base_model_name_or_path = str(base_model)
-    shapes = {
-        key: tuple(value.shape) for key, value in get_peft_model_state_dict(peft_model).items()
-    }
-    (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
-    _write_lora_config(
-        run_dir,
-        base_model_name_or_path=str(base_model),
-        r=2,
-        target_modules=["c_attn"],
-    )
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is True
-
-
-@pytest.mark.parametrize("rank_pattern", [{"[": 1}, ["layer"]])
-def test_invalid_rank_pattern_does_not_crash_run_status(tmp_path, rank_pattern):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    _write_lora_config(run_dir, rank_pattern=rank_pattern)
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-def test_rank_pattern_suffix_overrides_default_lora_rank(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    (run_dir / "adapter_model.safetensors").write_bytes(
-        _safetensors_with_shapes(
-            {
-                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (2, 8),
-                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 2),
-            }
-        )
-    )
-    _write_lora_config(run_dir, rank_pattern={"q_proj": 2})
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is True
-
-
-def test_lora_weights_must_match_configured_target_modules(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    _write_lora_config(run_dir, target_modules=["v_proj"])
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-def test_lora_weights_must_cover_every_configured_target(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    _write_lora_config(run_dir, target_modules=["q_proj", "v_proj"])
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-@pytest.mark.parametrize("alpha", ["bad", True, float("nan"), float("inf"), 10**1000])
-def test_lora_alpha_must_be_a_finite_number(tmp_path, alpha):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    _write_lora_config(run_dir, lora_alpha=alpha)
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-@pytest.mark.parametrize(
-    "alpha_pattern",
-    [{"layer": "bad"}, {"layer": float("inf")}, {"[": 1}],
-)
-def test_lora_alpha_pattern_must_be_usable(tmp_path, alpha_pattern):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir)
-    _write_lora_config(run_dir, alpha_pattern=alpha_pattern)
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-@pytest.mark.parametrize("revision", ["   ", [], {"branch": "main"}, True])
-def test_invalid_adapter_revision_is_not_export_ready(tmp_path, revision):
-    run_dir = _make_run_dir(tmp_path)
-    _write_final_adapter(run_dir, revision=revision)
-
-    assert build_run_status(str(run_dir))["export"]["ready"] is False
-
-
-def test_corrupt_safetensors_does_not_fall_back_to_legacy_bin(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    (run_dir / "adapter_model.safetensors").write_bytes(b"corrupt")
-    (run_dir / "adapter_model.bin").write_bytes(b"legacy")
-    _write_adapter_config(run_dir)
-
-    assert build_run_status(str(run_dir), allow_unsafe=True)["export"]["ready"] is False
-
-
-@SKIP_IF_ROOT
-def test_unreadable_legacy_weights_raise_instead_of_reporting_ready(tmp_path):
-    run_dir = _make_run_dir(tmp_path)
-    _write_legacy_bin_adapter(run_dir)
-    weights = run_dir / "adapter_model.bin"
-    _deny_read_access_or_skip(weights)
-    try:
-        with pytest.raises(OSError):
-            build_run_status(str(run_dir), allow_unsafe=True)
-    finally:
-        os.chmod(weights, 0o644)
-
-
-# --------------------------------------------------------------------------

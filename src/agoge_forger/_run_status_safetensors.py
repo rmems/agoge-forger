@@ -10,6 +10,7 @@ from typing import Any
 from safetensors import SafetensorError, safe_open
 
 _NUMBERED_SHARD_RE = re.compile(r"model-(\d+)-of-(\d+)\.safetensors")
+_MAX_SHARD_INDEX_BYTES = 4 * 1024 * 1024
 
 
 def safetensors_keys(path: Path) -> set[str] | None:
@@ -74,7 +75,9 @@ def _numbered_shards_complete(shards: set[str]) -> bool:
 
 def _load_shard_weight_map(candidate: Path) -> dict[str, Any] | None:
     index_path = candidate / "model.safetensors.index.json"
-    if not index_path.is_file():
+    if index_path.is_symlink() or not index_path.is_file():
+        return None
+    if index_path.stat().st_size > _MAX_SHARD_INDEX_BYTES:
         return None
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))

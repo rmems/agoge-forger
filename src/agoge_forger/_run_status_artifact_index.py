@@ -66,10 +66,12 @@ def _artifact_entries(index: dict[str, Any]) -> dict[str, tuple[int, str]] | Non
 def _current_artifacts(candidate: Path) -> dict[str, Path] | None:
     paths: dict[str, Path] = {}
     for path in candidate.rglob("*"):
-        if path.name == "artifact_index.json" or not path.is_file():
+        if path.name == "artifact_index.json":
             continue
         if path.is_symlink():
             return None
+        if not path.is_file():
+            continue
         paths[str(path.relative_to(candidate))] = path
     return paths
 

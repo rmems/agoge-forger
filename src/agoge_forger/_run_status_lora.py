@@ -8,6 +8,10 @@ from typing import Any
 from peft import LoraConfig
 
 from agoge_forger._run_status_lora_config import load_lora_config
+from agoge_forger._run_status_target_pattern import (
+    SafeTargetPattern,
+    parse_safe_target_pattern,
+)
 
 _PAIRS = (("lora_A", "lora_B"), ("lora_embedding_A", "lora_embedding_B"))
 _BASE_MODEL_PREFIX = "base_model.model."
@@ -21,6 +25,9 @@ class BaseModuleDimensions:
     input_size: int
     output_size: int
     embedding: bool
+
+
+TargetSpec = SafeTargetPattern | frozenset[str]
 
 
 def lora_config_usable(payload: dict[str, Any]) -> bool:
@@ -59,16 +66,30 @@ def _expected_pair_shapes(
     return (rank, base.input_size), (base.output_size, rank)
 
 
-def _literal_targets_usable(targets: Any) -> bool:
-    return bool(
-        not isinstance(targets, str)
-        and targets
-        and all(isinstance(target, str) and bool(target) for target in targets)
+def _regex_target_spec(target: str) -> SafeTargetPattern | None:
+    return parse_safe_target_pattern(target)
+
+
+def _literal_target_spec(targets: Any) -> frozenset[str] | None:
+    literal_types = (frozenset, list, set, tuple)
+    if not isinstance(targets, literal_types) or not targets:
+        return None
+    if not all(isinstance(target, str) and bool(target) for target in targets):
+        return None
+    return frozenset(targets)
+
+
+def _target_spec(targets: Any) -> TargetSpec | None:
+    return (
+        _regex_target_spec(targets) if isinstance(targets, str) else _literal_target_spec(targets)
     )
 
 
-def _module_matches_literal_targets(module: str, targets: Any) -> bool:
-    candidates = {module, module.removeprefix(_BASE_MODEL_PREFIX)}
+def _module_matches_targets(module: str, targets: TargetSpec) -> bool:
+    normalized = module.removeprefix(_BASE_MODEL_PREFIX)
+    if isinstance(targets, SafeTargetPattern):
+        return targets.fullmatch(normalized)
+    candidates = {module, normalized}
     return any(
         candidate == target or candidate.endswith(f".{target}")
         for candidate in candidates
@@ -76,14 +97,13 @@ def _module_matches_literal_targets(module: str, targets: Any) -> bool:
     )
 
 
-def _targets_cover_modules(config: LoraConfig, modules: set[str]) -> bool:
-    targets = config.target_modules
-    if targets is None:
-        return True
-    if not _literal_targets_usable(targets):
+def _targets_cover_modules(targets: TargetSpec, modules: set[str]) -> bool:
+    if not all(_module_matches_targets(module, targets) for module in modules):
         return False
-    return all(_module_matches_literal_targets(module, targets) for module in modules) and all(
-        any(_module_matches_literal_targets(module, {target}) for module in modules)
+    if isinstance(targets, SafeTargetPattern):
+        return True
+    return all(
+        any(_module_matches_targets(module, frozenset({target})) for module in modules)
         for target in targets
     )
 
@@ -130,19 +150,19 @@ def lora_shapes_usable(
 ) -> bool:
     if not shapes:
         return False
-    targets = config.target_modules
-    if not _literal_targets_usable(targets):
+    targets = _target_spec(config.target_modules)
+    if targets is None:
         return False
     pairs = _recognized_pairs(shapes)
     modules = _left_pair_modules(pairs)
     normalized_modules = {module.removeprefix(_BASE_MODEL_PREFIX) for module in modules}
     expected_modules = {
-        module for module in base_modules if _module_matches_literal_targets(module, targets)
+        module for module in base_modules if _module_matches_targets(module, targets)
     }
     if not pairs or not _pair_set_complete(pairs):
         return False
     checks = (
-        _targets_cover_modules(config, modules),
+        _targets_cover_modules(targets, modules),
         normalized_modules == expected_modules,
         _left_pair_shapes_usable(shapes, pairs, config, base_modules),
     )

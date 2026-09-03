@@ -45,6 +45,7 @@ def test_malformed_adapter_config_yields_null_base_model(runner, tmp_path):
 
     result = runner.invoke(app, ["run-status", str(run_dir)])
     assert result.exit_code == 0
+    assert json.loads(result.stdout)["schema_version"] == 1
 
 
 @pytest.mark.parametrize("payload", [["org/model"], {"id": "org/model"}, True, 1])
@@ -77,6 +78,7 @@ def test_adapter_config_without_base_model_key_yields_null_base_model(runner, tm
 
     result = runner.invoke(app, ["run-status", str(run_dir)])
     assert result.exit_code == 0
+    assert json.loads(result.stdout)["schema_version"] == 1
 
 
 @pytest.mark.parametrize("peft_type", [None, "UNKNOWN_PEFT_TYPE"])
@@ -112,6 +114,7 @@ def test_non_object_adapter_config_yields_null_base_model(runner, tmp_path, payl
 
     result = runner.invoke(app, ["run-status", str(run_dir)])
     assert result.exit_code == 0
+    assert json.loads(result.stdout)["schema_version"] == 1
 
 
 def test_find_merged_model_dir_valueerror_is_absent(tmp_path):
@@ -221,7 +224,7 @@ def test_inaccessible_explicit_merged_dir_exits_one(runner, tmp_path):
     protected = tmp_path / "protected"
     merged = _write_merged_model(protected / "merged")
     original_mode = protected.stat().st_mode
-    os.chmod(protected, 0)
+    _deny_read_access_or_skip(protected)
     try:
         result = runner.invoke(app, ["run-status", str(run_dir), "--merged-dir", str(merged)])
         with pytest.raises(PermissionError):
@@ -239,7 +242,7 @@ def test_inaccessible_conventional_merged_dir_exits_one(runner, tmp_path):
     merged_parent = tmp_path / "merged"
     _write_merged_model(merged_parent / run_dir.name)
     original_mode = merged_parent.stat().st_mode
-    os.chmod(merged_parent, 0)
+    _deny_read_access_or_skip(merged_parent)
     try:
         result = runner.invoke(app, ["run-status", str(run_dir)])
         with pytest.raises(PermissionError):
@@ -305,6 +308,28 @@ def test_cli_parent_traversal_exits_one(runner, tmp_path):
     _assert_clean_exit(result, 1)
 
 
+def test_cli_merged_dir_parent_traversal_exits_one(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["run-status", str(run_dir), "--merged-dir", f"{tmp_path}/safe/../escape"],
+    )
+
+    _assert_clean_exit(result, 1)
+
+
+def test_cli_existing_invalid_merged_dir_reports_absent(runner, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    invalid = tmp_path / "not-a-merged-model"
+    invalid.mkdir()
+
+    result = runner.invoke(app, ["run-status", str(run_dir), "--merged-dir", str(invalid)])
+
+    _assert_clean_exit(result, 0)
+    assert json.loads(result.stdout)["merged_model"] == {"present": False, "path": None}
+
+
 def test_cli_file_instead_of_directory_exits_nonzero(runner, tmp_path):
     a_file = tmp_path / "not_a_dir.txt"
     a_file.write_text("hello")
@@ -315,7 +340,7 @@ def test_cli_file_instead_of_directory_exits_nonzero(runner, tmp_path):
     assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
-def test_cli_reports_inspection_failure_as_exit_one(runner, tmp_path, monkeypatch):
+def test_cli_reports_inspection_failure_as_exit_one(runner, tmp_path, monkeypatch, caplog):
     """A permission/IO failure while walking the run dir is a controlled exit.
 
     Path resolution succeeds, so the failure surfaces from report construction;
@@ -329,18 +354,16 @@ def test_cli_reports_inspection_failure_as_exit_one(runner, tmp_path, monkeypatc
 
     monkeypatch.setattr("agoge_forger.cli.build_run_status", _boom)
 
-    result = runner.invoke(app, ["run-status", str(run_dir)])
+    with caplog.at_level("ERROR", logger="agoge"):
+        result = runner.invoke(app, ["run-status", str(run_dir)])
 
     _assert_clean_exit(result, 1)
+    assert f"Permission denied: {run_dir}" in caplog.messages
 
 
 @pytest.mark.parametrize("flag", [None, "--merged-dir"])
 def test_cli_unresolvable_home_directory_exits_one(runner, tmp_path, flag):
-    """`~user` for an account with no home is a controlled error, not a crash.
-
-    `Path.expanduser()` raises `RuntimeError` there, which is neither an
-    `OSError` nor a `ValueError`, so it needs naming explicitly.
-    """
+    """An unknown `~user` remains unresolved and fails as a missing path."""
     bad = "~no-such-account-for-agoge-tests/adapters/run"
 
     if flag is None:

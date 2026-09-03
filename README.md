@@ -97,7 +97,15 @@ How to read it:
 - Legacy `.bin` adapters read as absent and not ready under the safetensors-only policy, until `--allow-unsafe-serialization` is passed.
 - The exit code is `0` for any inspectable directory, including one where nothing is ready yet. It is non-zero when the path is missing, is not a directory, contains `..`, cannot resolve a `~user` home, or inspection hits a permission/I/O failure while building the report.
 
-The report loads no model weights, so it needs no GPU and no network.
+The report does not materialize tensor payload data, so it needs no GPU or
+network. It does use the installed PyTorch restricted `weights_only` unpickler
+to inspect bounded, memory-mapped `optimizer.pt`, `scheduler.pt`, and
+`rng_state.pth` metadata. Transformers' NumPy compatibility globals are enabled
+only while validating `rng_state.pth`; legacy `adapter_model.bin` inspection
+still requires `--allow-unsafe-serialization`. Keep the locked PyTorch version
+current with upstream security patch releases before inspecting untrusted run
+directories, because `weights_only` reduces pickle risk but is not equivalent
+to the non-executable `safetensors` format.
 
 ## Validation
 

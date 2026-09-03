@@ -8,6 +8,7 @@ from agoge_forger.train.checkpoints import (
     is_valid_checkpoint,
     list_valid_checkpoints,
     resolve_export_source,
+    resolve_export_source_from_snapshot,
     resolve_resume_checkpoint,
 )
 
@@ -122,6 +123,19 @@ def test_resolve_export_source_prefers_final_adapter_over_checkpoints(tmp_path):
     _write_final_adapter(run_dir)
 
     assert resolve_export_source(run_dir=str(run_dir)) == str(run_dir.resolve())
+
+
+def test_snapshot_export_source_selects_highest_step_from_unsorted_input(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    latest = _write_checkpoint(run_dir, 100)
+    earlier = _write_checkpoint(run_dir, 50)
+
+    source = resolve_export_source_from_snapshot(
+        str(run_dir), [latest, earlier], run_adapter_present=False
+    )
+
+    assert source == str(latest)
 
 
 def test_adapter_artifact_rejects_bin_weights(tmp_path):

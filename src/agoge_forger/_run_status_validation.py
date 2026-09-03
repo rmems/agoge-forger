@@ -33,11 +33,11 @@ PathLike = str | Path
 
 
 def _load_json_object(path: Path) -> dict[str, Any] | None:
-    if not path.is_file():
+    if path.is_symlink() or not path.is_file():
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError:
+    except (RecursionError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -73,13 +73,27 @@ def _causal_lm_shapes(config: Any) -> dict[str, tuple[int, ...]] | None:
         return None
 
 
+def _offline_pretrained(
+    factory: Any,
+    source: str | Path,
+    *,
+    revision: str | None = None,
+) -> Any:
+    loader = getattr(factory, "from_pretrained", None)
+    if not callable(loader):
+        raise TypeError("from_pretrained is not callable")
+    revision_kwarg = {} if revision is None else {"revision": revision}
+    return loader(
+        source,
+        **revision_kwarg,
+        local_files_only=True,
+        trust_remote_code=False,
+    )
+
+
 def _tokenizer_usable(candidate: Path) -> bool:
     try:
-        tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 - network and remote code disabled
-            candidate,
-            local_files_only=True,
-            trust_remote_code=False,
-        )
+        tokenizer = _offline_pretrained(AutoTokenizer, candidate)  # nosec B615
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
         return False
     return len(tokenizer) > 0
@@ -90,10 +104,11 @@ def _adapter_base_config(config: Any) -> Any:
     if not isinstance(base_model, str) or not base_model.strip():
         return None
     try:
-        base_config = AutoConfig.from_pretrained(  # nosec B615 - network and remote code disabled
+        revision = normalize_revision(config.revision)
+        base_config = _offline_pretrained(  # nosec B615
+            AutoConfig,
             base_model,
-            local_files_only=True,
-            trust_remote_code=False,
+            revision=revision,
         )
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
         return None
@@ -139,11 +154,11 @@ def _revision_usable(payload: dict[str, Any]) -> bool:
 def is_merged_model_dir(path: PathLike) -> bool:
     """True for a complete, indexed merged-model export."""
     candidate = Path(path)
-    if (
-        not candidate.is_dir()
-        or not artifact_index_usable(candidate)
-        or not _tokenizer_usable(candidate)
-    ):
+    if not candidate.is_dir():
+        return False
+    if not artifact_index_usable(candidate):
+        return False
+    if not _tokenizer_usable(candidate):
         return False
     config = _local_causal_lm_config(candidate)
     expected_shapes = None if config is None else _causal_lm_shapes(config)
@@ -172,7 +187,7 @@ def _adapter_lora_config(adapter_dir: Path) -> Any:
 
 
 def _legacy_lora_shapes(path: Path) -> dict[str, tuple[int, ...]]:
-    payload = torch_mapping(path)
+    payload = torch_mapping(path, require_data_record=True)
     return {
         key: tuple(value.shape)
         for key, value in (payload or {}).items()

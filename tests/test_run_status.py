@@ -12,12 +12,16 @@ import os
 import random
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+from transformers import Trainer
+from transformers.training_args import ParallelMode
 from typer.testing import CliRunner
 
+from agoge_forger._run_status_torch_archive import torch_mapping
 from agoge_forger.artifacts.safetensors_io import write_artifact_index
 from agoge_forger.cli import app
 from agoge_forger.run_status import (
@@ -132,14 +136,6 @@ def _safetensors_with_dtype(dtype: str) -> bytes:
     header = json.dumps(payload, separators=(",", ":")).encode()
     header += b" " * ((8 - len(header) % 8) % 8)
     return len(header).to_bytes(8, "little") + header + b"\0" * 4
-
-
-def _header_without_data_region() -> bytes:
-    """Parseable header that declares a 4-byte tensor with no data bytes."""
-    payload = {"t": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}
-    header = json.dumps(payload, separators=(",", ":")).encode()
-    header += b" " * ((8 - len(header) % 8) % 8)
-    return len(header).to_bytes(8, "little") + header
 
 
 _DEFAULT_BASE_MODEL = object()
@@ -576,17 +572,23 @@ def test_truncated_adapter_weights_are_not_export_ready(tmp_path):
 
 def test_zero_tensor_safetensors_is_not_export_ready(tmp_path):
     run_dir = _make_run_dir(tmp_path)
-    header = b"{}" + b" " * 7
-    (run_dir / "adapter_model.safetensors").write_bytes(len(header).to_bytes(8, "little") + header)
+    (run_dir / "adapter_model.safetensors").write_bytes(
+        _safetensors_with_shapes(
+            {
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (0, 8),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 0),
+            }
+        )
+    )
     _write_adapter_config(run_dir)
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
 
 def test_header_without_data_region_is_not_export_ready(tmp_path):
-    """A padded JSON header that claims tensor bytes the file does not have."""
+    """A valid LoRA header that claims tensor bytes the file does not have."""
     run_dir = _make_run_dir(tmp_path)
-    (run_dir / "adapter_model.safetensors").write_bytes(_header_without_data_region())
+    (run_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors()[:-1])
     _write_adapter_config(run_dir)
 
     report = build_run_status(str(run_dir))
@@ -597,9 +599,8 @@ def test_header_without_data_region_is_not_export_ready(tmp_path):
 
 def test_unsupported_safetensors_dtype_is_not_export_ready(tmp_path):
     run_dir = _make_run_dir(tmp_path)
-    (run_dir / "adapter_model.safetensors").write_bytes(
-        _safetensors_with_dtype("NOT_A_SAFETENSORS_DTYPE")
-    )
+    invalid = _minimal_safetensors().replace(b'"F32"', b'"BAD"')
+    (run_dir / "adapter_model.safetensors").write_bytes(invalid)
     _write_adapter_config(run_dir)
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
@@ -607,11 +608,8 @@ def test_unsupported_safetensors_dtype_is_not_export_ready(tmp_path):
 
 def test_empty_checkpoint_weights_are_not_resume_ready(tmp_path):
     run_dir = _make_run_dir(tmp_path)
-    checkpoint_dir = run_dir / "checkpoint-50"
-    checkpoint_dir.mkdir(parents=True)
-    (checkpoint_dir / "trainer_state.json").write_text("{}")
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
     (checkpoint_dir / "adapter_model.safetensors").write_bytes(b"")
-    _write_adapter_config(checkpoint_dir)
 
     report = build_run_status(str(run_dir))
 
@@ -622,11 +620,8 @@ def test_empty_checkpoint_weights_are_not_resume_ready(tmp_path):
 
 def test_header_without_data_region_is_not_resume_ready(tmp_path):
     run_dir = _make_run_dir(tmp_path)
-    checkpoint_dir = run_dir / "checkpoint-50"
-    checkpoint_dir.mkdir(parents=True)
-    (checkpoint_dir / "trainer_state.json").write_text("{}")
-    (checkpoint_dir / "adapter_model.safetensors").write_bytes(_header_without_data_region())
-    _write_adapter_config(checkpoint_dir)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    (checkpoint_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors()[:-1])
 
     report = build_run_status(str(run_dir))
 
@@ -639,8 +634,7 @@ def test_missing_training_state_is_not_resume_ready(tmp_path, missing_name):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
     missing = checkpoint_dir / missing_name
-    if missing.exists():
-        missing.unlink()
+    missing.unlink(missing_ok=True)
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
@@ -944,7 +938,7 @@ def test_non_lora_checkpoint_config_is_not_resume_ready(tmp_path):
 def test_trainer_state_step_must_match_checkpoint_name(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
-    (checkpoint_dir / "trainer_state.json").write_text('{"global_step": 49}')
+    (checkpoint_dir / "trainer_state.json").write_text('{"global_step": 49, "train_batch_size": 1}')
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
@@ -952,9 +946,50 @@ def test_trainer_state_step_must_match_checkpoint_name(tmp_path):
 def test_trainer_state_requires_positive_batch_size(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
-    (checkpoint_dir / "trainer_state.json").write_text('{"global_step": 50}')
+    (checkpoint_dir / "trainer_state.json").write_text('{"global_step": 50, "train_batch_size": 0}')
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_symlinked_trainer_state_is_not_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    external = tmp_path / "external-trainer-state.json"
+    external.write_text('{"global_step": 50, "train_batch_size": 1}')
+    (checkpoint_dir / "trainer_state.json").unlink()
+    (checkpoint_dir / "trainer_state.json").symlink_to(external)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_deeply_nested_trainer_state_fails_closed(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    nested = '{"global_step":50,"train_batch_size":1,"nested":' + "[" * 100_000
+    nested += "0" + "]" * 100_000 + "}"
+    (checkpoint_dir / "trainer_state.json").write_text(nested)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_transformers_single_process_cuda_rng_payload_is_supported(tmp_path, monkeypatch):
+    """Transformers 5.12 saves one CUDA Philox seed/offset tensor for world size 1."""
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    cuda_state = torch.tensor([0] * 16, dtype=torch.uint8)
+    fake_trainer = SimpleNamespace(
+        args=SimpleNamespace(world_size=1, parallel_mode=ParallelMode.NOT_DISTRIBUTED)
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda.random, "get_rng_state", lambda: cuda_state)
+
+    Trainer._save_rng_state(fake_trainer, str(checkpoint_dir))
+    payload = torch_mapping(checkpoint_dir / "rng_state.pth", allow_numpy=True)
+
+    assert payload is not None
+    assert payload["cuda"].shape == (16,)
+    assert payload["cuda"].dtype == torch.uint8
+    assert build_run_status(str(run_dir))["resume"]["ready"] is True
 
 
 def test_lone_ranked_rng_state_is_not_resume_ready(tmp_path):

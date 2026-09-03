@@ -135,7 +135,7 @@ def _infer_base(adapter_path: PathLike | None) -> tuple[str | None, str | None]:
     # infer_base_model_from_adapter returns the raw truthy field. A list, dict,
     # bool, or int would leak into the JSON report; only a real string is a
     # usable model id. Sibling infer_base_revision_from_adapter already str().
-    if not isinstance(base_model, str):
+    if not isinstance(base_model, str) or not base_model.strip():
         base_model = None
 
     try:
@@ -237,15 +237,22 @@ def _yes_no(value: bool) -> str:
 
 
 def _escape_controls(text: str) -> str:
-    """Escape Unicode Cc/Cf controls so table cells cannot spoof the terminal.
+    """Escape Unicode control, format, and surrogate code points in table cells.
 
     Adapter metadata and paths can carry ANSI or other control bytes into
     `format_run_status_table`. Render those as backslash-uXXXX escapes
     instead of emitting them raw (CWE-150 / CodeRabbit on #96).
     """
-    unsafe_categories = {"Cc", "Cf"}
+    unsafe_categories = {"Cc", "Cf", "Cs"}
+
+    def escaped(character: str) -> str:
+        codepoint = ord(character)
+        prefix, width = ("u", 4) if codepoint <= 0xFFFF else ("U", 8)
+        return f"\\{prefix}{codepoint:0{width}x}"
+
     return "".join(
-        f"\\u{ord(ch):04x}" if unicodedata.category(ch) in unsafe_categories else ch for ch in text
+        escaped(character) if unicodedata.category(character) in unsafe_categories else character
+        for character in text
     )
 
 
