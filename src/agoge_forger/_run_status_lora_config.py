@@ -33,17 +33,24 @@ def _finite_number(value: Any) -> bool:
 
 
 def _config_usable(config: LoraConfig) -> bool:
+    return all((_ranks_usable(config), _dropout_usable(config), _alphas_usable(config)))
+
+
+def _ranks_usable(config: LoraConfig) -> bool:
+    return _positive_rank(config.r) and _pattern_usable(config.rank_pattern or {}, _positive_rank)
+
+
+def _dropout_usable(config: LoraConfig) -> bool:
     dropout = config.lora_dropout
-    ranks_usable = _positive_rank(config.r) and _pattern_usable(
-        config.rank_pattern or {}, _positive_rank
-    )
-    dropout_usable = (
+    return bool(
         isinstance(dropout, (int, float)) and not isinstance(dropout, bool) and 0 <= dropout <= 1
     )
-    alphas_usable = _finite_number(config.lora_alpha) and _pattern_usable(
+
+
+def _alphas_usable(config: LoraConfig) -> bool:
+    return _finite_number(config.lora_alpha) and _pattern_usable(
         config.alpha_pattern or {}, _finite_number
     )
-    return bool(ranks_usable and dropout_usable and alphas_usable)
 
 
 def load_lora_config(payload: dict[str, Any]) -> LoraConfig | None:

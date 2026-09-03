@@ -32,6 +32,16 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+def _write_lora_config(run_dir: Path, **overrides) -> None:
+    payload = {
+        "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
+        "peft_type": "LORA",
+        "r": 1,
+        **overrides,
+    }
+    (run_dir / "adapter_config.json").write_text(json.dumps(payload))
+
+
 # 6. Merged model discovery
 # --------------------------------------------------------------------------
 
@@ -494,7 +504,7 @@ def test_nonpositive_lora_rank_is_not_export_ready(tmp_path):
 
 @pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])
 @pytest.mark.parametrize(
-    ("shapes", "rank", "expected"),
+    "case",
     [
         (((1,), (1,)), 1, False),
         (((1, 4), (8, 1)), 2, False),
@@ -503,7 +513,8 @@ def test_nonpositive_lora_rank_is_not_export_ready(tmp_path):
         (((2, 4), (8, 2)), 2, True),
     ],
 )
-def test_lora_shapes_must_match_config_rank(tmp_path, shapes, rank, expected, legacy):
+def test_lora_shapes_must_match_config_rank(tmp_path, case, legacy):
+    shapes, rank, expected = case
     run_dir = _make_run_dir(tmp_path)
     tensors = {
         "base_model.model.layer.lora_A.weight": torch.zeros(shapes[0]),
@@ -526,16 +537,7 @@ def test_lora_shapes_must_match_config_rank(tmp_path, shapes, rank, expected, le
 def test_invalid_rank_pattern_does_not_crash_run_status(tmp_path, rank_pattern):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    (run_dir / "adapter_config.json").write_text(
-        json.dumps(
-            {
-                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
-                "peft_type": "LORA",
-                "r": 1,
-                "rank_pattern": rank_pattern,
-            }
-        )
-    )
+    _write_lora_config(run_dir, rank_pattern=rank_pattern)
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
@@ -550,16 +552,7 @@ def test_rank_pattern_suffix_overrides_default_lora_rank(tmp_path):
             }
         )
     )
-    (run_dir / "adapter_config.json").write_text(
-        json.dumps(
-            {
-                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
-                "peft_type": "LORA",
-                "r": 1,
-                "rank_pattern": {"layer": 2},
-            }
-        )
-    )
+    _write_lora_config(run_dir, rank_pattern={"layer": 2})
 
     assert build_run_status(str(run_dir))["export"]["ready"] is True
 
@@ -567,16 +560,7 @@ def test_rank_pattern_suffix_overrides_default_lora_rank(tmp_path):
 def test_lora_weights_must_match_configured_target_modules(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    (run_dir / "adapter_config.json").write_text(
-        json.dumps(
-            {
-                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
-                "peft_type": "LORA",
-                "r": 1,
-                "target_modules": ["q_proj"],
-            }
-        )
-    )
+    _write_lora_config(run_dir, target_modules=["q_proj"])
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
@@ -584,16 +568,7 @@ def test_lora_weights_must_match_configured_target_modules(tmp_path):
 def test_lora_weights_must_cover_every_configured_target(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    (run_dir / "adapter_config.json").write_text(
-        json.dumps(
-            {
-                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
-                "peft_type": "LORA",
-                "r": 1,
-                "target_modules": ["layer", "v_proj"],
-            }
-        )
-    )
+    _write_lora_config(run_dir, target_modules=["layer", "v_proj"])
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
@@ -602,16 +577,7 @@ def test_lora_weights_must_cover_every_configured_target(tmp_path):
 def test_lora_alpha_must_be_a_finite_number(tmp_path, alpha):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    (run_dir / "adapter_config.json").write_text(
-        json.dumps(
-            {
-                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
-                "peft_type": "LORA",
-                "r": 1,
-                "lora_alpha": alpha,
-            }
-        )
-    )
+    _write_lora_config(run_dir, lora_alpha=alpha)
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
@@ -623,16 +589,7 @@ def test_lora_alpha_must_be_a_finite_number(tmp_path, alpha):
 def test_lora_alpha_pattern_must_be_usable(tmp_path, alpha_pattern):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
-    (run_dir / "adapter_config.json").write_text(
-        json.dumps(
-            {
-                "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
-                "peft_type": "LORA",
-                "r": 1,
-                "alpha_pattern": alpha_pattern,
-            }
-        )
-    )
+    _write_lora_config(run_dir, alpha_pattern=alpha_pattern)
 
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
