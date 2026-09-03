@@ -23,7 +23,12 @@ _ZIP64_LOCATOR = struct.Struct("<4sIQI")
 
 
 def _directory_limits_usable(entries: int, size: int) -> bool:
-    return 0 < entries <= _MAX_ARCHIVE_MEMBERS and size <= _MAX_CENTRAL_DIRECTORY_BYTES
+    return all(
+        (
+            0 < entries <= _MAX_ARCHIVE_MEMBERS,
+            size <= _MAX_CENTRAL_DIRECTORY_BYTES,
+        )
+    )
 
 
 def _classic_eocd(
@@ -45,11 +50,12 @@ def _standard_directory_usable(
     eocd_offset: int,
 ) -> bool:
     _, disk, directory_disk, disk_entries, entries, size, offset, _ = fields
-    return bool(
-        disk == directory_disk == 0
-        and disk_entries == entries
-        and _directory_limits_usable(entries, size)
-        and offset + size <= eocd_offset
+    return all(
+        (
+            (disk, directory_disk, disk_entries) == (0, 0, entries),
+            _directory_limits_usable(entries, size),
+            offset + size <= eocd_offset,
+        )
     )
 
 
@@ -68,11 +74,12 @@ def _zip64_structure_usable(
 
 def _zip64_values_usable(record_fields: tuple[int | bytes, ...], record_offset: int) -> bool:
     _, _, _, _, disk, directory_disk, disk_entries, entries, size, offset = record_fields
-    return bool(
-        disk == directory_disk == 0
-        and disk_entries == entries
-        and _directory_limits_usable(int(entries), int(size))
-        and int(offset) + int(size) <= record_offset
+    return all(
+        (
+            (disk, directory_disk, disk_entries) == (0, 0, entries),
+            _directory_limits_usable(int(entries), int(size)),
+            int(offset) + int(size) <= record_offset,
+        )
     )
 
 
@@ -114,35 +121,104 @@ def _declared_directory_usable(handle: BinaryIO) -> bool:
     return _standard_directory_usable(fields, eocd_offset)
 
 
+def _bounded_archive_infos(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo] | None:
+    infos = archive.infolist()
+    return infos if infos and len(infos) <= _MAX_ARCHIVE_MEMBERS else None
+
+
+def _single_archive_root(names: list[str]) -> str | None:
+    roots = {name.partition("/")[0] for name in names}
+    if len(roots) != 1:
+        return None
+    root = next(iter(roots))
+    names_are_rooted = all(name.startswith(f"{root}/") for name in names)
+    return root if all((bool(root), names_are_rooted)) else None
+
+
 def _archive_members(
     archive: zipfile.ZipFile,
 ) -> tuple[str, dict[str, zipfile.ZipInfo]] | None:
-    infos = archive.infolist()
+    infos = _bounded_archive_infos(archive)
+    if infos is None:
+        return None
     names = [info.filename for info in infos]
-    roots = {name.partition("/")[0] for name in names if "/" in name}
     members = dict(zip(names, infos, strict=True))
-    if not infos or len(infos) > _MAX_ARCHIVE_MEMBERS:
+    root = _single_archive_root(names)
+    if len(members) != len(infos) or root is None:
         return None
-    if len(members) != len(infos) or len(roots) != 1:
-        return None
-    root = next(iter(roots))
-    return (root, members) if root and all(name.startswith(f"{root}/") for name in names) else None
+    return root, members
 
 
 def _storage_record(info: zipfile.ZipInfo, root: str) -> bool:
     prefix = f"{root}/data/"
     suffix = info.filename.removeprefix(prefix)
-    numbered_name = info.filename.startswith(prefix) and suffix.isascii() and suffix.isdigit()
-    stored_file = not info.is_dir() and info.compress_type == zipfile.ZIP_STORED
-    return numbered_name and stored_file
+    return (
+        info.filename.startswith(prefix),
+        suffix.isascii(),
+        suffix.isdigit(),
+        info.is_dir(),
+        info.compress_type,
+    ) == (True, True, True, False, zipfile.ZIP_STORED)
+
+
+def _metadata_record_usable(info: zipfile.ZipInfo) -> bool:
+    return (info.is_dir(), info.file_size < 0) == (False, False)
 
 
 def _metadata_crc_usable(archive: zipfile.ZipFile, infos: list[zipfile.ZipInfo]) -> bool:
-    if any(info.is_dir() or info.file_size < 0 for info in infos):
+    if not all(_metadata_record_usable(info) for info in infos):
         return False
     if sum(info.file_size for info in infos) > _MAX_PICKLE_METADATA_BYTES:
         return False
     return all(len(archive.read(info)) == info.file_size for info in infos)
+
+
+def _storage_inventory(
+    root: str,
+    members: dict[str, zipfile.ZipInfo],
+) -> tuple[list[zipfile.ZipInfo], list[zipfile.ZipInfo]]:
+    storage = [info for info in members.values() if _storage_record(info, root)]
+    storage_names = {info.filename for info in storage}
+    metadata = [info for name, info in members.items() if name not in storage_names]
+    return storage, metadata
+
+
+def _storage_names_usable(
+    root: str,
+    members: dict[str, zipfile.ZipInfo],
+    storage: list[zipfile.ZipInfo],
+) -> bool:
+    data_prefix = f"{root}/data/"
+    data_names = {name for name in members if name.startswith(data_prefix)}
+    return data_names == {info.filename for info in storage}
+
+
+def _required_metadata_present(root: str, members: dict[str, zipfile.ZipInfo]) -> bool:
+    required = {
+        f"{root}/data.pkl",
+        f"{root}/version",
+        f"{root}/.data/serialization_id",
+    }
+    return required.issubset(members)
+
+
+def _archive_contents_usable(
+    archive: zipfile.ZipFile,
+    *,
+    require_data_record: bool,
+) -> bool:
+    archive_parts = _archive_members(archive)
+    if archive_parts is None:
+        return False
+    root, members = archive_parts
+    storage, metadata = _storage_inventory(root, members)
+    if not _required_metadata_present(root, members):
+        return False
+    if not _storage_names_usable(root, members, storage):
+        return False
+    if require_data_record and not storage:
+        return False
+    return _metadata_crc_usable(archive, metadata)
 
 
 def _archive_preflight(path: Path, *, require_data_record: bool) -> bool:
@@ -151,28 +227,16 @@ def _archive_preflight(path: Path, *, require_data_record: bool) -> bool:
             return False
         handle.seek(0)
         with zipfile.ZipFile(handle) as archive:
-            archive_parts = _archive_members(archive)
-            if archive_parts is None:
-                return False
-            root, members = archive_parts
-            required = {
-                f"{root}/data.pkl",
-                f"{root}/version",
-                f"{root}/.data/serialization_id",
-            }
-            storage = [info for info in members.values() if _storage_record(info, root)]
-            data_prefix = f"{root}/data/"
-            storage_names_usable = all(
-                not info.filename.startswith(data_prefix) or info in storage
-                for info in members.values()
+            return _archive_contents_usable(
+                archive,
+                require_data_record=require_data_record,
             )
-            metadata = [info for info in members.values() if info not in storage]
-            return bool(
-                required.issubset(members)
-                and storage_names_usable
-                and (not require_data_record or storage)
-                and _metadata_crc_usable(archive, metadata)
-            )
+
+
+def _string_mapping(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
+        return None
+    return payload
 
 
 def torch_mapping(
@@ -206,6 +270,4 @@ def torch_mapping(
         zlib.error,
     ):
         return None
-    if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
-        return None
-    return payload
+    return _string_mapping(payload)

@@ -76,44 +76,30 @@ def test_oversized_central_directory_is_rejected_before_zipfile_parsing(
     assert torch_mapping(state) is None
 
 
-def test_oversized_pickle_metadata_is_rejected_before_deserialization(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("zip_options", "require_data_record"),
+    [
+        ({"pickle_payload": b"x" * (64 * 1024 * 1024 + 1)}, False),
+        ({"pickle_payload": b"\x80\x02}q\x00.", "directory_data": True}, True),
+        ({"pickle_payload": b"\x80\x02}q\x00.", "compress_storage": True}, True),
+    ],
+    ids=["oversized-metadata", "directory-storage", "compressed-storage"],
+)
+def test_invalid_archive_layout_is_rejected_before_deserialization(
+    tmp_path,
+    monkeypatch,
+    zip_options,
+    require_data_record,
+):
     state = tmp_path / "optimizer.pt"
-    _write_zip(state, pickle_payload=b"x" * (64 * 1024 * 1024 + 1))
+    _write_zip(state, **zip_options)
 
     def fail_load(*args, **kwargs):
-        raise AssertionError("oversized pickle metadata reached torch.load")
+        raise AssertionError("invalid archive layout reached torch.load")
 
     monkeypatch.setattr("agoge_forger._run_status_torch_archive.torch.load", fail_load)
 
-    assert torch_mapping(state) is None
-
-
-def test_data_directory_is_not_a_tensor_storage_record(tmp_path, monkeypatch):
-    state = tmp_path / "optimizer.pt"
-    _write_zip(state, pickle_payload=b"\x80\x02}q\x00.", directory_data=True)
-
-    def fail_load(*args, **kwargs):
-        raise AssertionError("directory-only storage reached torch.load")
-
-    monkeypatch.setattr("agoge_forger._run_status_torch_archive.torch.load", fail_load)
-
-    assert torch_mapping(state, require_data_record=True) is None
-
-
-def test_compressed_tensor_storage_is_rejected_before_deserialization(tmp_path, monkeypatch):
-    state = tmp_path / "optimizer.pt"
-    _write_zip(
-        state,
-        pickle_payload=b"\x80\x02}q\x00.",
-        compress_storage=True,
-    )
-
-    def fail_load(*args, **kwargs):
-        raise AssertionError("compressed tensor storage reached torch.load")
-
-    monkeypatch.setattr("agoge_forger._run_status_torch_archive.torch.load", fail_load)
-
-    assert torch_mapping(state, require_data_record=True) is None
+    assert torch_mapping(state, require_data_record=require_data_record) is None
 
 
 @pytest.mark.parametrize("member", ["archive/data.pkl", "archive/version"])

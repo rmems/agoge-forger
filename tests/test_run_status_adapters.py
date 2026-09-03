@@ -14,6 +14,7 @@ from test_run_status import (
     TINY_LLAMA_CONFIG,
     _deny_read_access_or_skip,
     _make_run_dir,
+    _minimal_safetensors,
     _safetensors_with_shapes,
     _safetensors_with_tensors,
     _test_base_model_path,
@@ -478,3 +479,110 @@ def test_unreadable_legacy_weights_raise_instead_of_reporting_ready(tmp_path):
 
 
 # --------------------------------------------------------------------------
+
+# Adapter safetensors container integrity
+# --------------------------------------------------------------------------
+
+
+def test_empty_adapter_weights_are_not_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(b"")
+    _write_adapter_config(run_dir)
+
+    report = build_run_status(str(run_dir))
+
+    assert report["final_adapter"]["present"] is True
+    assert report["export"]["ready"] is False
+    assert report["export"]["source_kind"] == "final_adapter"
+    assert report["export"]["source_path"] == str(run_dir.resolve())
+
+
+def test_truncated_adapter_weights_are_not_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    # Short junk, and an 8-byte length that claims more header than exists.
+    (run_dir / "adapter_model.safetensors").write_bytes(b"trunc")
+    _write_adapter_config(run_dir)
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+    (run_dir / "adapter_model.safetensors").write_bytes((64).to_bytes(8, "little") + b"{")
+    report = build_run_status(str(run_dir))
+    assert report["final_adapter"]["present"] is True
+    assert report["export"]["ready"] is False
+
+
+def test_zero_tensor_safetensors_is_not_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(
+        _safetensors_with_shapes(
+            {
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (0, 8),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 0),
+            }
+        )
+    )
+    _write_adapter_config(run_dir)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+def test_header_without_data_region_is_not_export_ready(tmp_path):
+    """A valid LoRA header that claims tensor bytes the file does not have."""
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors()[:-1])
+    _write_adapter_config(run_dir)
+
+    report = build_run_status(str(run_dir))
+
+    assert report["final_adapter"]["present"] is True
+    assert report["export"]["ready"] is False
+
+
+def test_unsupported_safetensors_dtype_is_not_export_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    invalid = _minimal_safetensors().replace(b'"F32"', b'"BAD"')
+    (run_dir / "adapter_model.safetensors").write_bytes(invalid)
+    _write_adapter_config(run_dir)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    ("dtype", "element_size"),
+    [("BOOL", 1), ("I32", 4)],
+)
+def test_non_floating_lora_weights_are_not_export_ready(tmp_path, dtype, element_size):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(
+        _safetensors_with_shapes(
+            {
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
+            },
+            dtype=dtype,
+            element_size=element_size,
+        )
+    )
+    _write_adapter_config(run_dir)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    ("dtype", "element_size"),
+    [("BF16", 2), ("F16", 2), ("F32", 4), ("F64", 8)],
+)
+def test_floating_lora_weights_remain_export_ready(tmp_path, dtype, element_size):
+    run_dir = _make_run_dir(tmp_path)
+    (run_dir / "adapter_model.safetensors").write_bytes(
+        _safetensors_with_shapes(
+            {
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
+                "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
+            },
+            dtype=dtype,
+            element_size=element_size,
+        )
+    )
+    _write_adapter_config(run_dir)
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is True
