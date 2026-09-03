@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import torch
 
 from agoge_forger._run_status_torch_archive import torch_mapping
 
@@ -59,6 +60,36 @@ def _oversized_eocd(*, zip64: bool) -> bytes:
         0,
     )
     return zip64_record + locator + classic
+
+
+def _declare_unsupported_compression(path: Path, member: str) -> None:
+    with zipfile.ZipFile(path) as archive:
+        info = archive.getinfo(member)
+    payload = bytearray(path.read_bytes())
+    unsupported = (99).to_bytes(2, "little")
+    payload[info.header_offset + 8 : info.header_offset + 10] = unsupported
+    central_offset = payload.index(b"PK\x01\x02")
+    encoded_name = member.encode()
+    assert payload[central_offset + 46 : central_offset + 46 + len(encoded_name)] == encoded_name
+    payload[central_offset + 10 : central_offset + 12] = unsupported
+    path.write_bytes(payload)
+
+
+def _declare_storage_size(path: Path, member: str, size: int) -> None:
+    with zipfile.ZipFile(path) as archive:
+        info = archive.getinfo(member)
+    payload = bytearray(path.read_bytes())
+    encoded_size = size.to_bytes(4, "little")
+    payload[info.header_offset + 18 : info.header_offset + 26] = encoded_size * 2
+    central_offset = payload.index(b"PK\x01\x02")
+    encoded_name = member.encode()
+    while payload[central_offset + 46 : central_offset + 46 + len(encoded_name)] != encoded_name:
+        name_size = int.from_bytes(payload[central_offset + 28 : central_offset + 30], "little")
+        extra_size = int.from_bytes(payload[central_offset + 30 : central_offset + 32], "little")
+        comment_size = int.from_bytes(payload[central_offset + 32 : central_offset + 34], "little")
+        central_offset += 46 + name_size + extra_size + comment_size
+    payload[central_offset + 20 : central_offset + 28] = encoded_size * 2
+    path.write_bytes(payload)
 
 
 @pytest.mark.parametrize("zip64", [False, True], ids=["classic-size", "zip64-count"])
@@ -123,3 +154,52 @@ def test_corrupt_compressed_metadata_fails_closed(tmp_path, monkeypatch, member)
     monkeypatch.setattr("agoge_forger._run_status_torch_archive.torch.load", fail_load)
 
     assert torch_mapping(state) is None
+
+
+def test_unsupported_metadata_compression_fails_closed(tmp_path):
+    state = tmp_path / "optimizer.pt"
+    _write_zip(state, pickle_payload=b"\x80\x02}q\x00.")
+    _declare_unsupported_compression(state, "archive/data.pkl")
+
+    assert torch_mapping(state) is None
+
+
+def test_torch_load_without_mmap_keeps_restricted_loading(tmp_path, monkeypatch):
+    state = tmp_path / "optimizer.pt"
+    torch.save({"value": torch.tensor([1])}, state)
+    real_load = torch.load
+    calls = []
+
+    def load_without_mmap(path, *, map_location, weights_only):
+        calls.append((map_location, weights_only))
+        return real_load(path, map_location=map_location, weights_only=weights_only)
+
+    monkeypatch.setattr("agoge_forger._run_status_torch_archive.torch.load", load_without_mmap)
+
+    payload = torch_mapping(state, require_data_record=True)
+
+    assert payload is not None
+    assert payload["value"].tolist() == [1]
+    assert calls == [("cpu", True)]
+
+
+def test_oversized_storage_is_bounded_only_without_mmap(tmp_path, monkeypatch):
+    state = tmp_path / "optimizer.pt"
+    _write_zip(state, pickle_payload=b"\x80\x02}q\x00.")
+    _declare_storage_size(state, "archive/data/0", 1024**3 + 1)
+
+    def legacy_load(path, *, map_location, weights_only):
+        raise AssertionError("oversized storage reached the non-mmap loader")
+
+    monkeypatch.setattr("agoge_forger._run_status_torch_archive.torch.load", legacy_load)
+    assert torch_mapping(state, require_data_record=True) is None
+
+    calls = []
+
+    def mmap_load(path, *, map_location, weights_only, mmap):
+        calls.append((map_location, weights_only, mmap))
+        return {}
+
+    monkeypatch.setattr("agoge_forger._run_status_torch_archive.torch.load", mmap_load)
+    assert torch_mapping(state, require_data_record=True) == {}
+    assert calls == [("cpu", True, True)]

@@ -7,9 +7,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+_MAX_ARTIFACT_INDEX_BYTES = 4 * 1024 * 1024
+
 
 def _load_index(path: Path) -> dict[str, Any] | None:
     if path.is_symlink() or not path.is_file():
+        return None
+    if path.stat().st_size > _MAX_ARTIFACT_INDEX_BYTES:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))

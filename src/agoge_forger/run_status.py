@@ -23,7 +23,7 @@ from ._run_status_validation import (
     adapter_config_usable as _adapter_config_usable,
 )
 from ._run_status_validation import (
-    adapter_weight_shapes as _adapter_weight_shapes,
+    adapter_optimizer_shapes as _adapter_optimizer_shapes,
 )
 from ._run_status_validation import (
     adapter_weights_usable as _adapter_weights_usable,
@@ -163,11 +163,11 @@ def _artifact_status(path: Path | None) -> dict[str, Any]:
 
 
 def _resume_status(checkpoint: Path | None, *, allow_unsafe: bool) -> dict[str, Any]:
-    adapter_shapes = _adapter_weight_shapes(checkpoint, allow_unsafe=allow_unsafe)
+    optimizer_shapes = _adapter_optimizer_shapes(checkpoint, allow_unsafe=allow_unsafe)
     ready = bool(
         checkpoint is not None
-        and adapter_shapes is not None
-        and _trainer_state_usable(checkpoint, adapter_shapes)
+        and optimizer_shapes is not None
+        and _trainer_state_usable(checkpoint, optimizer_shapes)
     )
     return {"ready": ready, "checkpoint_path": _as_str(checkpoint)}
 

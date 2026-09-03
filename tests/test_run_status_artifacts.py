@@ -21,6 +21,7 @@ from test_run_status import (
 )
 from typer.testing import CliRunner
 
+from agoge_forger._run_status_artifact_index import artifact_index_usable
 from agoge_forger.artifacts.safetensors_io import write_artifact_index
 from agoge_forger.cli import app
 from agoge_forger.run_status import build_run_status, find_merged_model_dir, is_merged_model_dir
@@ -123,7 +124,13 @@ def test_sharded_merged_model_is_recognised(tmp_path, shard_count):
     (merged / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
     (merged / "tokenizer.json").write_text(json.dumps(TINY_TOKENIZER))
     (merged / "tokenizer_config.json").write_text(
-        json.dumps({"tokenizer_class": "PreTrainedTokenizerFast", "unk_token": "<unk>"})
+        json.dumps(
+            {
+                "tokenizer_class": "PreTrainedTokenizerFast",
+                "unk_token": "<unk>",
+                "eos_token": "<unk>",
+            }
+        )
     )
     shard_names = [
         f"model-{ordinal:05d}-of-{shard_count:05d}.safetensors"
@@ -355,6 +362,16 @@ def test_merged_model_requires_usable_tokenizer_inventory(tmp_path):
     assert is_merged_model_dir(merged) is False
 
 
+def test_merged_model_tokenizer_requires_pad_or_eos_token(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "tokenizer_config.json").write_text(
+        json.dumps({"tokenizer_class": "PreTrainedTokenizerFast", "unk_token": "<unk>"})
+    )
+    write_artifact_index(str(merged))
+
+    assert is_merged_model_dir(merged) is False
+
+
 def test_merged_model_requires_final_artifact_index(tmp_path):
     merged = _write_merged_model(tmp_path / "merged")
     (merged / "artifact_index.json").unlink(missing_ok=True)
@@ -380,6 +397,19 @@ def test_deeply_nested_artifact_index_fails_closed(runner, tmp_path):
 
     assert result.exit_code == 0
     assert json.loads(result.stdout)["merged_model"] == {"present": False, "path": None}
+
+
+def test_oversized_artifact_index_is_rejected_before_read(tmp_path, monkeypatch):
+    merged = _write_merged_model(tmp_path / "merged")
+    index = merged / "artifact_index.json"
+    index.write_bytes(b" " * (4 * 1024 * 1024 + 1))
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("oversized artifact index was read")
+
+    monkeypatch.setattr(Path, "read_text", unexpected_read)
+
+    assert artifact_index_usable(merged) is False
 
 
 def test_merged_config_requires_model_type(tmp_path):

@@ -33,7 +33,57 @@ def _finite_number(value: Any) -> bool:
 
 
 def _config_usable(config: LoraConfig) -> bool:
-    return all((_ranks_usable(config), _dropout_usable(config), _alphas_usable(config)))
+    return all(
+        (
+            _ranks_usable(config),
+            _dropout_usable(config),
+            _alphas_usable(config),
+            _standard_structure_usable(config),
+        )
+    )
+
+
+def _empty_optional(value: Any) -> bool:
+    return value is None or value == [] or value == {} or value == set()
+
+
+def _standard_structure_usable(config: LoraConfig) -> bool:
+    optional_fields = (
+        "auto_mapping",
+        "exclude_modules",
+        "modules_to_save",
+        "layers_to_transform",
+        "layers_pattern",
+        "megatron_config",
+        "trainable_token_indices",
+        "loftq_config",
+        "eva_config",
+        "corda_config",
+        "lora_ga_config",
+        "alora_invocation_tokens",
+        "layer_replication",
+        "target_parameters",
+        "arrow_config",
+    )
+    no_optional_structure = all(
+        _empty_optional(getattr(config, field, None)) for field in optional_fields
+    )
+    supported_flags = all(
+        (
+            config.bias == "none",
+            config.init_lora_weights is True,
+            isinstance(config.fan_in_fan_out, bool),
+            isinstance(config.inference_mode, bool),
+            isinstance(config.use_dora, bool),
+            config.use_rslora is False,
+            config.use_qalora is False,
+            config.use_bdlora is None,
+            config.lora_bias is False,
+            config.ensure_weight_tying is False,
+            not config.runtime_config.ephemeral_gpu_offload,
+        )
+    )
+    return no_optional_structure and supported_flags
 
 
 def _ranks_usable(config: LoraConfig) -> bool:

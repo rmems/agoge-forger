@@ -13,7 +13,6 @@ from transformers import (
     MODEL_FOR_CAUSAL_LM_MAPPING,
     AutoConfig,
     AutoModelForCausalLM,
-    AutoTokenizer,
 )
 from transformers.pytorch_utils import Conv1D
 
@@ -27,6 +26,9 @@ from ._run_status_lora import (
     lora_config_usable,
     lora_shapes_usable,
 )
+from ._run_status_optimizer_order import ordered_trainable_shapes
+from ._run_status_pretrained import offline_pretrained as _offline_pretrained
+from ._run_status_pretrained import tokenizer_usable as _tokenizer_usable
 from ._run_status_safetensors import has_complete_merged_weights, safetensors_shapes
 from ._run_status_torch_archive import torch_mapping
 from .config import normalize_revision
@@ -56,32 +58,6 @@ def _local_causal_lm_config(candidate: Path) -> Any:
     except (AttributeError, ImportError, OSError, TypeError, ValueError):
         return None
     return config if type(config) in MODEL_FOR_CAUSAL_LM_MAPPING else None
-
-
-def _offline_pretrained(
-    factory: Any,
-    source: str | Path,
-    *,
-    revision: str | None = None,
-) -> Any:
-    loader = getattr(factory, "from_pretrained", None)
-    if not callable(loader):
-        raise TypeError("from_pretrained is not callable")
-    revision_kwarg = {} if revision is None else {"revision": revision}
-    return loader(
-        source,
-        **revision_kwarg,
-        local_files_only=True,
-        trust_remote_code=False,
-    )
-
-
-def _tokenizer_usable(candidate: Path) -> bool:
-    try:
-        tokenizer = _offline_pretrained(AutoTokenizer, candidate)  # nosec B615
-    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
-        return False
-    return len(tokenizer) > 0
 
 
 def _adapter_base_config(config: Any) -> Any:
@@ -187,7 +163,7 @@ def _legacy_lora_shapes(path: Path) -> dict[str, tuple[int, ...]]:
 
 def _adapter_validation_context(
     adapter_path: PathLike | None,
-) -> tuple[Path, Any, dict[str, BaseModuleDimensions]] | None:
+) -> tuple[Path, Any, Any, dict[str, BaseModuleDimensions]] | None:
     if adapter_path is None:
         return None
     adapter_dir = Path(adapter_path)
@@ -198,7 +174,7 @@ def _adapter_validation_context(
     base_modules = None if base_config is None else _base_module_dimensions(base_config)
     if base_modules is None:
         return None
-    return adapter_dir, config, base_modules
+    return adapter_dir, config, base_config, base_modules
 
 
 def _serialized_lora_shapes(
@@ -222,13 +198,29 @@ def adapter_weight_shapes(
     context = _adapter_validation_context(adapter_path)
     if context is None:
         return None
-    adapter_dir, config, base_modules = context
+    adapter_dir, config, _, base_modules = context
     shapes = _serialized_lora_shapes(adapter_dir, allow_unsafe)
     if shapes is None:
         return None
     if lora_shapes_usable(shapes, config, base_modules):
         return shapes
     return None
+
+
+def adapter_optimizer_shapes(
+    adapter_path: PathLike | None,
+    *,
+    allow_unsafe: bool = False,
+) -> list[list[tuple[int, ...]]] | None:
+    """Return adapter parameter shapes in Trainer optimizer order."""
+    context = _adapter_validation_context(adapter_path)
+    if context is None:
+        return None
+    adapter_dir, config, base_config, base_modules = context
+    shapes = _serialized_lora_shapes(adapter_dir, allow_unsafe)
+    if shapes is None or not lora_shapes_usable(shapes, config, base_modules):
+        return None
+    return ordered_trainable_shapes(shapes, config, base_config)
 
 
 def adapter_weights_usable(

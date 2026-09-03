@@ -285,6 +285,7 @@ def _write_merged_model(path):
             {
                 "tokenizer_class": "PreTrainedTokenizerFast",
                 "unk_token": "<unk>",
+                "eos_token": "<unk>",
                 "model_max_length": 16,
             }
         )

@@ -104,12 +104,9 @@ def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
 
 
 def infer_base_revision_from_adapter(adapter_path: PathLike) -> str | None:
-    """Return a usable Hub revision, degrading malformed adapter metadata."""
+    """Return the normalized Hub revision persisted on a PEFT adapter."""
     revision = _load_adapter_config(adapter_path).get("revision")
-    try:
-        return normalize_revision(revision)
-    except TypeError:
-        return None
+    return normalize_revision(revision)
 
 
 def resolve_resume_checkpoint(run_dir: str, config) -> str | None:

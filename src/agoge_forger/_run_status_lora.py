@@ -13,7 +13,11 @@ from agoge_forger._run_status_target_pattern import (
     parse_safe_target_pattern,
 )
 
-_PAIRS = (("lora_A", "lora_B"), ("lora_embedding_A", "lora_embedding_B"))
+_PAIRS = (
+    ("lora_A", "lora_B", ".weight"),
+    ("lora_embedding_A", "lora_embedding_B", ""),
+)
+_PAIR_SEGMENTS = frozenset(segment for pair in _PAIRS for segment in pair[:2])
 _BASE_MODEL_PREFIX = "base_model.model."
 Shape = tuple[int, ...]
 
@@ -44,17 +48,14 @@ def _module_rank(config: LoraConfig, module: str) -> int:
 
 
 def _pair_for_key(key: str) -> tuple[str, str, str] | None:
-    parts = key.split(".")
-    for left, right in _PAIRS:
-        segment = left if left in parts else None
-        if right in parts:
-            segment = right
-        if segment is None:
-            continue
-        module = ".".join(parts[: parts.index(segment)])
-        counterpart = parts.copy()
-        counterpart[counterpart.index(segment)] = right if segment == left else left
-        return module, segment, ".".join(counterpart)
+    for left, right, suffix in _PAIRS:
+        for segment, counterpart_segment in ((left, right), (right, left)):
+            marker = f".{segment}{suffix}"
+            if key.endswith(marker):
+                module = key[: -len(marker)]
+                if module:
+                    counterpart = f"{module}.{counterpart_segment}{suffix}"
+                    return module, segment, counterpart
     return None
 
 
@@ -108,9 +109,13 @@ def _targets_cover_modules(targets: TargetSpec, modules: set[str]) -> bool:
     )
 
 
-def _recognized_pairs(shapes: dict[str, tuple[int, ...]]) -> dict[str, tuple[str, str, str]]:
+def _recognized_pairs(
+    shapes: dict[str, tuple[int, ...]],
+) -> dict[str, tuple[str, str, str]] | None:
     pairs = {key: _pair_for_key(key) for key in shapes}
-    return {key: pair for key, pair in pairs.items() if pair is not None}
+    recognized = {key: pair for key, pair in pairs.items() if pair is not None}
+    serialized_pair_keys = {key for key in shapes if not _PAIR_SEGMENTS.isdisjoint(key.split("."))}
+    return recognized if recognized.keys() == serialized_pair_keys else None
 
 
 def _pair_set_complete(pairs: dict[str, tuple[str, str, str]]) -> bool:
@@ -163,6 +168,33 @@ def _dora_shapes_usable(
     return actual == expected
 
 
+def _optional_embedding_base_shapes(
+    modules: set[str],
+    base_modules: dict[str, BaseModuleDimensions],
+) -> dict[str, Shape]:
+    optional: dict[str, Shape] = {}
+    for module in modules:
+        base = base_modules.get(module.removeprefix(_BASE_MODEL_PREFIX))
+        if base is not None and base.embedding:
+            optional[f"{module}.base_layer.weight"] = (base.input_size, base.output_size)
+    return optional
+
+
+def _inventory_usable(
+    shapes: dict[str, Shape],
+    pairs: dict[str, tuple[str, str, str]],
+    modules: set[str],
+    config: LoraConfig,
+    base_modules: dict[str, BaseModuleDimensions],
+) -> bool:
+    required = set(pairs)
+    if config.use_dora:
+        required.update(f"{module}.lora_magnitude_vector" for module in modules)
+    optional = _optional_embedding_base_shapes(modules, base_modules)
+    extras = set(shapes) - required
+    return extras <= optional.keys() and all(shapes[key] == optional[key] for key in extras)
+
+
 def lora_shapes_usable(
     shapes: dict[str, tuple[int, ...]] | None,
     config: LoraConfig,
@@ -174,17 +206,18 @@ def lora_shapes_usable(
     if targets is None:
         return False
     pairs = _recognized_pairs(shapes)
+    if not pairs or not _pair_set_complete(pairs):
+        return False
     modules = _left_pair_modules(pairs)
     normalized_modules = {module.removeprefix(_BASE_MODEL_PREFIX) for module in modules}
     expected_modules = {
         module for module in base_modules if _module_matches_targets(module, targets)
     }
-    if not pairs or not _pair_set_complete(pairs):
-        return False
     checks = (
         _targets_cover_modules(targets, modules),
         normalized_modules == expected_modules,
         _left_pair_shapes_usable(shapes, pairs, config, base_modules),
         _dora_shapes_usable(shapes, modules, config, base_modules),
+        _inventory_usable(shapes, pairs, modules, config, base_modules),
     )
     return all(checks)

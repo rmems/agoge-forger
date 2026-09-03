@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import struct
 import zipfile
 import zlib
@@ -17,6 +18,9 @@ _MAX_PICKLE_METADATA_BYTES = 64 * 1024 * 1024
 _MAX_ARCHIVE_MEMBERS = 65_536
 _MAX_CENTRAL_DIRECTORY_BYTES = 64 * 1024 * 1024
 _MAX_EOCD_TAIL_BYTES = 22 + 65_535
+# Without mmap, torch.load materializes every storage. One GiB accommodates
+# large LoRA optimizer states while bounding legacy-Torch resident memory.
+_MAX_MATERIALIZED_STORAGE_BYTES = 1024**3
 _EOCD = struct.Struct("<4s4H2IH")
 _ZIP64_EOCD = struct.Struct("<4sQ2H2I4Q")
 _ZIP64_LOCATOR = struct.Struct("<4sIQI")
@@ -202,10 +206,26 @@ def _required_metadata_present(root: str, members: dict[str, zipfile.ZipInfo]) -
     return required.issubset(members)
 
 
+def _storage_size_usable(storage: list[zipfile.ZipInfo], max_storage_bytes: int | None) -> bool:
+    return max_storage_bytes is None or sum(info.file_size for info in storage) <= max_storage_bytes
+
+
+def _storage_inventory_usable(
+    storage: list[zipfile.ZipInfo],
+    *,
+    require_data_record: bool,
+    max_storage_bytes: int | None,
+) -> bool:
+    if require_data_record and not storage:
+        return False
+    return _storage_size_usable(storage, max_storage_bytes)
+
+
 def _archive_contents_usable(
     archive: zipfile.ZipFile,
     *,
     require_data_record: bool,
+    max_storage_bytes: int | None,
 ) -> bool:
     archive_parts = _archive_members(archive)
     if archive_parts is None:
@@ -216,12 +236,21 @@ def _archive_contents_usable(
         return False
     if not _storage_names_usable(root, members, storage):
         return False
-    if require_data_record and not storage:
+    if not _storage_inventory_usable(
+        storage,
+        require_data_record=require_data_record,
+        max_storage_bytes=max_storage_bytes,
+    ):
         return False
     return _metadata_crc_usable(archive, metadata)
 
 
-def _archive_preflight(path: Path, *, require_data_record: bool) -> bool:
+def _archive_preflight(
+    path: Path,
+    *,
+    require_data_record: bool,
+    max_storage_bytes: int | None,
+) -> bool:
     with path.open("rb") as handle:
         if not _declared_directory_usable(handle):
             return False
@@ -230,6 +259,7 @@ def _archive_preflight(path: Path, *, require_data_record: bool) -> bool:
             return _archive_contents_usable(
                 archive,
                 require_data_record=require_data_record,
+                max_storage_bytes=max_storage_bytes,
             )
 
 
@@ -237,6 +267,22 @@ def _string_mapping(payload: Any) -> dict[str, Any] | None:
     if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
         return None
     return payload
+
+
+def _restricted_load_kwargs(loader: Any) -> dict[str, Any]:
+    try:
+        parameters = inspect.signature(loader).parameters
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("cannot verify the restricted torch.load interface") from error
+    if "weights_only" not in parameters:
+        raise RuntimeError("torch.load does not support restricted weights-only loading")
+    kwargs: dict[str, Any] = {
+        "map_location": "cpu",
+        "weights_only": True,
+    }
+    if "mmap" in parameters:
+        kwargs["mmap"] = True
+    return kwargs
 
 
 def torch_mapping(
@@ -249,22 +295,26 @@ def torch_mapping(
     if path.is_symlink() or not path.is_file():
         return None
     try:
-        if not _archive_preflight(path, require_data_record=require_data_record):
+        loader = torch.load
+        load_kwargs = _restricted_load_kwargs(loader)
+        max_storage_bytes = (
+            None if load_kwargs.get("mmap") is True else _MAX_MATERIALIZED_STORAGE_BYTES
+        )
+        if not _archive_preflight(
+            path,
+            require_data_record=require_data_record,
+            max_storage_bytes=max_storage_bytes,
+        ):
             return None
         context = safe_globals() if allow_numpy else nullcontext()
         with context:
-            payload = torch.load(
-                path,
-                map_location="cpu",
-                weights_only=True,
-                mmap=True,
-            )
+            payload = loader(path, **load_kwargs)
     except (
         UnpicklingError,
         EOFError,
         IndexError,
         KeyError,
-        RuntimeError,
+        RuntimeError,  # Includes unsupported ZIP compression's NotImplementedError.
         ValueError,
         zipfile.BadZipFile,
         zlib.error,

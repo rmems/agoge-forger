@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import torch
+from transformers import TrainerState
 
+from ._run_status_optimizer_order import optimizer_shapes_match
 from ._run_status_rng import _rng_state_usable
 from ._run_status_torch_archive import torch_mapping
 
@@ -30,6 +31,10 @@ def _json_object(path: Path) -> dict[str, Any] | None:
 
 
 def _trainer_metadata_usable(payload: dict[str, Any], step: int) -> bool:
+    try:
+        TrainerState(**payload)
+    except TypeError:
+        return False
     global_step = payload.get("global_step")
     train_batch_size = payload.get("train_batch_size")
     if not _valid_int(global_step) or not _valid_int(train_batch_size, minimum=1):
@@ -177,14 +182,6 @@ def _optimizer_parameter_ids(groups: Any) -> list[Any] | None:
     return parameter_ids
 
 
-def _optimizer_shapes_match_adapter(
-    state: dict[int, dict[str, Any]],
-    adapter_shapes: dict[str, tuple[int, ...]],
-) -> bool:
-    optimizer_shapes = Counter(tuple(entry["exp_avg"].shape) for entry in state.values())
-    return optimizer_shapes == Counter(adapter_shapes.values())
-
-
 def _amsgrad_state_entry_usable(entry: Any) -> bool:
     return bool(
         isinstance(entry, dict)
@@ -208,7 +205,7 @@ def _amsgrad_states_usable(groups: list[Any], state: dict[int, dict[str, Any]]) 
 def _optimizer_payload_usable(
     payload: dict[str, Any] | None,
     checkpoint_step: int,
-    adapter_shapes: dict[str, tuple[int, ...]],
+    adapter_shapes: list[list[tuple[int, ...]]],
 ) -> bool:
     if payload is None or not _optimizer_state_entries_usable(
         payload.get("state"), checkpoint_step
@@ -223,7 +220,7 @@ def _optimizer_payload_usable(
     state = payload["state"]
     return bool(
         set(state) == set(parameter_ids)
-        and _optimizer_shapes_match_adapter(state, adapter_shapes)
+        and optimizer_shapes_match(state, groups, adapter_shapes)
         and _amsgrad_states_usable(groups, state)
     )
 
@@ -259,7 +256,7 @@ def _scheduler_payload_usable(
 
 def trainer_state_usable(
     checkpoint: str | Path | None,
-    adapter_shapes: dict[str, tuple[int, ...]],
+    adapter_shapes: list[list[tuple[int, ...]]],
 ) -> bool:
     if checkpoint is None:
         return False

@@ -10,14 +10,16 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from peft import LoraConfig, get_peft_model
 from test_run_status import (
+    TINY_LLAMA_CONFIG,
     _make_run_dir,
     _minimal_safetensors,
     _optimizer_state,
     _write_checkpoint,
     _write_torch_state,
 )
-from transformers import Trainer
+from transformers import AutoModelForCausalLM, LlamaConfig, Trainer
 from transformers.training_args import ParallelMode
 
 from agoge_forger._run_status_torch_archive import torch_mapping
@@ -143,6 +145,100 @@ def test_optimizer_state_must_cover_every_trainable_adapter_tensor(tmp_path):
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
 
+def test_optimizer_moment_shapes_follow_parameter_group_order(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    swapped = _optimizer_state(50, ((8, 1), (1, 8)))
+    _write_torch_state(checkpoint_dir / "optimizer.pt", swapped)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_genuine_multitarget_peft_optimizer_order_is_resume_ready(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = run_dir / "checkpoint-1"
+    checkpoint_dir.mkdir()
+    base_dir = tmp_path / "base-model"
+    base_model = AutoModelForCausalLM.from_config(LlamaConfig(**TINY_LLAMA_CONFIG))
+    base_model.save_pretrained(base_dir)
+    model = get_peft_model(
+        base_model,
+        LoraConfig(
+            r=2,
+            target_modules=["q_proj", "gate_proj"],
+            task_type="CAUSAL_LM",
+        ),
+    )
+    model.peft_config["default"].base_model_name_or_path = str(base_dir)
+    model.save_pretrained(checkpoint_dir)
+
+    named_trainable = [
+        (name, parameter) for name, parameter in model.named_parameters() if parameter.requires_grad
+    ]
+    assert [tuple(parameter.shape) for _, parameter in named_trainable] == [
+        (2, 8),
+        (8, 2),
+        (2, 8),
+        (16, 2),
+    ]
+    trainer = object.__new__(Trainer)
+    decay_names = set(trainer.get_decay_parameter_names(model))
+    optimizer = torch.optim.AdamW(
+        [
+            {
+                "params": [parameter for name, parameter in named_trainable if name in decay_names],
+                "weight_decay": 0.01,
+            },
+            {
+                "params": [
+                    parameter for name, parameter in named_trainable if name not in decay_names
+                ],
+                "weight_decay": 0.0,
+            },
+        ],
+        lr=0.001,
+        weight_decay=0.01,
+    )
+    for _, parameter in named_trainable:
+        parameter.grad = torch.zeros_like(parameter)
+    optimizer.step()
+    torch.save(optimizer.state_dict(), checkpoint_dir / "optimizer.pt")
+    _write_torch_state(
+        checkpoint_dir / "scheduler.pt",
+        {
+            "last_epoch": 1,
+            "_step_count": 2,
+            "base_lrs": [0.001, 0.001],
+            "_last_lr": [0.001, 0.001],
+        },
+    )
+    _write_torch_state(checkpoint_dir / "rng_state.pth")
+    (checkpoint_dir / "trainer_state.json").write_text(
+        json.dumps({"global_step": 1, "train_batch_size": 1})
+    )
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is True
+
+
+def test_structural_lora_config_is_rejected_before_peft_construction(monkeypatch, tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    config_path = checkpoint_dir / "adapter_config.json"
+    config = json.loads(config_path.read_text())
+    config["layer_replication"] = [[0, 1]]
+    config_path.write_text(json.dumps(config))
+
+    def fail_constructor(*args, **kwargs):
+        raise AssertionError("untrusted structural config reached get_peft_model")
+
+    monkeypatch.setattr(
+        "agoge_forger._run_status_optimizer_order.get_peft_model",
+        fail_constructor,
+    )
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
 def test_optimizer_parameter_group_requires_adamw_hyperparameters(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
@@ -174,7 +270,7 @@ def test_amsgrad_requires_maximum_second_moment_for_each_group_parameter(tmp_pat
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
 
-def test_amsgrad_maximum_second_moments_match_their_parameter_group(tmp_path):
+def test_optimizer_parameter_ids_must_remain_in_their_trainer_group(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
     payload = _optimizer_state(50)
@@ -184,7 +280,7 @@ def test_amsgrad_maximum_second_moments_match_their_parameter_group(tmp_path):
     payload["state"][0]["max_exp_avg_sq"] = torch.zeros(1, 8)
     _write_torch_state(checkpoint_dir / "optimizer.pt", payload)
 
-    assert build_run_status(str(run_dir))["resume"]["ready"] is True
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
 
 @pytest.mark.parametrize(
@@ -365,6 +461,16 @@ def test_trainer_state_requires_positive_batch_size(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
     (checkpoint_dir / "trainer_state.json").write_text('{"global_step": 50, "train_batch_size": 0}')
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_trainer_state_rejects_unknown_installed_schema_fields(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    (checkpoint_dir / "trainer_state.json").write_text(
+        json.dumps({"global_step": 50, "train_batch_size": 1, "junk": 1})
+    )
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
