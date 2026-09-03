@@ -587,31 +587,66 @@ def test_offline_pretrained_loader_preserves_security_flags(tmp_path):
 
 
 def test_adapter_base_config_forwards_pinned_revision_and_security_flags(monkeypatch):
+    from agoge_forger import _run_status_pretrained as pretrained
     from agoge_forger import _run_status_validation as validation
 
     calls = []
     loaded = validation.CONFIG_MAPPING["llama"]()
 
-    def load(source, **kwargs):
-        calls.append((source, kwargs))
+    class Tokenizer:
+        pad_token = None
+        eos_token = object()
+
+        def __len__(self):
+            return 2
+
+    def load_config(source, **kwargs):
+        calls.append(("config", source, kwargs))
         return loaded
 
-    monkeypatch.setattr(validation.AutoConfig, "from_pretrained", load)
+    def load_tokenizer(source, **kwargs):
+        calls.append(("tokenizer", source, kwargs))
+        return Tokenizer()
+
+    def validate_weights(source, config, revision):
+        calls.append(("weights", source, revision, config))
+        return True
+
+    monkeypatch.setattr(validation.AutoConfig, "from_pretrained", load_config)
+    monkeypatch.setattr(pretrained.AutoTokenizer, "from_pretrained", load_tokenizer)
+    monkeypatch.setattr(validation, "local_base_weights_usable", validate_weights)
+    monkeypatch.setattr(pretrained, "_tokenizer_inventory_usable", lambda *args, **kwargs: True)
     adapter = SimpleNamespace(
         base_model_name_or_path="org/base-model",
-        revision="deadbeefcafe",
+        revision="deadbeefcafedeadbeefcafedeadbeefcafedead",
     )
 
     assert validation._adapter_base_config(adapter) is loaded
     assert calls == [
         (
+            "config",
             "org/base-model",
             {
-                "revision": "deadbeefcafe",
+                "revision": "deadbeefcafedeadbeefcafedeadbeefcafedead",
                 "local_files_only": True,
                 "trust_remote_code": False,
             },
-        )
+        ),
+        (
+            "weights",
+            "org/base-model",
+            "deadbeefcafedeadbeefcafedeadbeefcafedead",
+            loaded,
+        ),
+        (
+            "tokenizer",
+            "org/base-model",
+            {
+                "revision": "deadbeefcafedeadbeefcafedeadbeefcafedead",
+                "local_files_only": True,
+                "trust_remote_code": False,
+            },
+        ),
     ]
 
 

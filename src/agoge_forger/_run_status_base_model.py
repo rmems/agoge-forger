@@ -6,9 +6,11 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from huggingface_hub.constants import HF_HUB_CACHE
 from transformers import AutoModelForCausalLM
 
 from ._run_status_architecture import architecture_resources_bounded
+from ._run_status_hub_cache import cached_snapshot, cached_weights_usable
 from ._run_status_safetensors import has_complete_merged_weights
 
 
@@ -30,10 +32,17 @@ def causal_lm_shapes(config: Any) -> dict[str, tuple[int, ...]] | None:
         return None
 
 
-def local_base_weights_usable(base_model: str, config: Any) -> bool:
-    """Require exact safe weights for a path that export would load locally."""
+def local_base_weights_usable(
+    base_model: str,
+    config: Any,
+    revision: str | None = None,
+) -> bool:
+    """Require exact safe weights for a local path or cached Hub snapshot."""
     candidate = Path(base_model)
-    if not candidate.is_dir():
-        return True
     expected_shapes = causal_lm_shapes(config)
-    return expected_shapes is not None and has_complete_merged_weights(candidate, expected_shapes)
+    if expected_shapes is None:
+        return False
+    if candidate.is_dir():
+        return has_complete_merged_weights(candidate, expected_shapes)
+    snapshot = cached_snapshot(base_model, revision, HF_HUB_CACHE)
+    return snapshot is not None and cached_weights_usable(snapshot, expected_shapes)

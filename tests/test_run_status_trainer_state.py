@@ -17,6 +17,7 @@ from test_run_status import (
     _minimal_safetensors,
     _optimizer_state,
     _write_checkpoint,
+    _write_test_tokenizer,
     _write_torch_state,
 )
 from transformers import AutoModelForCausalLM, LlamaConfig, Trainer
@@ -161,6 +162,7 @@ def test_genuine_multitarget_peft_optimizer_order_is_resume_ready(tmp_path):
     base_dir = tmp_path / "base-model"
     base_model = AutoModelForCausalLM.from_config(LlamaConfig(**TINY_LLAMA_CONFIG))
     base_model.save_pretrained(base_dir)
+    _write_test_tokenizer(base_dir)
     model = get_peft_model(
         base_model,
         LoraConfig(

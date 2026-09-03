@@ -142,11 +142,25 @@ def _safetensors_with_dtype(dtype: str) -> bytes:
 _DEFAULT_BASE_MODEL = object()
 
 
+def _write_test_tokenizer(directory: Path) -> None:
+    (directory / "tokenizer.json").write_text(json.dumps(TINY_TOKENIZER))
+    (directory / "tokenizer_config.json").write_text(
+        json.dumps(
+            {
+                "tokenizer_class": "PreTrainedTokenizerFast",
+                "unk_token": "<unk>",
+                "eos_token": "<unk>",
+            }
+        )
+    )
+
+
 def _test_base_model_path(directory: Path) -> Path:
     base_model = directory / ".test-base-model"
     base_model.mkdir(exist_ok=True)
     (base_model / "config.json").write_text(json.dumps(TINY_LLAMA_CONFIG))
     (base_model / "model.safetensors").write_bytes(_safetensors_with_shapes(TINY_LLAMA_SHAPES))
+    _write_test_tokenizer(base_model)
     return base_model.resolve()
 
 

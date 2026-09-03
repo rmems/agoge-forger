@@ -20,6 +20,7 @@ from ._run_status_architecture import architecture_resources_bounded
 from ._run_status_artifact_index import artifact_index_usable
 from ._run_status_base_model import causal_lm_shapes as _causal_lm_shapes
 from ._run_status_base_model import local_base_weights_usable
+from ._run_status_hub_cache import immutable_hub_revision
 from ._run_status_lora import (
     BaseModuleDimensions,
     load_lora_config,
@@ -66,6 +67,8 @@ def _adapter_base_config(config: Any) -> Any:
         return None
     try:
         revision = normalize_revision(config.revision)
+        if not Path(base_model).is_dir() and not immutable_hub_revision(revision):
+            return None
         base_config = _offline_pretrained(  # nosec B615
             AutoConfig,
             base_model,
@@ -76,7 +79,8 @@ def _adapter_base_config(config: Any) -> Any:
     return (
         base_config
         if type(base_config) in MODEL_FOR_CAUSAL_LM_MAPPING
-        and local_base_weights_usable(base_model, base_config)
+        and local_base_weights_usable(base_model, base_config, revision)
+        and _tokenizer_usable(base_model, revision=revision)
         else None
     )
 

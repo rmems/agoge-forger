@@ -21,6 +21,7 @@ from test_run_status import (
     _write_adapter_config,
     _write_final_adapter,
     _write_legacy_bin_adapter,
+    _write_test_tokenizer,
 )
 from transformers import AutoModelForCausalLM, GPT2Config, LlamaConfig
 from typer.testing import CliRunner
@@ -89,6 +90,7 @@ def _write_base_weights(base_model: Path, model) -> None:
         if name not in ignored and name not in tied
     }
     (base_model / "model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
+    _write_test_tokenizer(base_model)
 
 
 # --------------------------------------------------------------------------
