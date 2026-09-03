@@ -515,7 +515,8 @@ def test_legacy_lora_shapes_must_match_config_rank(tmp_path, shapes, rank, expec
     assert build_run_status(str(run_dir), allow_unsafe=True)["export"]["ready"] is expected
 
 
-def test_invalid_rank_pattern_does_not_crash_run_status(tmp_path):
+@pytest.mark.parametrize("rank_pattern", [{"[": 1}, ["layer"]])
+def test_invalid_rank_pattern_does_not_crash_run_status(tmp_path, rank_pattern):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
     (run_dir / "adapter_config.json").write_text(
@@ -524,7 +525,7 @@ def test_invalid_rank_pattern_does_not_crash_run_status(tmp_path):
                 "base_model_name_or_path": "Qwen/Qwen3.5-0.5B",
                 "peft_type": "LORA",
                 "r": 1,
-                "rank_pattern": {"[": 1},
+                "rank_pattern": rank_pattern,
             }
         )
     )

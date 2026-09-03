@@ -17,6 +17,8 @@ def _positive_rank(value: Any) -> bool:
 
 def _ranks_usable(config: LoraConfig) -> bool:
     pattern = config.rank_pattern or {}
+    if not isinstance(pattern, dict):
+        return False
     return bool(
         _positive_rank(config.r)
         and all(_MODULE_PATTERN_RE.fullmatch(key) for key in pattern)
@@ -36,9 +38,9 @@ def load_lora_config(payload: dict[str, Any]) -> LoraConfig | None:
         return None
     try:
         config = LoraConfig(**payload)
-    except (ImportError, TypeError, ValueError):
+        return config if _ranks_usable(config) and _dropout_usable(config) else None
+    except (AssertionError, AttributeError, ImportError, KeyError, TypeError, ValueError):
         return None
-    return config if _ranks_usable(config) and _dropout_usable(config) else None
 
 
 def lora_config_usable(payload: dict[str, Any]) -> bool:
