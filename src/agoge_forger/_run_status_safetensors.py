@@ -115,16 +115,18 @@ def _physical_model_shards(candidate: Path) -> set[str]:
     return {entry.name for entry in candidate.iterdir() if _is_root_model_shard_name(entry.name)}
 
 
+def _shard_set_usable(candidate: Path, shards: set[str]) -> bool:
+    return shards == _physical_model_shards(candidate) and _numbered_shards_complete(shards)
+
+
 def _has_complete_sharded_weights(candidate: Path) -> bool:
     weight_map = _load_shard_weight_map(candidate)
     if weight_map is None:
         return False
     shards = _shard_filenames(weight_map)
-    if (
-        shards is None
-        or shards != _physical_model_shards(candidate)
-        or not _numbered_shards_complete(shards)
-    ):
+    if shards is None:
+        return False
+    if not _shard_set_usable(candidate, shards):
         return False
     shard_keys = _load_shard_keys(candidate, shards)
     return shard_keys is not None and _weight_map_matches_shards(weight_map, shard_keys)

@@ -492,6 +492,7 @@ def test_nonpositive_lora_rank_is_not_export_ready(tmp_path):
     assert build_run_status(str(run_dir))["export"]["ready"] is False
 
 
+@pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])
 @pytest.mark.parametrize(
     ("shapes", "rank", "expected"),
     [
@@ -502,43 +503,23 @@ def test_nonpositive_lora_rank_is_not_export_ready(tmp_path):
         (((2, 4), (8, 2)), 2, True),
     ],
 )
-def test_safetensors_lora_shapes_must_match_config_rank(tmp_path, shapes, rank, expected):
+def test_lora_shapes_must_match_config_rank(tmp_path, shapes, rank, expected, legacy):
     run_dir = _make_run_dir(tmp_path)
-    (run_dir / "adapter_model.safetensors").write_bytes(
-        _safetensors_with_shapes(
-            {
-                "base_model.model.layer.lora_A.weight": shapes[0],
-                "base_model.model.layer.lora_B.weight": shapes[1],
-            }
+    tensors = {
+        "base_model.model.layer.lora_A.weight": torch.zeros(shapes[0]),
+        "base_model.model.layer.lora_B.weight": torch.zeros(shapes[1]),
+    }
+    if legacy:
+        torch.save(tensors, run_dir / "adapter_model.bin")
+    else:
+        safetensor_shapes = {key: tuple(tensor.shape) for key, tensor in tensors.items()}
+        (run_dir / "adapter_model.safetensors").write_bytes(
+            _safetensors_with_shapes(safetensor_shapes)
         )
-    )
     _write_adapter_config(run_dir, rank=rank)
 
-    assert build_run_status(str(run_dir))["export"]["ready"] is expected
-
-
-@pytest.mark.parametrize(
-    ("shapes", "rank", "expected"),
-    [
-        (((1,), (1,)), 1, False),
-        (((1, 4), (8, 1)), 2, False),
-        (((1, 0), (8, 1)), 1, False),
-        (((1, 4), (0, 1)), 1, False),
-        (((2, 4), (8, 2)), 2, True),
-    ],
-)
-def test_legacy_lora_shapes_must_match_config_rank(tmp_path, shapes, rank, expected):
-    run_dir = _make_run_dir(tmp_path)
-    torch.save(
-        {
-            "base_model.model.layer.lora_A.weight": torch.zeros(shapes[0]),
-            "base_model.model.layer.lora_B.weight": torch.zeros(shapes[1]),
-        },
-        run_dir / "adapter_model.bin",
-    )
-    _write_adapter_config(run_dir, rank=rank)
-
-    assert build_run_status(str(run_dir), allow_unsafe=True)["export"]["ready"] is expected
+    report = build_run_status(str(run_dir), allow_unsafe=legacy)
+    assert report["export"]["ready"] is expected
 
 
 @pytest.mark.parametrize("rank_pattern", [{"[": 1}, ["layer"]])

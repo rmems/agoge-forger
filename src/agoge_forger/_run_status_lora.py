@@ -2,66 +2,13 @@
 
 from __future__ import annotations
 
-import math
-import re
 from typing import Any
 
 from peft import LoraConfig
 
+from agoge_forger._run_status_lora_config import load_lora_config
+
 _PAIRS = (("lora_A", "lora_B"), ("lora_embedding_A", "lora_embedding_B"))
-_MODULE_PATTERN_RE = re.compile(r"\w+(?:\.\w+)*", re.ASCII)
-
-
-def _positive_rank(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value > 0
-
-
-def _ranks_usable(config: LoraConfig) -> bool:
-    pattern = config.rank_pattern or {}
-    if not isinstance(pattern, dict):
-        return False
-    return bool(
-        _positive_rank(config.r)
-        and all(_MODULE_PATTERN_RE.fullmatch(key) for key in pattern)
-        and all(_positive_rank(rank) for rank in pattern.values())
-    )
-
-
-def _dropout_usable(config: LoraConfig) -> bool:
-    dropout = config.lora_dropout
-    return bool(
-        isinstance(dropout, (int, float)) and not isinstance(dropout, bool) and 0 <= dropout <= 1
-    )
-
-
-def _finite_number(value: Any) -> bool:
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:
-        return False
-
-
-def _alphas_usable(config: LoraConfig) -> bool:
-    pattern = config.alpha_pattern or {}
-    return bool(
-        isinstance(pattern, dict)
-        and _finite_number(config.lora_alpha)
-        and all(_MODULE_PATTERN_RE.fullmatch(key) for key in pattern)
-        and all(_finite_number(alpha) for alpha in pattern.values())
-    )
-
-
-def load_lora_config(payload: dict[str, Any]) -> LoraConfig | None:
-    if payload.get("peft_type") != "LORA":
-        return None
-    try:
-        config = LoraConfig(**payload)
-        valid = _ranks_usable(config) and _dropout_usable(config) and _alphas_usable(config)
-        return config if valid else None
-    except (AssertionError, AttributeError, ImportError, KeyError, TypeError, ValueError):
-        return None
 
 
 def lora_config_usable(payload: dict[str, Any]) -> bool:
