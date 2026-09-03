@@ -1,0 +1,99 @@
+.qlty/qlty.toml
+  s_9d02230d0ab6ec::t_49befc89171a63 77
+tests/test_checkpoints.py
+  s_9d02230d0ab6ec::t_947966e14b94c9 11,128-138
+src/agoge_forger/_run_status_artifact_index.py
+  s_9d02230d0ab6ec::t_5f5831901b8b20 69,73-74
+src/agoge_forger/_run_status_rng.py
+  s_9d02230d0ab6ec::t_56a517217b1feb 1-54,56-65
+  s_9d02230d0ab6ec::t_e37f8fdc7137ca 55
+tests/test_run_status_artifacts.py
+  s_9d02230d0ab6ec::t_c675716bcd1a20 76-78,88-89,92,107-108,110,171,259,261,270-271,285,288,298-299,306,318-319,324,334,336,342-345
+  s_9d02230d0ab6ec::t_3d964761022a8c 6,557-585
+  s_9d02230d0ab6ec::t_994a734811f5ab 165-170,172-190,526-543,588-596
+  s_9d02230d0ab6ec::t_c6f185afbb563e 544-555,586-587
+  s_9d02230d0ab6ec::t_3b1b4c7bfc19d2 277,279,300,303
+  s_9d02230d0ab6ec::t_99fc46f5ee1ee0 272-274,276,278,280-284,286,302,304,317,321-323
+  s_9d02230d0ab6ec::t_459750041ce895 556
+tests/test_run_status_torch_archive.py
+  s_9d02230d0ab6ec::t_7ec6e7423bc973 1-4,7-13,21-22,29-30,77-96,113-139
+  s_9d02230d0ab6ec::t_435b3c06304f4d 5,31-76
+  s_9d02230d0ab6ec::t_f4390aec972344 14-20,23-28,97-112
+  s_9d02230d0ab6ec::t_53d21972182e37 6
+tests/test_run_status_config_cli.py
+  s_9d02230d0ab6ec::t_d28eb7e2841e69 48,81,117,227,311-326,328-332,343,357-358,361,366
+  s_9d02230d0ab6ec::t_4159d7331e3f09 327
+  s_9d02230d0ab6ec::t_f00c33cb36fe52 245
+src/agoge_forger/cli.py
+  s_9d02230d0ab6ec::t_d28eb7e2841e69 207-209
+src/agoge_forger/run_status.py
+  s_9d02230d0ab6ec::t_97ce1b6f05b588 138,254
+  s_9d02230d0ab6ec::t_5f5831901b8b20 240,246-252,255
+src/agoge_forger/_run_status_safetensors.py
+  s_9d02230d0ab6ec::t_5f5831901b8b20 13,78-80
+src/agoge_forger/_run_status_lora.py
+  s_9d02230d0ab6ec::t_48acca06922843 11-14,70
+  s_9d02230d0ab6ec::t_d4c61011e3aabf 74-77
+  s_9d02230d0ab6ec::t_8a69ece0e66d7f 71-73,80-82
+  s_9d02230d0ab6ec::t_1f456235c95bab 78-79,88-89,92,100-101,104-106,153-154,160,165
+  s_9d02230d0ab6ec::t_4168e3d8fe9a80 30-32,69,83-84,90-91,103
+tests/test_adapter_revision.py
+  s_9d02230d0ab6ec::t_947966e14b94c9 36-42
+src/agoge_forger/train/checkpoints.py
+  s_9d02230d0ab6ec::t_97ce1b6f05b588 107,109-112,175
+tests/test_run_status.py
+  s_9d02230d0ab6ec::t_92a97e413c39c5 24
+  s_9d02230d0ab6ec::t_ae5b2b0309362f 575-582,589,591,602-603,611,623-624,637
+  s_9d02230d0ab6ec::t_ef836a949d35f6 15,20-21,954-976,979-985,988-991
+  s_9d02230d0ab6ec::t_4159d7331e3f09 941,949
+  s_9d02230d0ab6ec::t_e80d2ca398c033 977-978,986-987,992
+README.md
+  s_9d02230d0ab6ec::t_1e0292e4cf725f 100-108
+tests/test_run_status_adapters.py
+  s_9d02230d0ab6ec::t_c5bddda315b77b 6,293-297,300,311-325,327-329
+  s_9d02230d0ab6ec::t_3fde9687edf1dd 1-4,7-17,19-46,62-161,165,167-182,184-203,205-292,298-299,301-310,330-383
+  s_9d02230d0ab6ec::t_cff194ac1c830d 47-61,162-164,166,183,204
+  s_9d02230d0ab6ec::t_f53133c2fad34f 5
+  s_9d02230d0ab6ec::t_8a08362c5c1166 326
+  s_9d02230d0ab6ec::t_240337fad8e108 18
+src/agoge_forger/_run_status_trainer_state.py
+  s_9d02230d0ab6ec::t_e37f8fdc7137ca 14
+  s_9d02230d0ab6ec::t_0b7c0d2555af0b 23,27
+  s_9d02230d0ab6ec::t_0d22bbf25cca13 35-37
+  s_9d02230d0ab6ec::t_6177a804db4e22 268
+  s_9d02230d0ab6ec::t_c59398fbc39c02 1
+src/agoge_forger/_run_status_validation.py
+  s_9d02230d0ab6ec::t_666c24d5763087 82-83,86-87,89-93,96,157-161
+  s_9d02230d0ab6ec::t_6177a804db4e22 190
+  s_9d02230d0ab6ec::t_5f5831901b8b20 36,40
+  s_9d02230d0ab6ec::t_306a31801d5dcb 76-81,85,88,107-109,111
+  s_9d02230d0ab6ec::t_240337fad8e108 84
+src/agoge_forger/_run_status_torch_archive.py
+  s_9d02230d0ab6ec::t_af0c1080e5bdf8 56-78,91-95
+  s_9d02230d0ab6ec::t_ef86bb429c5c1d 6-7,16-17,24,117-134,138-148,151,176-183,188-189,198-207
+  s_9d02230d0ab6ec::t_45f7ee07b4c20f 5
+  s_9d02230d0ab6ec::t_60641df29317d1 29-31
+  s_9d02230d0ab6ec::t_53d21972182e37 11,18-22,25-28,32-55,79-90,96-116,149-150,152-175
+  s_9d02230d0ab6ec::t_321447aa78049f 135-137
+  s_9d02230d0ab6ec::t_c59398fbc39c02 184
+src/agoge_forger/_run_status_target_pattern.py
+  s_9d02230d0ab6ec::t_48acca06922843 1-76
+tests/test_run_status_output.py
+  s_9d02230d0ab6ec::t_994a734811f5ab 102-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d22f0d63ae8a5a02387c1de401dd0e22eb6261d6",
+  "prompts": {},
+  "sessions": {
+    "s_9d02230d0ab6ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05c12-f51c-7140-a693-33864d1c4551",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
