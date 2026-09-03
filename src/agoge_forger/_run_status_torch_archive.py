@@ -33,23 +33,33 @@ def _pickle_metadata_strings(archive: zipfile.ZipFile, name: str) -> set[str] | 
     return {argument for _, argument, _ in pickletools.genops(payload) if isinstance(argument, str)}
 
 
+def _validated_archive_metadata(
+    archive: zipfile.ZipFile,
+    *,
+    require_data_record: bool,
+) -> set[str] | None:
+    names = archive.namelist()
+    root = _archive_root(names)
+    if root is None:
+        return None
+    data_name = f"{root}/data.pkl"
+    required = {data_name, f"{root}/version", f"{root}/.data/serialization_id"}
+    if not required.issubset(names) or archive.testzip() is not None:
+        return None
+    if require_data_record and not any(name.startswith(f"{root}/data/") for name in names):
+        return None
+    return _pickle_metadata_strings(archive, data_name)
+
+
 def torch_zip_metadata(path: Path, *, require_data_record: bool = False) -> set[str] | None:
     """Return static pickle strings from a structurally valid PyTorch ZIP."""
     if path.is_symlink() or not path.is_file():
         return None
     try:
         with path.open("rb") as handle, zipfile.ZipFile(handle) as archive:
-            names = archive.namelist()
-            root = _archive_root(names)
-            if root is None:
-                return None
-            data_name = f"{root}/data.pkl"
-            required = {data_name, f"{root}/version", f"{root}/.data/serialization_id"}
-            data_prefix = f"{root}/data/"
-            if not required.issubset(names) or archive.testzip() is not None:
-                return None
-            if require_data_record and not any(name.startswith(data_prefix) for name in names):
-                return None
-            return _pickle_metadata_strings(archive, data_name)
+            return _validated_archive_metadata(
+                archive,
+                require_data_record=require_data_record,
+            )
     except (RuntimeError, zipfile.BadZipFile):
         return None
