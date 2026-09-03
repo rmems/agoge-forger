@@ -427,6 +427,37 @@ def test_huge_architecture_is_rejected_before_meta_model_construction(
     assert validation._causal_lm_shapes(config) is None
 
 
+def test_multiplicative_architecture_is_rejected_before_meta_model_construction(
+    tmp_path, monkeypatch
+):
+    from agoge_forger import _run_status_validation as validation
+
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    (merged / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "mixtral",
+                "vocab_size": 16,
+                "hidden_size": 8,
+                "intermediate_size": 16,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 2,
+                "num_hidden_layers": 4_096,
+                "num_local_experts": 4_096,
+            }
+        )
+    )
+    config = validation._local_causal_lm_config(merged)
+
+    def fail_construction(*args, **kwargs):
+        raise AssertionError("combined module count must be bounded before construction")
+
+    monkeypatch.setattr(validation.AutoModelForCausalLM, "from_config", fail_construction)
+
+    assert validation._causal_lm_shapes(config) is None
+
+
 def test_symlinked_artifact_index_is_not_a_completion_marker(tmp_path):
     merged = _write_merged_model(tmp_path / "merged")
     index = merged / "artifact_index.json"

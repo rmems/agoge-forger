@@ -17,6 +17,8 @@ import torch
 from ._run_status_torch_archive import torch_mapping
 
 _CHECKPOINT_RE = re.compile(r"checkpoint-(\d+)")
+_ADAMW_BOOL_FIELDS = ("amsgrad", "maximize", "capturable", "differentiable")
+_ADAMW_NULLABLE_BOOL_FIELDS = ("foreach", "fused")
 
 
 def _json_object(path: Path) -> dict[str, Any] | None:
@@ -67,6 +69,16 @@ def _valid_int(value: Any, *, minimum: int | None = None) -> bool:
         and not isinstance(value, bool)
         and (minimum is None or value >= minimum)
     )
+
+
+def _finite_number(value: Any, *, minimum: float | None = None) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        return False
+    return math.isfinite(number) and (minimum is None or number >= minimum)
 
 
 def _cpu_contiguous_tensor(value: Any) -> bool:
@@ -123,11 +135,43 @@ def _optimizer_state_entries_usable(state: Any, checkpoint_step: int) -> bool:
     )
 
 
+def _adamw_betas_usable(value: Any) -> bool:
+    return bool(
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and all(_finite_number(beta, minimum=0) and beta < 1 for beta in value)
+    )
+
+
+def _adamw_group_scalars_usable(group: dict[str, Any]) -> bool:
+    return bool(
+        _finite_number(group.get("lr"), minimum=0)
+        and _adamw_betas_usable(group.get("betas"))
+        and _finite_number(group.get("eps"), minimum=0)
+        and _finite_number(group.get("weight_decay"), minimum=0)
+    )
+
+
+def _adamw_group_flags_usable(group: dict[str, Any]) -> bool:
+    required = all(isinstance(group.get(field), bool) for field in _ADAMW_BOOL_FIELDS)
+    nullable = all(
+        group.get(field) is None or isinstance(group.get(field), bool)
+        for field in _ADAMW_NULLABLE_BOOL_FIELDS
+    )
+    return required and nullable and group.get("decoupled_weight_decay") is True
+
+
 def _group_parameter_ids(group: Any) -> list[Any] | None:
     if not isinstance(group, dict):
         return None
     params = group.get("params")
-    return params if isinstance(params, list) else None
+    return (
+        params
+        if isinstance(params, list)
+        and _adamw_group_scalars_usable(group)
+        and _adamw_group_flags_usable(group)
+        else None
+    )
 
 
 def _flatten_group_parameter_ids(groups: list[Any]) -> list[Any] | None:
@@ -175,14 +219,32 @@ def _optimizer_payload_usable(
     )
 
 
-def _scheduler_payload_usable(payload: dict[str, Any] | None, step: int) -> bool:
+def _scheduler_rates_usable(value: Any, group_count: int) -> bool:
+    return bool(
+        isinstance(value, list)
+        and len(value) == group_count
+        and all(_finite_number(rate) for rate in value)
+    )
+
+
+def _scheduler_payload_usable(
+    payload: dict[str, Any] | None,
+    step: int,
+    group_count: int,
+) -> bool:
     last_epoch = None if payload is None else payload.get("last_epoch")
     step_count = None if payload is None else payload.get("_step_count")
-    return bool(
-        _valid_int(last_epoch)
-        and last_epoch == step
-        and _valid_int(step_count)
-        and step_count == step + 1
+    base_lrs = None if payload is None else payload.get("base_lrs")
+    last_lrs = None if payload is None else payload.get("_last_lr")
+    return all(
+        (
+            _valid_int(last_epoch),
+            last_epoch == step,
+            _valid_int(step_count),
+            step_count == step + 1,
+            _scheduler_rates_usable(base_lrs, group_count),
+            _scheduler_rates_usable(last_lrs, group_count),
+        )
     )
 
 
@@ -226,11 +288,17 @@ def trainer_state_usable(
         return False
     checkpoint_dir = Path(checkpoint)
     step = _trainer_state_step(checkpoint_dir)
-    return bool(
-        step is not None
-        and _optimizer_payload_usable(
-            torch_mapping(checkpoint_dir / "optimizer.pt"), step, adapter_shapes
+    optimizer = torch_mapping(checkpoint_dir / "optimizer.pt")
+    groups = None if optimizer is None else optimizer.get("param_groups")
+    group_count = len(groups) if isinstance(groups, list) and groups else None
+    if step is None or group_count is None:
+        return False
+    return all(
+        (
+            _optimizer_payload_usable(optimizer, step, adapter_shapes),
+            _scheduler_payload_usable(
+                torch_mapping(checkpoint_dir / "scheduler.pt"), step, group_count
+            ),
+            _rng_state_usable(checkpoint_dir),
         )
-        and _scheduler_payload_usable(torch_mapping(checkpoint_dir / "scheduler.pt"), step)
-        and _rng_state_usable(checkpoint_dir)
     )

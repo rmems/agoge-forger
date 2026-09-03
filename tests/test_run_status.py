@@ -137,6 +137,22 @@ def _write_adapter_config(directory, base_model="Qwen/Qwen3.5-0.5B", revision=No
 
 
 def _optimizer_state(step=1, shapes=((1, 1), (1, 1))):
+    def adamw_group(params, weight_decay):
+        return {
+            "lr": 0.001,
+            "betas": (0.9, 0.999),
+            "eps": 1e-8,
+            "weight_decay": weight_decay,
+            "amsgrad": False,
+            "maximize": False,
+            "foreach": None,
+            "capturable": False,
+            "differentiable": False,
+            "fused": None,
+            "decoupled_weight_decay": True,
+            "params": params,
+        }
+
     return {
         "state": {
             parameter_id: {
@@ -146,7 +162,10 @@ def _optimizer_state(step=1, shapes=((1, 1), (1, 1))):
             }
             for parameter_id, shape in enumerate(shapes)
         },
-        "param_groups": [{"params": list(range(len(shapes)))}],
+        "param_groups": [
+            adamw_group(list(range(len(shapes))), 0.01),
+            adamw_group([], 0.0),
+        ],
     }
 
 
@@ -154,7 +173,12 @@ def _write_torch_state(path, payload=None):
     if payload is None:
         payloads = {
             "optimizer.pt": _optimizer_state(),
-            "scheduler.pt": {"last_epoch": 0, "_step_count": 1},
+            "scheduler.pt": {
+                "last_epoch": 0,
+                "_step_count": 1,
+                "base_lrs": [0.001, 0.001],
+                "_last_lr": [0.001, 0.001],
+            },
             "rng_state.pth": {
                 "python": random.getstate(),
                 "numpy": np.random.get_state(),
@@ -190,7 +214,12 @@ def _write_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B", revision=None)
     )
     _write_torch_state(
         checkpoint_dir / "scheduler.pt",
-        {"last_epoch": step, "_step_count": step + 1},
+        {
+            "last_epoch": step,
+            "_step_count": step + 1,
+            "base_lrs": [0.001, 0.001],
+            "_last_lr": [0.001, 0.001],
+        },
     )
     _write_torch_state(
         checkpoint_dir / "rng_state.pth",
@@ -658,6 +687,58 @@ def test_optimizer_state_must_cover_every_trainable_adapter_tensor(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     checkpoint_dir = _write_checkpoint(run_dir, 50)
     _write_torch_state(checkpoint_dir / "optimizer.pt", _optimizer_state(50, ((1, 1),)))
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+def test_optimizer_parameter_group_requires_adamw_hyperparameters(tmp_path):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    payload = _optimizer_state(50)
+    payload["param_groups"] = [{"params": [0, 1]}]
+    _write_torch_state(checkpoint_dir / "optimizer.pt", payload)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("lr", float("nan")),
+        ("lr", 10**1000),
+        ("betas", (0.9, 1.0)),
+        ("eps", "1e-8"),
+        ("weight_decay", -0.01),
+        ("amsgrad", "false"),
+        ("decoupled_weight_decay", False),
+    ],
+)
+def test_optimizer_parameter_group_rejects_invalid_values(tmp_path, field, value):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    payload = _optimizer_state(50)
+    payload["param_groups"][0][field] = value
+    _write_torch_state(checkpoint_dir / "optimizer.pt", payload)
+
+    assert build_run_status(str(run_dir))["resume"]["ready"] is False
+
+
+@pytest.mark.parametrize(
+    "rates",
+    [
+        {"base_lrs": [], "_last_lr": []},
+        {"base_lrs": [0.001, 0.001], "_last_lr": [0.001]},
+        {"base_lrs": [float("inf"), 0.001], "_last_lr": [0.001, 0.001]},
+        {"base_lrs": [0.001, 0.001], "_last_lr": [float("nan"), 0.001]},
+        {"base_lrs": [10**1000, 0.001], "_last_lr": [0.001, 0.001]},
+    ],
+    ids=["empty", "cardinality-mismatch", "nonfinite-base", "nonfinite-last", "oversized-base"],
+)
+def test_scheduler_rates_must_match_optimizer_groups(tmp_path, rates):
+    run_dir = _make_run_dir(tmp_path)
+    checkpoint_dir = _write_checkpoint(run_dir, 50)
+    payload = {"last_epoch": 50, "_step_count": 51, **rates}
+    _write_torch_state(checkpoint_dir / "scheduler.pt", payload)
 
     assert build_run_status(str(run_dir))["resume"]["ready"] is False
 
