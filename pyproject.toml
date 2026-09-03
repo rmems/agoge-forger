@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff==0.16.4", "mypy>=1.0", "pre-commit"]
+dev = ["pytest", "ruff==0.16.5", "mypy>=1.0", "pre-commit"]
 
 [project.scripts]
 agoge = "agoge_forger.cli:app"
