@@ -61,6 +61,12 @@ def _local_causal_lm_config(candidate: Path) -> Any:
     return config if type(config) in MODEL_FOR_CAUSAL_LM_MAPPING else None
 
 
+def _base_artifacts_usable(base_model: str, base_config: Any, revision: str | None) -> bool:
+    return local_base_weights_usable(base_model, base_config, revision) and _tokenizer_usable(
+        base_model, revision=revision
+    )
+
+
 def _adapter_base_config(config: Any) -> Any:
     base_model = config.base_model_name_or_path
     if not isinstance(base_model, str) or not base_model.strip():
@@ -79,8 +85,7 @@ def _adapter_base_config(config: Any) -> Any:
     return (
         base_config
         if type(base_config) in MODEL_FOR_CAUSAL_LM_MAPPING
-        and local_base_weights_usable(base_model, base_config, revision)
-        and _tokenizer_usable(base_model, revision=revision)
+        and _base_artifacts_usable(base_model, base_config, revision)
         else None
     )
 
@@ -193,22 +198,28 @@ def _serialized_lora_shapes(
     return None
 
 
+def _validated_adapter_shapes(
+    adapter_path: PathLike | None,
+    allow_unsafe: bool,
+) -> tuple[dict[str, tuple[int, ...]], Any, Any] | None:
+    context = _adapter_validation_context(adapter_path)
+    if context is None:
+        return None
+    adapter_dir, config, base_config, base_modules = context
+    shapes = _serialized_lora_shapes(adapter_dir, allow_unsafe)
+    if shapes is None or not lora_shapes_usable(shapes, config, base_modules):
+        return None
+    return shapes, config, base_config
+
+
 def adapter_weight_shapes(
     adapter_path: PathLike | None,
     *,
     allow_unsafe: bool = False,
 ) -> dict[str, tuple[int, ...]] | None:
     """Return a complete, config-compatible adapter tensor inventory."""
-    context = _adapter_validation_context(adapter_path)
-    if context is None:
-        return None
-    adapter_dir, config, _, base_modules = context
-    shapes = _serialized_lora_shapes(adapter_dir, allow_unsafe)
-    if shapes is None:
-        return None
-    if lora_shapes_usable(shapes, config, base_modules):
-        return shapes
-    return None
+    validated = _validated_adapter_shapes(adapter_path, allow_unsafe)
+    return None if validated is None else validated[0]
 
 
 def adapter_optimizer_shapes(
@@ -217,13 +228,10 @@ def adapter_optimizer_shapes(
     allow_unsafe: bool = False,
 ) -> list[list[tuple[int, ...]]] | None:
     """Return adapter parameter shapes in Trainer optimizer order."""
-    context = _adapter_validation_context(adapter_path)
-    if context is None:
+    validated = _validated_adapter_shapes(adapter_path, allow_unsafe)
+    if validated is None:
         return None
-    adapter_dir, config, base_config, base_modules = context
-    shapes = _serialized_lora_shapes(adapter_dir, allow_unsafe)
-    if shapes is None or not lora_shapes_usable(shapes, config, base_modules):
-        return None
+    shapes, config, base_config = validated
     return ordered_trainable_shapes(shapes, config, base_config)
 
 

@@ -2,61 +2,19 @@
 
 from __future__ import annotations
 
-import json
 import math
-import re
 from pathlib import Path
 from typing import Any
 
 import torch
-from transformers import TrainerState
 
 from ._run_status_optimizer_order import optimizer_shapes_match
 from ._run_status_rng import _rng_state_usable
 from ._run_status_torch_archive import torch_mapping
+from ._run_status_trainer_metadata import _trainer_state_step, _valid_int
 
-_CHECKPOINT_RE = re.compile(r"checkpoint-(\d+)")
 _ADAMW_BOOL_FIELDS = ("amsgrad", "maximize", "capturable", "differentiable")
 _ADAMW_NULLABLE_BOOL_FIELDS = ("foreach", "fused")
-
-
-def _json_object(path: Path) -> dict[str, Any] | None:
-    if path.is_symlink() or not path.is_file():
-        return None
-    try:
-        payload: Any = json.loads(path.read_text(encoding="utf-8"))
-    except (ValueError, RecursionError):
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
-def _trainer_metadata_usable(payload: dict[str, Any], step: int) -> bool:
-    try:
-        TrainerState(**payload)
-    except TypeError:
-        return False
-    global_step = payload.get("global_step")
-    train_batch_size = payload.get("train_batch_size")
-    if not _valid_int(global_step) or not _valid_int(train_batch_size, minimum=1):
-        return False
-    return global_step == step
-
-
-def _trainer_state_step(checkpoint: Path) -> int | None:
-    payload = _json_object(checkpoint / "trainer_state.json")
-    match = _CHECKPOINT_RE.fullmatch(checkpoint.name)
-    if payload is None or match is None:
-        return None
-    step = int(match.group(1))
-    return step if _trainer_metadata_usable(payload, step) else None
-
-
-def _valid_int(value: Any, *, minimum: int | None = None) -> bool:
-    return bool(
-        isinstance(value, int)
-        and not isinstance(value, bool)
-        and (minimum is None or value >= minimum)
-    )
 
 
 def _finite_number(value: Any, *, minimum: float | None = None) -> bool:
@@ -233,6 +191,14 @@ def _scheduler_rates_usable(value: Any, group_count: int) -> bool:
     )
 
 
+def _scheduler_lambdas_usable(value: Any, group_count: int) -> bool:
+    return bool(
+        isinstance(value, list)
+        and len(value) == group_count
+        and all(entry is None or isinstance(entry, dict) for entry in value)
+    )
+
+
 def _scheduler_payload_usable(
     payload: dict[str, Any] | None,
     step: int,
@@ -242,6 +208,7 @@ def _scheduler_payload_usable(
     step_count = None if payload is None else payload.get("_step_count")
     base_lrs = None if payload is None else payload.get("base_lrs")
     last_lrs = None if payload is None else payload.get("_last_lr")
+    lr_lambdas = None if payload is None else payload.get("lr_lambdas")
     return all(
         (
             _valid_int(last_epoch),
@@ -250,6 +217,7 @@ def _scheduler_payload_usable(
             step_count == step + 1,
             _scheduler_rates_usable(base_lrs, group_count),
             _scheduler_rates_usable(last_lrs, group_count),
+            _scheduler_lambdas_usable(lr_lambdas, group_count),
         )
     )
 

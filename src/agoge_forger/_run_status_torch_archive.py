@@ -3,126 +3,24 @@
 from __future__ import annotations
 
 import inspect
-import struct
 import zipfile
 import zlib
 from contextlib import nullcontext
 from pathlib import Path
 from pickle import UnpicklingError  # nosec B403 - exception type only; no pickle loading
-from typing import Any, BinaryIO
+from typing import Any
 
 import torch
 from transformers.trainer_pt_utils import safe_globals
 
+from agoge_forger._run_status_zip_directory import declared_directory_usable
+
 _MAX_PICKLE_METADATA_BYTES = 64 * 1024 * 1024
 _MAX_ARCHIVE_MEMBERS = 65_536
-_MAX_CENTRAL_DIRECTORY_BYTES = 64 * 1024 * 1024
-_MAX_EOCD_TAIL_BYTES = 22 + 65_535
+_CRC_CHUNK_BYTES = 1024 * 1024
 # Without mmap, torch.load materializes every storage. One GiB accommodates
 # large LoRA optimizer states while bounding legacy-Torch resident memory.
 _MAX_MATERIALIZED_STORAGE_BYTES = 1024**3
-_EOCD = struct.Struct("<4s4H2IH")
-_ZIP64_EOCD = struct.Struct("<4sQ2H2I4Q")
-_ZIP64_LOCATOR = struct.Struct("<4sIQI")
-
-
-def _directory_limits_usable(entries: int, size: int) -> bool:
-    return all(
-        (
-            0 < entries <= _MAX_ARCHIVE_MEMBERS,
-            size <= _MAX_CENTRAL_DIRECTORY_BYTES,
-        )
-    )
-
-
-def _classic_eocd(
-    tail: bytes,
-) -> tuple[int, tuple[bytes, int, int, int, int, int, int, int]] | None:
-    position = tail.rfind(b"PK\x05\x06")
-    while position >= 0:
-        record = tail[position : position + _EOCD.size]
-        if len(record) == _EOCD.size:
-            fields = _EOCD.unpack(record)
-            if position + _EOCD.size + fields[-1] == len(tail):
-                return position, fields
-        position = tail.rfind(b"PK\x05\x06", 0, position)
-    return None
-
-
-def _standard_directory_usable(
-    fields: tuple[bytes, int, int, int, int, int, int, int],
-    eocd_offset: int,
-) -> bool:
-    _, disk, directory_disk, disk_entries, entries, size, offset, _ = fields
-    return all(
-        (
-            (disk, directory_disk, disk_entries) == (0, 0, entries),
-            _directory_limits_usable(entries, size),
-            offset + size <= eocd_offset,
-        )
-    )
-
-
-def _zip64_structure_usable(
-    record_fields: tuple[int | bytes, ...],
-    locator_fields: tuple[int | bytes, ...],
-    record_offset: int,
-) -> bool:
-    signature, record_size, *_ = record_fields
-    locator_signature, locator_disk, declared_offset, disks = locator_fields
-    return bool(
-        (signature, record_size, locator_signature) == (b"PK\x06\x06", 44, b"PK\x06\x07")
-        and (locator_disk, declared_offset, disks) == (0, record_offset, 1)
-    )
-
-
-def _zip64_values_usable(record_fields: tuple[int | bytes, ...], record_offset: int) -> bool:
-    _, _, _, _, disk, directory_disk, disk_entries, entries, size, offset = record_fields
-    return all(
-        (
-            (disk, directory_disk, disk_entries) == (0, 0, entries),
-            _directory_limits_usable(int(entries), int(size)),
-            int(offset) + int(size) <= record_offset,
-        )
-    )
-
-
-def _zip64_directory_usable(handle: BinaryIO, eocd_offset: int) -> bool:
-    locator_offset = eocd_offset - _ZIP64_LOCATOR.size
-    record_offset = locator_offset - _ZIP64_EOCD.size
-    if record_offset < 0:
-        return False
-    handle.seek(record_offset)
-    record = handle.read(_ZIP64_EOCD.size)
-    locator = handle.read(_ZIP64_LOCATOR.size)
-    if len(record) != _ZIP64_EOCD.size or len(locator) != _ZIP64_LOCATOR.size:
-        return False
-    record_fields = _ZIP64_EOCD.unpack(record)
-    locator_fields = _ZIP64_LOCATOR.unpack(locator)
-    return _zip64_structure_usable(
-        record_fields, locator_fields, record_offset
-    ) and _zip64_values_usable(
-        record_fields,
-        record_offset,
-    )
-
-
-def _declared_directory_usable(handle: BinaryIO) -> bool:
-    handle.seek(0, 2)
-    file_size = handle.tell()
-    tail_size = min(file_size, _MAX_EOCD_TAIL_BYTES)
-    handle.seek(file_size - tail_size)
-    tail = handle.read(tail_size)
-    result = _classic_eocd(tail)
-    if result is None:
-        return False
-    position, fields = result
-    eocd_offset = file_size - tail_size + position
-    _, _, _, disk_entries, entries, size, offset, _ = fields
-    zip64 = disk_entries == entries == 0xFFFF or size == 0xFFFFFFFF or offset == 0xFFFFFFFF
-    if zip64:
-        return _zip64_directory_usable(handle, eocd_offset)
-    return _standard_directory_usable(fields, eocd_offset)
 
 
 def _bounded_archive_infos(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo] | None:
@@ -162,19 +60,41 @@ def _storage_record(info: zipfile.ZipInfo, root: str) -> bool:
         suffix.isdigit(),
         info.is_dir(),
         info.compress_type,
-    ) == (True, True, True, False, zipfile.ZIP_STORED)
+        info.compress_size == info.file_size,
+    ) == (True, True, True, False, zipfile.ZIP_STORED, True)
 
 
 def _metadata_record_usable(info: zipfile.ZipInfo) -> bool:
-    return (info.is_dir(), info.file_size < 0) == (False, False)
+    return not info.is_dir() and min(info.file_size, info.compress_size) >= 0
+
+
+def _stream_crc_usable(
+    archive: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    max_bytes: int,
+) -> bool:
+    total = 0
+    with archive.open(info) as member:
+        while block := member.read(min(_CRC_CHUNK_BYTES, max_bytes - total + 1)):
+            total += len(block)
+            if total > info.file_size or total > max_bytes:
+                return False
+    return total == info.file_size
 
 
 def _metadata_crc_usable(archive: zipfile.ZipFile, infos: list[zipfile.ZipInfo]) -> bool:
     if not all(_metadata_record_usable(info) for info in infos):
         return False
-    if sum(info.file_size for info in infos) > _MAX_PICKLE_METADATA_BYTES:
+    if (
+        max(
+            sum(info.file_size for info in infos),
+            sum(info.compress_size for info in infos),
+        )
+        > _MAX_PICKLE_METADATA_BYTES
+    ):
         return False
-    return all(len(archive.read(info)) == info.file_size for info in infos)
+    return all(_stream_crc_usable(archive, info, max_bytes=info.file_size) for info in infos)
 
 
 def _storage_inventory(
@@ -242,7 +162,9 @@ def _archive_contents_usable(
         max_storage_bytes=max_storage_bytes,
     ):
         return False
-    return _metadata_crc_usable(archive, metadata)
+    return all(
+        _stream_crc_usable(archive, info, max_bytes=info.file_size) for info in storage
+    ) and _metadata_crc_usable(archive, metadata)
 
 
 def _archive_preflight(
@@ -252,7 +174,7 @@ def _archive_preflight(
     max_storage_bytes: int | None,
 ) -> bool:
     with path.open("rb") as handle:
-        if not _declared_directory_usable(handle):
+        if not declared_directory_usable(handle):
             return False
         handle.seek(0)
         with zipfile.ZipFile(handle) as archive:
@@ -269,7 +191,7 @@ def _string_mapping(payload: Any) -> dict[str, Any] | None:
     return payload
 
 
-def _restricted_load_kwargs(loader: Any) -> dict[str, Any]:
+def _restricted_load_kwargs(loader: Any, *, allow_mmap: bool) -> dict[str, Any]:
     try:
         parameters = inspect.signature(loader).parameters
     except (TypeError, ValueError) as error:
@@ -280,9 +202,13 @@ def _restricted_load_kwargs(loader: Any) -> dict[str, Any]:
         "map_location": "cpu",
         "weights_only": True,
     }
-    if "mmap" in parameters:
+    if allow_mmap and "mmap" in parameters:
         kwargs["mmap"] = True
     return kwargs
+
+
+def _legacy_file_usable(path: Path) -> bool:
+    return path.stat().st_size <= _MAX_MATERIALIZED_STORAGE_BYTES
 
 
 def torch_mapping(
@@ -296,15 +222,19 @@ def torch_mapping(
         return None
     try:
         loader = torch.load
-        load_kwargs = _restricted_load_kwargs(loader)
+        is_zip = zipfile.is_zipfile(path)
+        load_kwargs = _restricted_load_kwargs(loader, allow_mmap=is_zip)
         max_storage_bytes = (
             None if load_kwargs.get("mmap") is True else _MAX_MATERIALIZED_STORAGE_BYTES
         )
-        if not _archive_preflight(
-            path,
-            require_data_record=require_data_record,
-            max_storage_bytes=max_storage_bytes,
-        ):
+        if is_zip:
+            if not _archive_preflight(
+                path,
+                require_data_record=require_data_record,
+                max_storage_bytes=max_storage_bytes,
+            ):
+                return None
+        elif not _legacy_file_usable(path):
             return None
         context = safe_globals() if allow_numpy else nullcontext()
         with context:

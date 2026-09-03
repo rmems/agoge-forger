@@ -82,9 +82,9 @@ def write_artifact_index(output_dir: str) -> str:
 
     for root, _, files in os.walk(output_dir):
         for file in files:
-            if file == "artifact_index.json":
-                continue
             filepath = os.path.join(root, file)
+            if os.path.abspath(filepath) == os.path.abspath(index_path):
+                continue
             rel_path = os.path.relpath(filepath, output_dir)
             size = os.path.getsize(filepath)
             checksum = sha256_file(filepath)

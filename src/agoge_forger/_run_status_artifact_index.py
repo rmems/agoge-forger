@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 _MAX_ARTIFACT_INDEX_BYTES = 4 * 1024 * 1024
+_MAX_ARTIFACT_INVENTORY_ENTRIES = 65_536
 
 
 def _load_index(path: Path) -> dict[str, Any] | None:
@@ -67,16 +68,21 @@ def _artifact_entries(index: dict[str, Any]) -> dict[str, tuple[int, str]] | Non
     return _unique_entries([item for item in parsed if item is not None])
 
 
-def _current_artifacts(candidate: Path) -> dict[str, Path] | None:
+def _current_artifacts(candidate: Path, *, expected_files: int) -> dict[str, Path] | None:
     paths: dict[str, Path] = {}
-    for path in candidate.rglob("*"):
-        if path.name == "artifact_index.json":
-            continue
+    root_marker = candidate / "artifact_index.json"
+    for entry_count, path in enumerate(candidate.rglob("*"), start=1):
+        if entry_count > _MAX_ARTIFACT_INVENTORY_ENTRIES:
+            return None
         if path.is_symlink():
             return None
+        if path == root_marker:
+            continue
         if not path.is_file():
             continue
         paths[str(path.relative_to(candidate))] = path
+        if len(paths) > expected_files:
+            return None
     return paths
 
 
@@ -106,9 +112,9 @@ def artifact_index_usable(candidate: Path) -> bool:
     if index is None:
         return False
     entries = _artifact_entries(index)
-    current = _current_artifacts(candidate)
     if entries is None:
         return False
+    current = _current_artifacts(candidate, expected_files=len(entries))
     if current is None:
         return False
     if not _artifact_names_match(entries, current):

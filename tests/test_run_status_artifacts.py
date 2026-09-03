@@ -553,6 +553,49 @@ def test_symlinked_artifact_index_is_not_a_completion_marker(tmp_path):
     assert is_merged_model_dir(merged) is False
 
 
+def test_artifact_inventory_stops_after_more_files_than_the_index(tmp_path, monkeypatch):
+    merged = _write_merged_model(tmp_path / "merged")
+    (merged / "unindexed-one").write_text("one")
+    (merged / "unindexed-two").write_text("two")
+    paths = [path for path in merged.iterdir() if path.name != "artifact_index.json"]
+    first_extra = paths.pop(paths.index(merged / "unindexed-one"))
+    second_extra = paths.pop(paths.index(merged / "unindexed-two"))
+    overread = False
+
+    def inventory(_self, _pattern):
+        nonlocal overread
+        yield from paths
+        yield first_extra
+        overread = True
+        yield second_extra
+
+    monkeypatch.setattr(Path, "rglob", inventory)
+
+    assert artifact_index_usable(merged) is False
+    assert overread is False
+
+
+def test_nested_artifact_index_symlink_is_rejected_before_name_filter(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    nested = merged / "nested"
+    nested.mkdir()
+    (nested / "artifact_index.json").symlink_to(tmp_path / "outside")
+
+    assert artifact_index_usable(merged) is False
+
+
+def test_nested_regular_artifact_index_participates_in_authenticated_inventory(tmp_path):
+    merged = _write_merged_model(tmp_path / "merged")
+    nested = merged / "nested"
+    nested.mkdir()
+    (nested / "artifact_index.json").write_text("nested marker")
+    write_artifact_index(str(merged))
+    index = json.loads((merged / "artifact_index.json").read_text())
+
+    assert "nested/artifact_index.json" in {entry["file"] for entry in index["artifacts"]}
+    assert artifact_index_usable(merged) is True
+
+
 def test_broken_symlink_in_artifact_tree_is_not_ignored(tmp_path):
     merged = _write_merged_model(tmp_path / "merged")
     (merged / "broken-tokenizer-link").symlink_to(tmp_path / "missing-tokenizer")

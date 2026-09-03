@@ -212,6 +212,7 @@ def test_genuine_multitarget_peft_optimizer_order_is_resume_ready(tmp_path):
             "_step_count": 2,
             "base_lrs": [0.001, 0.001],
             "_last_lr": [0.001, 0.001],
+            "lr_lambdas": [{}, {}],
         },
     )
     _write_torch_state(checkpoint_dir / "rng_state.pth")

@@ -217,6 +217,7 @@ def _write_torch_state(path, payload=None):
                 "_step_count": 1,
                 "base_lrs": [0.001, 0.001],
                 "_last_lr": [0.001, 0.001],
+                "lr_lambdas": [{}, {}],
             },
             "rng_state.pth": {
                 "python": random.getstate(),
@@ -262,6 +263,7 @@ def _write_checkpoint(root, step, base_model=_DEFAULT_BASE_MODEL, revision=None)
             "_step_count": step + 1,
             "base_lrs": [0.001, 0.001],
             "_last_lr": [0.001, 0.001],
+            "lr_lambdas": [{}, {}],
         },
     )
     _write_torch_state(

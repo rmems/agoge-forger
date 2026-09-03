@@ -17,6 +17,11 @@ _PAIRS = (
     ("lora_A", "lora_B", ".weight"),
     ("lora_embedding_A", "lora_embedding_B", ""),
 )
+_PAIR_DIRECTIONS = tuple(
+    (segment, counterpart, suffix)
+    for left, right, suffix in _PAIRS
+    for segment, counterpart in ((left, right), (right, left))
+)
 _PAIR_SEGMENTS = frozenset(segment for pair in _PAIRS for segment in pair[:2])
 _BASE_MODEL_PREFIX = "base_model.model."
 Shape = tuple[int, ...]
@@ -48,14 +53,13 @@ def _module_rank(config: LoraConfig, module: str) -> int:
 
 
 def _pair_for_key(key: str) -> tuple[str, str, str] | None:
-    for left, right, suffix in _PAIRS:
-        for segment, counterpart_segment in ((left, right), (right, left)):
-            marker = f".{segment}{suffix}"
-            if key.endswith(marker):
-                module = key[: -len(marker)]
-                if module:
-                    counterpart = f"{module}.{counterpart_segment}{suffix}"
-                    return module, segment, counterpart
+    for segment, counterpart_segment, suffix in _PAIR_DIRECTIONS:
+        marker = f".{segment}{suffix}"
+        if key.endswith(marker):
+            module = key[: -len(marker)]
+            if module:
+                counterpart = f"{module}.{counterpart_segment}{suffix}"
+                return module, segment, counterpart
     return None
 
 
@@ -183,10 +187,10 @@ def _optional_embedding_base_shapes(
 def _inventory_usable(
     shapes: dict[str, Shape],
     pairs: dict[str, tuple[str, str, str]],
-    modules: set[str],
     config: LoraConfig,
     base_modules: dict[str, BaseModuleDimensions],
 ) -> bool:
+    modules = _left_pair_modules(pairs)
     required = set(pairs)
     if config.use_dora:
         required.update(f"{module}.lora_magnitude_vector" for module in modules)
@@ -218,6 +222,6 @@ def lora_shapes_usable(
         normalized_modules == expected_modules,
         _left_pair_shapes_usable(shapes, pairs, config, base_modules),
         _dora_shapes_usable(shapes, modules, config, base_modules),
-        _inventory_usable(shapes, pairs, modules, config, base_modules),
+        _inventory_usable(shapes, pairs, config, base_modules),
     )
     return all(checks)
