@@ -348,8 +348,8 @@ def test_serializer_rejects_nested_dynamic_import_builtin():
 
 
 def _fast_tokenizer(vocabulary, tokenizer_type=PreTrainedTokenizerFast):
-    backend = Tokenizer(WordLevel(vocabulary, unk_token="[UNK]"))
-    tokenizer = tokenizer_type(tokenizer_object=backend, unk_token="[UNK]")
+    backend = Tokenizer(WordLevel(vocabulary, "[UNK]"))
+    tokenizer = tokenizer_type(tokenizer_object=backend)
     tokenizer.name_or_path = TOKENIZER_ID
     tokenizer._commit_hash = TOKENIZER_REVISION
     return tokenizer

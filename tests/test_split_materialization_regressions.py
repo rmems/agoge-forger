@@ -1,6 +1,4 @@
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -158,15 +156,15 @@ def test_repository_source_path_must_be_portable_and_confined(source_path: str) 
         )
 
 
-def test_cli_records_and_reports_explicit_repository_source_path(tmp_path: Path) -> None:
+def test_cli_records_and_reports_explicit_repository_source_path(
+    tmp_path: Path, run_freeze_split
+) -> None:
     source = tmp_path / "cache" / "downloaded.jsonl"
     output = tmp_path / "snapshot"
     _write_rows(source, _text_rows())
 
-    result = subprocess.run(
+    stdout = run_freeze_split(
         [
-            sys.executable,
-            "scripts/freeze_split.py",
             "--source",
             str(source),
             "--source-path",
@@ -189,10 +187,7 @@ def test_cli_records_and_reports_explicit_repository_source_path(tmp_path: Path)
             "2",
             "--held-out-weight",
             "2",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+        ]
     )
 
     manifest = validate_split_manifest(output / "split_manifest.json", source_path=source)
@@ -203,7 +198,7 @@ def test_cli_records_and_reports_explicit_repository_source_path(tmp_path: Path)
     }
     assert manifest.source.path == SOURCE_PATH
     assert all(coordinate.startswith(f"{SOURCE_PATH}:") for coordinate in coordinates)
-    assert f"rmems/synthetic-factory@{REVISION}:{SOURCE_PATH}" in result.stdout
+    assert f"rmems/synthetic-factory@{REVISION}:{SOURCE_PATH}" in stdout
     assert f"Source file: `{SOURCE_PATH}`" in (output / "split_report.md").read_text()
 
 

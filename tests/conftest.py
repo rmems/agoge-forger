@@ -1,3 +1,6 @@
+import runpy
+import sys
+
 import pytest
 from transformers import LlamaConfig
 
@@ -21,3 +24,15 @@ def cached_test_base_config(monkeypatch):
         )
 
     monkeypatch.setattr(_adapter_schema, "load_base_config", load_base_config)
+
+
+@pytest.fixture
+def run_freeze_split(monkeypatch, capsys):
+    """Run ``scripts/freeze_split.py`` in-process so Bandit does not flag subprocess."""
+
+    def _run(args: list[str]) -> str:
+        monkeypatch.setattr(sys, "argv", ["scripts/freeze_split.py", *args])
+        runpy.run_path("scripts/freeze_split.py", run_name="__main__")
+        return capsys.readouterr().out
+
+    return _run
