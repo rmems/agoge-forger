@@ -92,15 +92,15 @@ The dataset loader includes the exact manifest and selected-split digests in
 the Hugging Face generator cache identity, so replacing files at the same path
 cannot silently reuse stale Arrow membership.
 
-For evaluation-eligible training, configure `split_manifest_path` together with
-`split_name: train` instead of `dataset_path`, and pin `revision` to a lowercase
-40-64 character commit digest. Frozen mode requires `dataset_text_field: text`
-and a Hub repository identifier for `model_id`; mutable local model directories
-are not evaluation eligible. The trainer records the exact manifest and
-training-split digests in `artifact_index.json`. Ordinary `dataset_path` runs
-remain supported but intentionally produce no claim that held-out records were
-excluded. Frozen-mode checkpoint resume is rejected until checkpoints carry
-and verify the same provenance.
+Trainer and training-config wiring for frozen splits is **not shipped in this
+PR**. `ExperimentConfig` still requires `dataset_path`; there is no
+`split_manifest_path` / `split_name` training config surface yet, and
+`write_artifact_index` does not emit `producer_provenance` or
+`training_split_manifest_sha256`. Ordinary `dataset_path` training remains the
+only supported path. Callers may use the freeze/validate/loader APIs above
+directly; evaluation-eligible frozen training that pins the manifest into the
+trainer and records training-split digests in `artifact_index.json` remains
+follow-on work.
 
 Tokenizer and serializer statistics are immutable sidecars produced with
 `write_token_statistics`. Callers must supply `TokenizerBinding` and
@@ -132,10 +132,15 @@ artifact. Contract-relative paths use POSIX separators for relocation between
 Windows and Unix systems, and absolute or drive-prefixed references are
 rejected during schema validation.
 
-Evaluation-eligible frozen training also requires `trust_remote_code: false` and
-`runtime.save_safetensors: true`; legacy mutable `dataset_path` training retains
-the existing explicit unsafe-serialization opt-in.
+When an artifact index *does* carry `producer_provenance`, paired-eval
+validation requires that provenance to match the contract's frozen train
+split. Emitting that provenance from training is not implemented yet, so
+trainer-side settings such as `trust_remote_code: false` and
+`runtime.save_safetensors: true` for evaluation-eligible frozen runs are
+likewise not wired through config in this PR. Legacy `dataset_path` training
+keeps its existing explicit unsafe-serialization opt-in.
 
 This foundation does not load a model, run inference, choose a checkpoint,
-score generations, or create claim-bearing results. Those #100 capabilities
-remain downstream work after the data contract is integrated.
+score generations, create claim-bearing results, or wire frozen splits into
+the trainer. Those capabilities remain downstream work after the data
+contract is integrated.
