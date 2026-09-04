@@ -78,8 +78,9 @@ name = "trufflehog"
 [[plugin]]
 name = "zizmor"
 
-# Pytest assertions, controlled subprocess fixtures, and tokenizer vocabulary
-# literals are intentional test behavior. Keep Bandit enabled everywhere else.
+# Qlty is the Bandit quality gate (root bandit.yml is not used). Pytest
+# assertions, controlled subprocess fixtures, and tokenizer vocabulary
+# literals are intentional test behavior. Keep Bandit enabled on src/.
 [[triage]]
 match.rules = [
   "bandit:B101",
