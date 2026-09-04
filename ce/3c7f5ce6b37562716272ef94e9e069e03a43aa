@@ -1,0 +1,19 @@
+.qlty/qlty.toml
+  s_357665ec66c350::t_2a6c2cd0d2a07c 81-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ce3c7f5ce6b37562716272ef94e9e069e03a43aa",
+  "prompts": {},
+  "sessions": {
+    "s_357665ec66c350": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "665836d0-8dac-4c2c-a6de-098f966aa22a",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
