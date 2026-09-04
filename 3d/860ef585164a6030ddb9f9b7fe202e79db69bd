@@ -1,0 +1,30 @@
+tests/conftest.py
+  s_357665ec66c350::t_dbaf84c096cdb0 27-38
+  s_357665ec66c350::t_668db0cdc4528f 1-3
+tests/test_split_streaming_and_provenance.py
+  s_357665ec66c350::t_aa366e5f63e0cf 351-352
+tests/test_split_materialization_regressions.py
+  s_357665ec66c350::t_35c39e5f4e6929 159-161,190
+  s_357665ec66c350::t_a5a979157cb07d 201
+  s_357665ec66c350::t_d12fee3e71a7e8 166
+.qlty/qlty.toml
+  s_357665ec66c350::t_2e6e0055739272 3-4,55-56,58
+tests/test_split_contract.py
+  s_357665ec66c350::t_8b7fe5078587d0 53,59-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3d860ef585164a6030ddb9f9b7fe202e79db69bd",
+  "prompts": {},
+  "sessions": {
+    "s_357665ec66c350": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "665836d0-8dac-4c2c-a6de-098f966aa22a",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
