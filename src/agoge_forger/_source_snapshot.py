@@ -29,9 +29,14 @@ def copy_source_snapshot(source: Path, snapshot: Path) -> str:
             path_identity_after = _file_identity(source.stat())
     except OSError as exc:
         raise ValueError(f"source changed while creating immutable snapshot: {source}") from exc
+    copied = digest.hexdigest()
     if identity_before != identity_after or identity_after != path_identity_after:
         raise ValueError(f"source changed while creating immutable snapshot: {source}")
-    return digest.hexdigest()
+    # Overlay filesystems can rewrite bytes without changing size/mtime/ctime.
+    # Re-hash the live path so content races are not metadata-only.
+    if _sha256_path(source) != copied:
+        raise ValueError(f"source changed while creating immutable snapshot: {source}")
+    return copied
 
 
 def nearest_existing_output_ancestor(destination: Path) -> Path:
@@ -41,6 +46,14 @@ def nearest_existing_output_ancestor(destination: Path) -> Path:
     if not candidate.is_dir():
         raise ValueError(f"output path has a non-directory ancestor: {candidate}")
     return candidate.resolve(strict=True)
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _file_identity(status: os.stat_result) -> _FileIdentity:

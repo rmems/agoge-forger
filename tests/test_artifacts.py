@@ -1,8 +1,15 @@
+import json
 import os
+from pathlib import Path
 
 import pytest
 
 from agoge_forger.artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
+from agoge_forger.eval import ArtifactProducerProvenance
+from agoge_forger.eval.contract import ArtifactValidationContext, require_artifact_index
+from agoge_forger.split_contract import sha256_file
+from tests.evaluation_contract_cases import model_provenance
+from tests.peft_adapter_fixtures import write_complete_adapter_model
 
 
 def test_artifact_index_hashes_file(tmp_path):
@@ -15,8 +22,6 @@ def test_artifact_index_hashes_file(tmp_path):
     index_path = write_artifact_index(str(out_dir))
     assert os.path.exists(index_path)
 
-    import json
-
     with open(index_path) as f:
         data = json.load(f)
         assert data["output_dir"] == str(out_dir)
@@ -24,6 +29,34 @@ def test_artifact_index_hashes_file(tmp_path):
         assert data["artifacts"][0]["file"] == "test.txt"
         assert data["artifacts"][0]["size_bytes"] == 11
         assert data["artifacts"][0]["sha256"] != "unknown"
+        assert "producer_provenance" not in data
+
+
+def test_write_artifact_index_provenance_is_required_by_eval_validation(
+    tmp_path, cached_test_base_config
+):
+    output_dir = tmp_path / "adapter"
+    output_dir.mkdir()
+    write_complete_adapter_model(output_dir)
+
+    provenance = ArtifactProducerProvenance.model_validate(model_provenance())
+    context = ArtifactValidationContext(
+        kind="peft_adapter",
+        model_repository=provenance.base_model_name_or_path,
+        model_revision=provenance.revision,
+        split_manifest_sha256=provenance.training_split_manifest_sha256,
+        train_split_sha256=provenance.training_split_sha256,
+    )
+
+    index_path = Path(write_artifact_index(str(output_dir), producer_provenance=provenance))
+    require_artifact_index(index_path, sha256_file(index_path), context)
+
+    index_path.unlink()
+    index_path = Path(write_artifact_index(str(output_dir)))
+    with pytest.raises(
+        ValueError, match="peft_adapter artifact index requires producer_provenance"
+    ):
+        require_artifact_index(index_path, sha256_file(index_path), context)
 
 
 def test_no_bin_outputs_when_safe_serialization_required(tmp_path):

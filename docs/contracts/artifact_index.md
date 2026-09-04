@@ -25,9 +25,21 @@ adapters/<run_name>/artifact_index.json   # training output
       "size_bytes": 842,
       "sha256": "a1b2c3d4e5f6..."
     }
-  ]
+  ],
+  "producer_provenance": {
+    "base_model_name_or_path": "org/model",
+    "revision": "abcdef0123456789abcdef0123456789abcdef01",
+    "training_split_manifest_sha256": "7f...64 hex chars...",
+    "training_split_name": "train",
+    "training_split_sha256": "8f...64 hex chars..."
+  }
 }
 ```
+
+`producer_provenance` is optional. `write_artifact_index` emits it only when the
+caller supplies a valid `ArtifactProducerProvenance` object or mapping.
+`ExperimentConfig` does not have a `split_manifest_path` field, so ordinary
+training runs omit this object.
 
 ## Fields
 
@@ -38,6 +50,12 @@ adapters/<run_name>/artifact_index.json   # training output
 | `artifacts[].file`  | str    | Yes      | Relative path from `output_dir`                |
 | `artifacts[].size_bytes` | int | Yes    | File size in bytes                             |
 | `artifacts[].sha256` | str   | Yes      | Hex-encoded SHA-256 hash of the file contents  |
+| `producer_provenance` | object | No     | Present only when a caller supplies training identity |
+| `producer_provenance.base_model_name_or_path` | str | Yes, if present | Base model repository or path |
+| `producer_provenance.revision` | str | Yes, if present | Content-addressed revision (`^[0-9a-f]{40,64}$`) |
+| `producer_provenance.training_split_manifest_sha256` | str | Yes, if present | SHA-256 of the frozen split manifest |
+| `producer_provenance.training_split_name` | str | Yes, if present | Must be `"train"` |
+| `producer_provenance.training_split_sha256` | str | Yes, if present | SHA-256 of the frozen train split |
 
 ## Referenced By
 

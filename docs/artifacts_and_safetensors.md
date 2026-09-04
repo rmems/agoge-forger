@@ -8,7 +8,7 @@ Agoge-Forger strictly prefers `safetensors` over `pickle` (e.g., `.bin`, `.pt`) 
 3. **Lazy Loading**: Enables inspecting metadata without loading the entire multi-GB payload into memory.
 
 ## Artifact Indexing
-Every training and merge run generates an `artifact_index.json`. This file contains the relative paths, sizes in bytes, and SHA256 hashes of all output files. This ensures reproducibility and integrity of exported artifacts.
+Every training and merge run generates an `artifact_index.json`. This file contains the relative paths, sizes in bytes, and SHA256 hashes of all output files. This ensures reproducibility and integrity of exported artifacts. The index may also include `producer_provenance` when the trainer or merge caller supplies it; ordinary `dataset_path` training omits that object.
 
 ## Blocking Unsafe Binaries
 By default, the framework will raise an error if any `pytorch_model.bin` or `adapter_model.bin` is created. You must explicitly configure `allow_unsafe_serialization: true` in your run config if an older model architecture strictly requires legacy saving formats.

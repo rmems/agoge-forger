@@ -94,13 +94,13 @@ cannot silently reuse stale Arrow membership.
 
 Trainer and training-config wiring for frozen splits is **not shipped in this
 PR**. `ExperimentConfig` still requires `dataset_path`; there is no
-`split_manifest_path` / `split_name` training config surface yet, and
-`write_artifact_index` does not emit `producer_provenance` or
-`training_split_manifest_sha256`. Ordinary `dataset_path` training remains the
-only supported path. Callers may use the freeze/validate/loader APIs above
-directly; evaluation-eligible frozen training that pins the manifest into the
-trainer and records training-split digests in `artifact_index.json` remains
-follow-on work.
+`split_manifest_path` / `split_name` training config surface yet.
+`write_artifact_index` may include `producer_provenance` (base model, immutable
+revision, `training_split_manifest_sha256`, `training_split_name="train"`, and
+`training_split_sha256`) when a caller supplies it. Ordinary `dataset_path`
+training does not populate that object automatically. Callers may use the
+freeze/validate/loader APIs above directly; evaluation-eligible frozen training
+that pins a manifest into `ExperimentConfig` remains follow-on work.
 
 Tokenizer and serializer statistics are immutable sidecars produced with
 `write_token_statistics`. Callers must supply `TokenizerBinding` and
@@ -132,10 +132,11 @@ artifact. Contract-relative paths use POSIX separators for relocation between
 Windows and Unix systems, and absolute or drive-prefixed references are
 rejected during schema validation.
 
-When an artifact index *does* carry `producer_provenance`, paired-eval
-validation requires that provenance to match the contract's frozen train
-split. Emitting that provenance from training is not implemented yet, so
-trainer-side settings such as `trust_remote_code: false` and
+When an artifact index carries `producer_provenance`, paired-eval validation
+requires that provenance to match the contract's frozen train split. Trainer
+and merge emit that object only when a caller supplies
+`ArtifactProducerProvenance`; they do not derive it from `ExperimentConfig`.
+Trainer-side settings such as `trust_remote_code: false` and
 `runtime.save_safetensors: true` for evaluation-eligible frozen runs are
 likewise not wired through config in this PR. Legacy `dataset_path` training
 keeps its existing explicit unsafe-serialization opt-in.

@@ -2,8 +2,10 @@ import glob
 import hashlib
 import json
 import os
+from collections.abc import Mapping
 from typing import Any
 
+from ..eval._artifact_schema import ArtifactProducerProvenance
 from ..logging import logger
 
 try:
@@ -76,7 +78,10 @@ def sha256_file(path: str) -> str:
         raise
 
 
-def write_artifact_index(output_dir: str) -> str:
+def write_artifact_index(
+    output_dir: str,
+    producer_provenance: ArtifactProducerProvenance | Mapping[str, object] | None = None,
+) -> str:
     index_path = os.path.join(output_dir, "artifact_index.json")
     artifacts = []
 
@@ -90,9 +95,24 @@ def write_artifact_index(output_dir: str) -> str:
             checksum = sha256_file(filepath)
             artifacts.append({"file": rel_path, "size_bytes": size, "sha256": checksum})
 
-    index = {"output_dir": output_dir, "artifacts": artifacts}
+    index: dict[str, Any] = {"output_dir": output_dir, "artifacts": artifacts}
+    provenance = _producer_provenance_payload(producer_provenance)
+    if provenance is not None:
+        index["producer_provenance"] = provenance
 
     with open(index_path, "w") as f:
         json.dump(index, f, indent=2)
 
     return index_path
+
+
+def _producer_provenance_payload(
+    producer_provenance: ArtifactProducerProvenance | Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if producer_provenance is None:
+        return None
+    if isinstance(producer_provenance, ArtifactProducerProvenance):
+        validated = producer_provenance
+    else:
+        validated = ArtifactProducerProvenance.model_validate(producer_provenance)
+    return validated.model_dump(mode="json")

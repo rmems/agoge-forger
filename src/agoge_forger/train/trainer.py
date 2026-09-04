@@ -95,7 +95,7 @@ def _prepare_peft_model(config, model):
     return model
 
 
-def _finalize_training_run(config, trainer, out_dir, gpu_report):
+def _finalize_training_run(config, trainer, out_dir, gpu_report, producer_provenance=None):
     logger.info(f"Saving adapter to {out_dir}")
     trainer.model.save_pretrained(out_dir, safe_serialization=config.runtime.save_safetensors)
     # `Trainer.tokenizer` was removed in Transformers 5; the tokenizer now
@@ -106,7 +106,7 @@ def _finalize_training_run(config, trainer, out_dir, gpu_report):
     if not config.runtime.allow_unsafe_serialization:
         assert_no_unsafe_weight_bins(out_dir)
 
-    index_path = write_artifact_index(out_dir)
+    index_path = write_artifact_index(out_dir, producer_provenance=producer_provenance)
     logger.info(f"Artifact index written to {index_path}")
 
     vram_used = torch.cuda.max_memory_allocated() / BYTES_PER_GB
@@ -127,7 +127,7 @@ def _finalize_training_run(config, trainer, out_dir, gpu_report):
     )
 
 
-def run_training(config):
+def run_training(config, producer_provenance=None):
     check_cuda_available(required=True)
     gpu_report = get_gpu_report()
     logger.info(f"GPU Report: {gpu_report}")
@@ -165,4 +165,6 @@ def run_training(config):
 
     logger.info("Starting training...")
     trainer.train(resume_from_checkpoint=resume_checkpoint)
-    _finalize_training_run(config, trainer, out_dir, gpu_report)
+    _finalize_training_run(
+        config, trainer, out_dir, gpu_report, producer_provenance=producer_provenance
+    )

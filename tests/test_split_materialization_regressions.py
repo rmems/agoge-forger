@@ -376,6 +376,33 @@ def test_materialization_rejects_source_changed_while_snapshotting(
     assert not output.exists()
 
 
+def test_source_snapshot_rehash_detects_same_metadata_content_race(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from agoge_forger import _source_snapshot
+
+    source = tmp_path / "source.jsonl"
+    snapshot = tmp_path / "snapshot.jsonl"
+    original = b"original-source-payload\n"
+    replacement = b"mutated--source-payload\n"
+    assert len(original) == len(replacement)
+    source.write_bytes(original)
+
+    original_hash = _source_snapshot._sha256_path
+
+    def mutate_then_hash(path: Path) -> str:
+        if path == source:
+            metadata = source.stat()
+            source.write_bytes(replacement)
+            os.utime(source, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+        return original_hash(path)
+
+    monkeypatch.setattr(_source_snapshot, "_sha256_path", mutate_then_hash)
+
+    with pytest.raises(ValueError, match="source changed while creating immutable snapshot"):
+        _source_snapshot.copy_source_snapshot(source, snapshot)
+
+
 def test_materialization_stages_on_output_filesystem(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "source.jsonl"
     output = tmp_path / "missing-parent" / "snapshot"
