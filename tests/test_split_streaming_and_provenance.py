@@ -241,9 +241,7 @@ def test_token_statistics_requires_explicit_callable_bindings(field):
         TokenStatisticsDerivation(**values)
 
 
-def test_callable_binding_assertions_cannot_lie(tmp_path):
-    output = tmp_path / "must-not-exist.json"
-
+def test_callable_binding_assertions_cannot_lie():
     with pytest.raises(ValueError, match="tokenizer_id assertion"):
         TokenizerBinding(
             implementation=_Tokenizer(),
@@ -254,8 +252,6 @@ def test_callable_binding_assertions_cannot_lie(tmp_path):
             implementation=_serializer,
             expected_serializer_version="forged-version",
         )
-
-    assert not output.exists()
 
 
 def test_bindings_reject_unresolvable_callable_provenance():
@@ -743,6 +739,17 @@ def test_split_validation_accepts_configured_writable_staging(tmp_path, monkeypa
     assert set(observed_file_directories) == {staging}
     assert set(observed_source_directories) == {staging}
     assert list(staging.iterdir()) == []
+
+
+def test_empty_validation_staging_env_falls_back_to_preferred(tmp_path, monkeypatch):
+    from agoge_forger._validation_staging import validation_staging_dir
+
+    preferred = tmp_path / "preferred"
+    preferred.mkdir()
+    monkeypatch.setenv("AGOGE_VALIDATION_STAGING_DIR", "")
+    assert validation_staging_dir(preferred) == preferred
+    monkeypatch.setenv("AGOGE_VALIDATION_STAGING_DIR", "   ")
+    assert validation_staging_dir(preferred) == preferred
 
 
 def test_split_validation_reports_unwritable_staging(tmp_path, monkeypatch):

@@ -161,8 +161,9 @@ def test_materialization_records_explicit_repository_source_path(tmp_path: Path)
     output = tmp_path / "snapshot"
     _write_rows(source, _text_rows())
 
-    manifest = materialize_split(source, output, _spec())
+    materialized = materialize_split(source, output, _spec())
     manifest = validate_split_manifest(output / "split_manifest.json", source_path=source)
+    assert manifest == materialized
     coordinates = {
         member.source_coordinate
         for artifact in manifest.splits.values()

@@ -6,12 +6,14 @@ from pydantic import ValidationError
 
 from agoge_forger.split_contract import (
     SPLIT_NAMES,
+    FrozenSplitBinding,
     SerializerBinding,
     SplitMaterializationSpec,
     SplitPolicy,
     TokenizerBinding,
     TokenStatisticsDerivation,
     TokenStatisticsSpec,
+    bind_frozen_split,
     canonical_json_bytes,
     iter_frozen_records,
     load_frozen_dataset,
@@ -80,6 +82,10 @@ def test_one_command_materializes_repeatable_three_way_split(tmp_path):
     assert loaded_ids == {f"sample-{index:03d}" for index in range(90)}
     train_dataset = load_frozen_dataset(first / "split_manifest.json", "train")
     assert len(train_dataset) == first_manifest.splits["train"].record_count
+    binding = bind_frozen_split(first / "split_manifest.json", "train")
+    assert isinstance(binding, FrozenSplitBinding)
+    pinned = load_frozen_dataset(first / "split_manifest.json", "train", expected_binding=binding)
+    assert len(pinned) == first_manifest.splits["train"].record_count
 
 
 def test_frozen_output_refuses_silent_regeneration(tmp_path):
@@ -471,3 +477,5 @@ def test_duplicate_canonical_identity_is_rejected_before_materialization(tmp_pat
 
     with pytest.raises(ValueError, match="duplicate canonical ID"):
         _materialize(source, tmp_path / "never-created")
+
+    assert not (tmp_path / "never-created").exists()

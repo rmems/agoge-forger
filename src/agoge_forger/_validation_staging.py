@@ -10,7 +10,7 @@ from pathlib import Path
 
 def validation_staging_dir(preferred: Path) -> Path:
     configured = os.environ.get("AGOGE_VALIDATION_STAGING_DIR")
-    if configured is None:
+    if configured is None or not configured.strip():
         return preferred
     try:
         path = Path(configured).expanduser().resolve(strict=True)

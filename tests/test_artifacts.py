@@ -1,5 +1,6 @@
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,12 @@ def test_write_artifact_index_provenance_is_required_by_eval_validation(
         ValueError, match="peft_adapter artifact index requires producer_provenance"
     ):
         require_artifact_index(index_path, sha256_file(index_path), context)
+
+    mismatched = replace(context, model_revision="9" * 40)
+    index_path.unlink()
+    index_path = Path(write_artifact_index(str(output_dir), producer_provenance=provenance))
+    with pytest.raises(ValueError, match="does not match the contracted"):
+        require_artifact_index(index_path, sha256_file(index_path), mismatched)
 
 
 def test_no_bin_outputs_when_safe_serialization_required(tmp_path):

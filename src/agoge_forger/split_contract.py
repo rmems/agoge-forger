@@ -6,7 +6,12 @@ and derivative token statistics can evolve without duplicating that schema.
 """
 
 from ._token_provenance import SerializerBinding, TokenizerBinding
-from .split_loaders import iter_frozen_records, load_frozen_dataset
+from .split_loaders import (
+    FrozenSplitBinding,
+    bind_frozen_split,
+    iter_frozen_records,
+    load_frozen_dataset,
+)
 from .split_materialize import materialize_split
 from .split_schema import (
     SPLIT_ALGORITHM_VERSION,
@@ -38,6 +43,7 @@ __all__ = [
     "SPLIT_NAMES",
     "TOKEN_STATS_VERSION",
     "CanonicalIdentityPolicy",
+    "FrozenSplitBinding",
     "LeakageAudit",
     "SerializerBinding",
     "SourceFile",
@@ -52,6 +58,7 @@ __all__ = [
     "TokenStatisticsDerivation",
     "TokenStatisticsSpec",
     "TokenizerBinding",
+    "bind_frozen_split",
     "canonical_json_bytes",
     "iter_frozen_records",
     "load_frozen_dataset",

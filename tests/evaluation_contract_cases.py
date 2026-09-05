@@ -27,26 +27,35 @@ from tests.peft_adapter_fixtures import write_complete_adapter_model
 MODEL_REPOSITORY = "example/base-model"
 MODEL_REVISION = "abcdef0123456789abcdef0123456789abcdef01"
 BuildArgs = tuple[Path, Path, EvaluationArm, EvaluationArm]
-WRITABLE_SAFETENSORS_DTYPES = (
-    (torch.float64, "F64"),
-    (torch.float32, "F32"),
-    (torch.float16, "F16"),
-    (torch.bfloat16, "BF16"),
-    (torch.int64, "I64"),
-    (torch.int32, "I32"),
-    (torch.int16, "I16"),
-    (torch.int8, "I8"),
-    (torch.uint64, "U64"),
-    (torch.uint32, "U32"),
-    (torch.uint16, "U16"),
-    (torch.uint8, "U8"),
-    (torch.bool, "BOOL"),
-    (torch.float8_e4m3fn, "F8_E4M3"),
-    (torch.float8_e5m2, "F8_E5M2"),
-    (torch.float8_e8m0fnu, "F8_E8M0"),
-    (torch.float4_e2m1fn_x2, "F4"),
-    (torch.complex64, "C64"),
-)
+
+
+def _writable_safetensors_dtypes() -> tuple[tuple[object, str], ...]:
+    names = (
+        ("float64", "F64"),
+        ("float32", "F32"),
+        ("float16", "F16"),
+        ("bfloat16", "BF16"),
+        ("int64", "I64"),
+        ("int32", "I32"),
+        ("int16", "I16"),
+        ("int8", "I8"),
+        ("uint64", "U64"),
+        ("uint32", "U32"),
+        ("uint16", "U16"),
+        ("uint8", "U8"),
+        ("bool", "BOOL"),
+        ("float8_e4m3fn", "F8_E4M3"),
+        ("float8_e5m2", "F8_E5M2"),
+        ("float8_e8m0fnu", "F8_E8M0"),
+        ("float4_e2m1fn_x2", "F4"),
+        ("complex64", "C64"),
+    )
+    return tuple(
+        (dtype, label) for name, label in names if (dtype := getattr(torch, name, None)) is not None
+    )
+
+
+WRITABLE_SAFETENSORS_DTYPES = _writable_safetensors_dtypes()
 
 
 def write_safetensors(path: Path, value: int = 0, *, keys: tuple[str, ...] = ("weight",)) -> None:

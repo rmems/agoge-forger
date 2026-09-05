@@ -36,9 +36,14 @@ def expected_adapter_tensor_schema(
     try:
         lora_config = _validated_lora_config(adapter_config)
         base_config = load_base_config(context.model_repository, context.model_revision)
+    except (ImportError, OSError, TypeError, ValueError, KeyError) as exc:
+        raise ValueError(
+            "PEFT adapter config cannot resolve a local, remote-code-disabled base schema"
+        ) from exc
+    try:
         adapter = _empty_adapter(base_config, lora_config, context.model_repository)
         return _saved_adapter_schema(adapter, lora_config)
-    except (ImportError, OSError, TypeError, ValueError, KeyError) as exc:
+    except (ImportError, OSError, ValueError, KeyError) as exc:
         raise ValueError(
             "PEFT adapter config cannot resolve a local, remote-code-disabled base schema"
         ) from exc

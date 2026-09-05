@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +9,7 @@ from typing import Any
 
 from datasets import Dataset  # type: ignore[attr-defined]
 
+from ._strict_json import decode_json_object
 from .datasets import normalize_row
 from .split_schema import SplitManifest, SplitName, sha256_bytes
 from .split_validation import (
@@ -45,14 +45,15 @@ def iter_materialized_records(
 
 
 def _iter_snapshot_records(artifact_path: Path, split: SplitName) -> Iterator[dict[str, Any]]:
-    with artifact_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
+    with artifact_path.open("rb") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            if not raw_line.strip():
                 continue
-            row = json.loads(line)
-            if not isinstance(row, dict):
-                raise TypeError(f"materialized {split} row is not an object")
-            yield row
+            yield decode_json_object(
+                raw_line,
+                f"{artifact_path.name}:{line_number}",
+                object_label=f"materialized {split} row",
+            )
 
 
 def iter_frozen_records(manifest_path: str | Path, split: SplitName) -> Iterator[dict[str, Any]]:
