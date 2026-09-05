@@ -1,5 +1,6 @@
 from peft import PeftModel
 
+from ..artifacts.producer_provenance import require_producer_provenance
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
 from ..logging import logger
 from ..models.load import load_base_model
@@ -93,7 +94,10 @@ def merge_adapter(
     if not allow_unsafe:
         assert_no_unsafe_weight_bins(str(safe_out_dir))
 
-    index_path = write_artifact_index(str(safe_out_dir), producer_provenance=producer_provenance)
+    index_path = write_artifact_index(
+        str(safe_out_dir),
+        producer_provenance=require_producer_provenance(producer_provenance, adapter_path),
+    )
     logger.info(f"Artifact index written to {index_path}")
 
 

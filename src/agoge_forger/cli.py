@@ -9,6 +9,7 @@ from typing import Annotated, Any
 import typer
 import yaml
 
+from .artifacts.producer_provenance import producer_provenance_from_adapter
 from .artifacts.safetensors_io import assert_no_unsafe_weight_bins, inspect_safetensors_file
 from .backends.torch_backend import check_torch_env
 from .config import load_config
@@ -37,7 +38,11 @@ from .split_contract import (
     SplitPolicy,
     materialize_split,
 )
-from .train.checkpoints import infer_base_model_from_adapter, is_adapter_artifact
+from .train.checkpoints import (
+    infer_base_model_from_adapter,
+    is_adapter_artifact,
+    resolve_export_source,
+)
 from .train.lora import train_lora as _train_lora
 from .train.qlora import train_qlora as _train_qlora
 
@@ -153,6 +158,7 @@ def merge_adapter(
         safe_out_dir,
         trust_remote_code=trust_remote_code,
         allow_unsafe=allow_unsafe_serialization,
+        producer_provenance=producer_provenance_from_adapter(safe_adapter_path),
     )
 
 
@@ -185,6 +191,11 @@ def export_final_model(
     safe_adapter_path = (
         str(resolve_existing_path(adapter_path, must_be_dir=True)) if adapter_path else None
     )
+    source_adapter = resolve_export_source(
+        run_dir=safe_run_dir,
+        adapter_path=safe_adapter_path,
+        allow_unsafe=allow_unsafe_serialization,
+    )
     _export_final_model(
         out_dir=safe_out_dir,
         run_dir=safe_run_dir,
@@ -194,6 +205,7 @@ def export_final_model(
         allow_unsafe=allow_unsafe_serialization,
         max_shard_size=max_shard_size,
         trust_remote_code=trust_remote_code,
+        producer_provenance=producer_provenance_from_adapter(source_adapter),
     )
 
 

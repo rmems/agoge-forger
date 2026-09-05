@@ -121,12 +121,13 @@ cannot silently reuse stale Arrow membership.
 Trainer and training-config wiring for frozen splits is **not shipped in this
 PR**. `ExperimentConfig` still requires `dataset_path`; there is no
 `split_manifest_path` / `split_name` training config surface yet.
-`write_artifact_index` may include `producer_provenance` (base model, immutable
+CLI train and export paths construct `producer_provenance` (base model, immutable
 revision, `training_split_manifest_sha256`, `training_split_name="train"`, and
-`training_split_sha256`) when a caller supplies it. Ordinary `dataset_path`
-training does not populate that object automatically. Callers may use the
-freeze/validate/loader APIs above directly; evaluation-eligible frozen training
-that pins a manifest into `ExperimentConfig` remains follow-on work.
+`training_split_sha256`) from `config.model_id`, a content-addressed
+`config.revision`, and freeze metadata beside `dataset_path`, or fail closed
+before save. `write_artifact_index` still emits that object only when a caller
+supplies it. Callers may use the freeze/validate/loader APIs above directly;
+pinning a manifest into `ExperimentConfig` remains follow-on work.
 
 Tokenizer and serializer statistics are immutable sidecars produced with
 `write_token_statistics`. Callers must supply `TokenizerBinding` and
@@ -159,13 +160,14 @@ Windows and Unix systems, and absolute or drive-prefixed references are
 rejected during schema validation.
 
 When an artifact index carries `producer_provenance`, paired-eval validation
-requires that provenance to match the contract's frozen train split. Trainer
-and merge emit that object only when a caller supplies
-`ArtifactProducerProvenance`; they do not derive it from `ExperimentConfig`.
-Trainer-side settings such as `trust_remote_code: false` and
-`runtime.save_safetensors: true` for evaluation-eligible frozen runs are
-likewise not wired through config in this PR. Legacy `dataset_path` training
-keeps its existing explicit unsafe-serialization opt-in.
+requires that provenance to match the contract's frozen train split. CLI train
+and export derive that object from the pinned model revision and frozen train
+split beside `dataset_path` (or from an adapter index on merge) and fail closed
+when those digests are missing. Trainer-side settings such as
+`trust_remote_code: false` and `runtime.save_safetensors: true` for
+evaluation-eligible frozen runs are likewise not wired through config in this
+PR. Legacy `dataset_path` training keeps its existing explicit
+unsafe-serialization opt-in.
 
 This foundation does not load a model, run inference, choose a checkpoint,
 score generations, create claim-bearing results, or wire frozen splits into

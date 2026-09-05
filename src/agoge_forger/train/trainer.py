@@ -8,6 +8,7 @@ from trl import SFTConfig, SFTTrainer
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
 from ..datasets import load_jsonl_dataset
+from ..eval import ArtifactProducerProvenance
 from ..logging import logger
 from ..manifests import write_run_manifest
 from ..models.load import load_base_model
@@ -108,6 +109,7 @@ class _TrainingFinalization:
 def _finalize_training_run(config, finalization: _TrainingFinalization):
     trainer = finalization.trainer
     out_dir = finalization.out_dir
+    provenance = _require_training_provenance(finalization.producer_provenance)
     logger.info(f"Saving adapter to {out_dir}")
     trainer.model.save_pretrained(out_dir, safe_serialization=config.runtime.save_safetensors)
     # `Trainer.tokenizer` was removed in Transformers 5; the tokenizer now
@@ -118,7 +120,7 @@ def _finalize_training_run(config, finalization: _TrainingFinalization):
     if not config.runtime.allow_unsafe_serialization:
         assert_no_unsafe_weight_bins(out_dir)
 
-    index_path = write_artifact_index(out_dir, producer_provenance=finalization.producer_provenance)
+    index_path = write_artifact_index(out_dir, producer_provenance=provenance)
     logger.info(f"Artifact index written to {index_path}")
 
     vram_used = torch.cuda.max_memory_allocated() / BYTES_PER_GB
@@ -137,6 +139,14 @@ def _finalize_training_run(config, finalization: _TrainingFinalization):
         tokenizer,
         trainer.train_dataset,
     )
+
+
+def _require_training_provenance(producer_provenance: Any) -> ArtifactProducerProvenance:
+    if producer_provenance is None:
+        raise ValueError("training cannot save an adapter without ArtifactProducerProvenance")
+    if isinstance(producer_provenance, ArtifactProducerProvenance):
+        return producer_provenance
+    return ArtifactProducerProvenance.model_validate(producer_provenance)
 
 
 def run_training(config, producer_provenance=None):

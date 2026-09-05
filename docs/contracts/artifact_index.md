@@ -36,10 +36,12 @@ adapters/<run_name>/artifact_index.json   # training output
 }
 ```
 
-`producer_provenance` is optional. `write_artifact_index` emits it only when the
-caller supplies a valid `ArtifactProducerProvenance` object or mapping.
-`ExperimentConfig` does not have a `split_manifest_path` field, so ordinary
-training runs omit this object.
+`producer_provenance` is optional on the writer. `write_artifact_index` emits it
+only when the caller supplies a valid `ArtifactProducerProvenance` object or
+mapping. CLI train and export paths always construct and pass that object from
+the pinned base-model revision and frozen train-split digests (located beside
+`dataset_path` or copied from an adapter index) or fail closed before save.
+`ExperimentConfig` does not have a `split_manifest_path` field.
 
 ## Fields
 
