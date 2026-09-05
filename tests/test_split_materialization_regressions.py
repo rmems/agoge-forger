@@ -192,6 +192,17 @@ def test_streaming_source_reader_rejects_duplicate_ids_when_exhausted(tmp_path: 
         next(records)
 
 
+def _reject_source_records(source: Path, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        list(
+            iter_source_records(
+                source,
+                CanonicalIdentityPolicy(content_hash_policy="normalized-training-payload-v1"),
+                source_coordinate_path=SOURCE_PATH,
+            )
+        )
+
+
 @pytest.mark.parametrize("field", ["canonical_id", "lineage_id", "group_id", "text"])
 def test_streaming_source_reader_rejects_duplicate_json_keys(tmp_path: Path, field: str) -> None:
     source = tmp_path / "duplicate-key.jsonl"
@@ -201,18 +212,7 @@ def test_streaming_source_reader_rejects_duplicate_json_keys(tmp_path: Path, fie
         f'"{field}":"ambiguous"}}\n',
         encoding="utf-8",
     )
-
-    with pytest.raises(
-        ValueError,
-        match=rf"{SOURCE_PATH}:1: duplicate JSON object key '{field}'",
-    ):
-        list(
-            iter_source_records(
-                source,
-                CanonicalIdentityPolicy(content_hash_policy="normalized-training-payload-v1"),
-                source_coordinate_path=SOURCE_PATH,
-            )
-        )
+    _reject_source_records(source, rf"{SOURCE_PATH}:1: duplicate JSON object key '{field}'")
 
 
 @pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
@@ -225,15 +225,7 @@ def test_streaming_source_reader_rejects_non_finite_json_constants(
         f'"text":{constant}}}\n',
         encoding="utf-8",
     )
-
-    with pytest.raises(ValueError, match=f"{SOURCE_PATH}:1: invalid JSON constant"):
-        list(
-            iter_source_records(
-                source,
-                CanonicalIdentityPolicy(content_hash_policy="normalized-training-payload-v1"),
-                source_coordinate_path=SOURCE_PATH,
-            )
-        )
+    _reject_source_records(source, f"{SOURCE_PATH}:1: invalid JSON constant")
 
 
 def test_streaming_source_reader_rejects_nested_duplicate_json_keys(tmp_path: Path) -> None:
@@ -243,15 +235,7 @@ def test_streaming_source_reader_rejects_nested_duplicate_json_keys(tmp_path: Pa
         '"metadata":{"license":"first","license":"second"}}\n',
         encoding="utf-8",
     )
-
-    with pytest.raises(ValueError, match="duplicate JSON object key 'license'"):
-        list(
-            iter_source_records(
-                source,
-                CanonicalIdentityPolicy(content_hash_policy="normalized-training-payload-v1"),
-                source_coordinate_path=SOURCE_PATH,
-            )
-        )
+    _reject_source_records(source, "duplicate JSON object key 'license'")
 
 
 def test_streaming_source_reader_rejects_an_empty_source(tmp_path: Path) -> None:
