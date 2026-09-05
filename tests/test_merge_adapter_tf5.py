@@ -48,7 +48,7 @@ def test_merge_adapter_fails_closed_before_load_without_provenance(tmp_path, mon
     adapter = tmp_path / "adapter"
     adapter.mkdir()
     (adapter / "adapter_config.json").write_text(
-        '{"base_model_name_or_path": "dummy/base", "revision": "d" * 40}'
+        '{"base_model_name_or_path": "dummy/base", "revision": "' + ("d" * 40) + '"}'
     )
     (adapter / "adapter_model.safetensors").write_bytes(b"weights")
     loaded: list[object] = []
