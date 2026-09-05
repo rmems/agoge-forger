@@ -76,3 +76,7 @@ datasets/samples/*.jsonl
 *.bin
 *.pt
 *.gguf
+
+
+#Ignore cursor AI rules
+.cursor/rules/codacy.mdc
