@@ -1,0 +1,57 @@
+docs/frozen_split_and_eval_contracts.md
+  s_4e15fe0682eeda::t_e6d9bb181bd878 35,46-69
+src/agoge_forger/train/qlora.py
+  s_4e15fe0682eeda::t_b55c1f21fa8983 6
+tests/test_trainer_trl_api.py
+  s_4e15fe0682eeda::t_3f670363245100 61
+datasets/samples/tiny_sft.jsonl
+  s_4f42358b857861::t_810dacd192b01f 6
+.gitignore
+  s_4e15fe0682eeda::t_11998487937a34 81,83
+  s_4f42358b857861::t_bae63c81e857db 84-88
+src/agoge_forger/cli.py
+  s_4e15fe0682eeda::t_7d17bb32914d9b 26-27,29-32
+  s_4e15fe0682eeda::t_5ca0ddf58892a2 212-264,266-268
+  s_4e15fe0682eeda::t_11c58021eb46c7 265
+  s_4e15fe0682eeda::t_802ca3684dbc12 28
+.devcontainer/devcontainer.json
+  s_4e15fe0682eeda::t_b99782a2e82164 2,6
+.github/workflows/config_contract_gate.yml
+  s_4f42358b857861::t_cbb97925db183c 14-18
+tests/test_split_materialization_regressions.py
+  s_4e15fe0682eeda::t_e793c04c59a38c 159,164
+Makefile
+  s_4f42358b857861::t_944a750b8ebb1d 4,9,12,14,16,19,22-23
+tests/test_split_contract.py
+  s_4e15fe0682eeda::t_f1c44c16055e8e 53,59-61
+.github/workflows/pr_quality_gate.yml
+  s_4f42358b857861::t_ca469f997dcfb6 29-30
+.devcontainer/Dockerfile
+  s_4e15fe0682eeda::t_85b6966344aa01 22
+.github/workflows/python_smoke_test.yml
+  s_4e15fe0682eeda::t_42adfadb460eb6 92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0594a8bf09ae36a15d46507a71a8cbb1a4f20e25",
+  "prompts": {},
+  "sessions": {
+    "s_4e15fe0682eeda": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "a5a22dc8-6d33-4e35-b7e5-f719ec956b52",
+        "model": "composer-2.5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    },
+    "s_4f42358b857861": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "eeae32cd-d44c-4ed8-bd64-1c718777040f",
+        "model": "cursor-grok-4.6-medium"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
