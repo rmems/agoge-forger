@@ -240,9 +240,11 @@ def test_cross_split_exact_content_leakage_fails_closed(tmp_path):
     train_content_sha = raw_manifest["splits"]["train"]["members"][0]["content_sha256"]
     raw_manifest["splits"]["held_out"]["sha256"] = sha256_bytes(held_payload)
     raw_manifest["splits"]["held_out"]["members"][0]["content_sha256"] = train_content_sha
-    raw_manifest["splits"]["held_out"]["members"][0]["materialized_line_sha256"] = sha256_bytes(
-        canonical_json_bytes(held_rows[0]) + b"\n"
+    leaked_line_sha256 = sha256_bytes(canonical_json_bytes(held_rows[0]) + b"\n")
+    raw_manifest["splits"]["held_out"]["members"][0]["materialized_line_sha256"] = (
+        leaked_line_sha256
     )
+    raw_manifest["splits"]["held_out"]["members"][0]["raw_line_sha256"] = leaked_line_sha256
     (output / "split_manifest.json").write_bytes(canonical_json_bytes(raw_manifest) + b"\n")
 
     with pytest.raises(ValueError, match="deterministic leakage audit failed"):
