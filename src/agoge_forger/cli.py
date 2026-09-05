@@ -2,6 +2,8 @@
 
 import json
 import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 import typer
@@ -18,7 +20,11 @@ from .logging import logger
 from .models.inspect import inspect_model as _inspect_model
 from .models.lora_targets import inspect_lora_targets as _inspect_lora_targets
 from .models.metadata import get_model_config_metadata
-from .path_safety import resolve_existing_path, resolve_output_directory
+from .path_safety import (
+    resolve_absent_output_directory,
+    resolve_existing_path,
+    resolve_output_directory,
+)
 from .providers.chat_completions import ChatCompletionsConfig
 from .serving.config import ServingConfig, load_serving_config
 from .serving.serve import serve_vllm as _serve_vllm
@@ -26,6 +32,7 @@ from .serving.smoke import run_vllm_smoke
 from .split_contract import (
     SPLIT_NAMES,
     CanonicalIdentityPolicy,
+    SplitManifest,
     SplitMaterializationSpec,
     SplitPolicy,
     materialize_split,
@@ -231,37 +238,44 @@ def freeze_split(
 ):
     """Materialize an immutable three-way SFT split from a pinned local source."""
     safe_source = resolve_existing_path(source, must_be_file=True)
-    safe_output = resolve_output_directory(output_dir)
-    spec = SplitMaterializationSpec(
-        source_repository=source_repository,
-        source_revision=source_revision,
-        dataset_version=dataset_version,
-        source_path=source_path,
+    safe_output = resolve_absent_output_directory(output_dir)
+    manifest = materialize_split(safe_source, safe_output, _freeze_split_spec(locals()))
+    _log_freeze_split(manifest, str(safe_output))
+
+
+def _freeze_split_spec(options: Mapping[str, Any]) -> SplitMaterializationSpec:
+    return SplitMaterializationSpec(
+        source_repository=str(options["source_repository"]),
+        source_revision=str(options["source_revision"]),
+        dataset_version=str(options["dataset_version"]),
+        source_path=str(options["source_path"]),
         split_policy=SplitPolicy(
-            seed=seed,
-            salt=salt,
+            seed=int(options["seed"]),
+            salt=str(options["salt"]),
             weights={
-                "train": train_weight,
-                "validation": validation_weight,
-                "held_out": held_out_weight,
+                "train": int(options["train_weight"]),
+                "validation": int(options["validation_weight"]),
+                "held_out": int(options["held_out_weight"]),
             },
         ),
         canonical_identity=CanonicalIdentityPolicy(
-            canonical_id_field=canonical_id_field,
-            lineage_id_field=lineage_id_field,
-            group_id_field=group_id_field,
+            canonical_id_field=str(options["canonical_id_field"]),
+            lineage_id_field=str(options["lineage_id_field"]),
+            group_id_field=str(options["group_id_field"]),
             content_hash_policy="normalized-training-payload-v1",
         ),
     )
-    manifest = materialize_split(safe_source, safe_output, spec)
+
+
+def _log_freeze_split(manifest: SplitManifest, output_dir: str) -> None:
     logger.info(
         "source: %s@%s:%s",
         manifest.source.repository,
         manifest.source.revision,
         manifest.source.path,
     )
-    logger.info("wrote %s/split_manifest.json", safe_output)
-    logger.info("wrote %s/split_report.md", safe_output)
+    logger.info("wrote %s/split_manifest.json", output_dir)
+    logger.info("wrote %s/split_report.md", output_dir)
     counts = ", ".join(f"{name}={manifest.splits[name].record_count}" for name in SPLIT_NAMES)
     logger.info("counts: %s", counts)
 
@@ -321,23 +335,30 @@ def _first_non_empty(value: str | None, *env_names: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class _SmokeEnvInputs:
+    base_url: str | None
+    model: str | None
+    api_key: str | None
+    prompt: str | None
+    system: str | None
+    stream: bool | None
+    config_path: str | None
+
+
 def _smoke_env_defaults(
-    base_url: str | None,
-    model: str | None,
-    api_key: str | None,
-    prompt: str | None,
-    system: str | None,
-    stream: bool | None,
-    config_path: str | None,
+    inputs: _SmokeEnvInputs,
 ) -> tuple[str | None, str | None, str | None, str | None, str | None, bool | None]:
     """Apply environment fallbacks and determine the effective streaming flag."""
     return (
-        _first_non_empty(base_url, "AGOGE_SMOKE_BASE_URL"),
-        _first_non_empty(model, "AGOGE_SMOKE_MODEL"),
-        _first_non_empty(api_key, "OPENAI_API_KEY", "VLLM_API_KEY"),
-        _first_non_empty(prompt, "AGOGE_SMOKE_PROMPT"),
-        _first_non_empty(system, "AGOGE_SMOKE_SYSTEM"),
-        stream if stream is not None else (False if config_path is None else None),
+        _first_non_empty(inputs.base_url, "AGOGE_SMOKE_BASE_URL"),
+        _first_non_empty(inputs.model, "AGOGE_SMOKE_MODEL"),
+        _first_non_empty(inputs.api_key, "OPENAI_API_KEY", "VLLM_API_KEY"),
+        _first_non_empty(inputs.prompt, "AGOGE_SMOKE_PROMPT"),
+        _first_non_empty(inputs.system, "AGOGE_SMOKE_SYSTEM"),
+        inputs.stream
+        if inputs.stream is not None
+        else (False if inputs.config_path is None else None),
     )
 
 
@@ -390,7 +411,15 @@ def smoke_vllm(
 ):
     """Run a vLLM/OpenAI-compatible chat-completion smoke test."""
     base_url, model, api_key, prompt, system, stream = _smoke_env_defaults(
-        base_url, model, api_key, prompt, system, stream, config
+        _SmokeEnvInputs(
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            prompt=prompt,
+            system=system,
+            stream=stream,
+            config_path=config,
+        )
     )
 
     overrides: dict[str, Any] = {

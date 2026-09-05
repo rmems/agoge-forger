@@ -1,4 +1,6 @@
 import os
+from dataclasses import dataclass
+from typing import Any
 
 import torch
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -95,7 +97,17 @@ def _prepare_peft_model(config, model):
     return model
 
 
-def _finalize_training_run(config, trainer, out_dir, gpu_report, producer_provenance=None):
+@dataclass(frozen=True)
+class _TrainingFinalization:
+    trainer: Any
+    out_dir: str
+    gpu_report: Any
+    producer_provenance: Any = None
+
+
+def _finalize_training_run(config, finalization: _TrainingFinalization):
+    trainer = finalization.trainer
+    out_dir = finalization.out_dir
     logger.info(f"Saving adapter to {out_dir}")
     trainer.model.save_pretrained(out_dir, safe_serialization=config.runtime.save_safetensors)
     # `Trainer.tokenizer` was removed in Transformers 5; the tokenizer now
@@ -106,7 +118,7 @@ def _finalize_training_run(config, trainer, out_dir, gpu_report, producer_proven
     if not config.runtime.allow_unsafe_serialization:
         assert_no_unsafe_weight_bins(out_dir)
 
-    index_path = write_artifact_index(out_dir, producer_provenance=producer_provenance)
+    index_path = write_artifact_index(out_dir, producer_provenance=finalization.producer_provenance)
     logger.info(f"Artifact index written to {index_path}")
 
     vram_used = torch.cuda.max_memory_allocated() / BYTES_PER_GB
@@ -114,7 +126,7 @@ def _finalize_training_run(config, trainer, out_dir, gpu_report, producer_proven
 
     metrics = {
         "max_vram_gb": vram_used,
-        "gpu_report": gpu_report,
+        "gpu_report": finalization.gpu_report,
         "artifact_index": index_path,
     }
     write_run_manifest(
@@ -166,5 +178,11 @@ def run_training(config, producer_provenance=None):
     logger.info("Starting training...")
     trainer.train(resume_from_checkpoint=resume_checkpoint)
     _finalize_training_run(
-        config, trainer, out_dir, gpu_report, producer_provenance=producer_provenance
+        config,
+        _TrainingFinalization(
+            trainer=trainer,
+            out_dir=out_dir,
+            gpu_report=gpu_report,
+            producer_provenance=producer_provenance,
+        ),
     )

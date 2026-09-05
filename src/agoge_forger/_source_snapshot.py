@@ -18,25 +18,47 @@ class _FileIdentity:
 
 
 def copy_source_snapshot(source: Path, snapshot: Path) -> str:
-    digest = hashlib.sha256()
     try:
-        with source.open("rb") as source_handle, snapshot.open("xb") as snapshot_handle:
-            identity_before = _file_identity(os.fstat(source_handle.fileno()))
-            for chunk in iter(lambda: source_handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-                snapshot_handle.write(chunk)
-            identity_after = _file_identity(os.fstat(source_handle.fileno()))
-            path_identity_after = _file_identity(source.stat())
+        copied, identity_before, identity_after, path_identity_after = _copy_source_bytes(
+            source, snapshot
+        )
     except OSError as exc:
         raise ValueError(f"source changed while creating immutable snapshot: {source}") from exc
-    copied = digest.hexdigest()
+    _require_unchanged_source(source, copied, identity_before, identity_after, path_identity_after)
+    return copied
+
+
+def _copy_source_bytes(
+    source: Path, snapshot: Path
+) -> tuple[str, _FileIdentity, _FileIdentity, _FileIdentity]:
+    digest = hashlib.sha256()
+    with source.open("rb") as source_handle, snapshot.open("xb") as snapshot_handle:
+        identity_before = _file_identity(os.fstat(source_handle.fileno()))
+        _copy_file_chunks(source_handle, snapshot_handle, digest)
+        identity_after = _file_identity(os.fstat(source_handle.fileno()))
+        path_identity_after = _file_identity(source.stat())
+    return digest.hexdigest(), identity_before, identity_after, path_identity_after
+
+
+def _copy_file_chunks(source_handle, snapshot_handle, digest) -> None:
+    for chunk in iter(lambda: source_handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+        snapshot_handle.write(chunk)
+
+
+def _require_unchanged_source(
+    source: Path,
+    copied: str,
+    identity_before: _FileIdentity,
+    identity_after: _FileIdentity,
+    path_identity_after: _FileIdentity,
+) -> None:
     if identity_before != identity_after or identity_after != path_identity_after:
         raise ValueError(f"source changed while creating immutable snapshot: {source}")
     # Overlay filesystems can rewrite bytes without changing size/mtime/ctime.
     # Re-hash the live path so content races are not metadata-only.
     if _sha256_path(source) != copied:
         raise ValueError(f"source changed while creating immutable snapshot: {source}")
-    return copied
 
 
 def nearest_existing_output_ancestor(destination: Path) -> Path:
