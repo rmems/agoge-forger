@@ -31,6 +31,7 @@ def publish_bytes_noreplace(
             rename_noreplace(staged, destination)
         except FileExistsError as exc:
             raise FileExistsError(f"{refusal}: {destination}") from exc
+        _fsync_directory(destination.parent)
 
 
 def write_fsynced_bytes(path: Path, payload: bytes) -> None:
@@ -38,3 +39,11 @@ def write_fsynced_bytes(path: Path, payload: bytes) -> None:
         handle.write(payload)
         handle.flush()
         os.fsync(handle.fileno())
+
+
+def _fsync_directory(directory: Path) -> None:
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
