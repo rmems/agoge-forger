@@ -31,6 +31,7 @@ from .split_schema import (
     SplitArtifact,
     SplitManifest,
     SplitMaterializationSpec,
+    SplitMember,
     SplitName,
 )
 
@@ -82,6 +83,7 @@ def _validate_split_manifest(
         manifest=manifest,
         audit_builder=LeakageAuditBuilder(),
         representation_tracker=TrainingRepresentationTracker(),
+        source_authenticated=source_path is not None,
     )
     for split, artifact in manifest.splits.items():
         _validate_artifact(context, split, artifact)
@@ -163,6 +165,7 @@ class _ArtifactValidationContext:
     manifest: SplitManifest
     audit_builder: LeakageAuditBuilder
     representation_tracker: TrainingRepresentationTracker
+    source_authenticated: bool
 
 
 def _validate_artifact(
@@ -183,19 +186,47 @@ def _validate_artifact(
             if count > artifact.record_count:
                 continue
             expected = artifact.members[count - 1]
-            actual = record.member.model_copy(
-                update={
-                    "source_coordinate": expected.source_coordinate,
-                    "raw_line_sha256": expected.raw_line_sha256,
-                }
-            )
-            if actual != expected:
+            actual = record.member
+            if not _artifact_member_matches(actual, expected, context):
                 membership_mismatch = True
             else:
-                context.audit_builder.observe(split, actual)
+                context.audit_builder.observe(split, expected)
     _require_equal(count, artifact.record_count, f"{split} record count mismatch")
     if membership_mismatch:
         raise ValueError(f"{split} membership metadata does not match materialized records")
+
+
+def _artifact_member_matches(
+    actual: SplitMember,
+    expected: SplitMember,
+    context: _ArtifactValidationContext,
+) -> bool:
+    """Compare artifact-derived fields without copying expected provenance onto actual."""
+
+    if (
+        actual.canonical_id != expected.canonical_id
+        or actual.lineage_id != expected.lineage_id
+        or actual.group_id != expected.group_id
+        or actual.content_sha256 != expected.content_sha256
+        or actual.materialized_line_sha256 != expected.materialized_line_sha256
+    ):
+        return False
+    if not _recorded_source_coordinate_matches(expected.source_coordinate, context.manifest):
+        return False
+    if context.source_authenticated:
+        return True
+    return expected.raw_line_sha256 == actual.raw_line_sha256
+
+
+def _recorded_source_coordinate_matches(coordinate: str, manifest: SplitManifest) -> bool:
+    prefix = f"{manifest.source.path}:"
+    if not coordinate.startswith(prefix):
+        return False
+    suffix = coordinate.removeprefix(prefix)
+    if not suffix.isdigit() or suffix.startswith("0"):
+        return False
+    line = int(suffix)
+    return 1 <= line <= manifest.source.record_count
 
 
 @contextmanager

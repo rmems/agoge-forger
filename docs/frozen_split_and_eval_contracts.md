@@ -111,8 +111,10 @@ path for source coordinates), every materialized split digest and count, and all
 cross-split leakage invariants. Omitting `source_path` still verifies the frozen
 materialized artifacts and their recorded membership.
 
-Training code can call `load_frozen_dataset(manifest, "train", tokenizer)`.
-Evaluation plumbing can call `iter_frozen_records(manifest, "held_out")`.
+Training code can call
+`load_frozen_dataset(manifest_path, "train", tokenizer)`, where `manifest_path`
+is `/path/to/new-snapshot/split_manifest.json`. Evaluation plumbing can call
+`iter_frozen_records(manifest_path, "held_out")`.
 Both loaders verify and read recorded membership; neither computes a new split.
 The dataset loader includes the exact manifest and selected-split digests in
 the Hugging Face generator cache identity, so replacing files at the same path

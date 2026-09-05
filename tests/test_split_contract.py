@@ -173,6 +173,27 @@ def test_source_and_materialized_mutations_are_detected(tmp_path):
         validate_split_manifest(manifest_path)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_coordinate", "evil/source.jsonl:1"),
+        ("raw_line_sha256", "ab" * 32),
+    ],
+)
+def test_artifact_validation_rejects_tampered_member_provenance(tmp_path, field, value):
+    source = tmp_path / "curated.jsonl"
+    output = tmp_path / "frozen"
+    _write_source(source)
+    _materialize(source, output)
+    manifest_path = output / "split_manifest.json"
+    raw_manifest = json.loads(manifest_path.read_text())
+    raw_manifest["splits"]["train"]["members"][0][field] = value
+    manifest_path.write_bytes(canonical_json_bytes(raw_manifest) + b"\n")
+
+    with pytest.raises(ValueError, match="membership metadata"):
+        validate_split_manifest(manifest_path)
+
+
 def test_source_validation_recomputes_pinned_split_ownership(tmp_path):
     source = tmp_path / "curated.jsonl"
     output = tmp_path / "frozen"
