@@ -35,6 +35,9 @@ def _report_header(manifest: SplitManifest) -> list[str]:
 
 
 def _report_footer(manifest: SplitManifest) -> list[str]:
+    exclusion_lines = [f"- {item}" for item in manifest.exclusions] or [
+        "- None. Every valid source record is materialized exactly once."
+    ]
     return [
         "",
         "## Leakage guarantees",
@@ -43,7 +46,7 @@ def _report_footer(manifest: SplitManifest) -> list[str]:
         "",
         "## Exclusions",
         "",
-        "- None. Every valid source record is materialized exactly once.",
+        *exclusion_lines,
         "",
         "## Limitations",
         "",
