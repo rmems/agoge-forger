@@ -4,9 +4,11 @@ import json
 
 import pytest
 
+from agoge_forger.eval import ArtifactProducerProvenance
 from agoge_forger.eval.smoke_eval import run_smoke_eval
 from agoge_forger.export.merge_adapter import export_final_model, merge_adapter
 from agoge_forger.train.checkpoints import infer_base_revision_from_adapter
+from tests.evaluation_contract_cases import model_provenance
 
 PINNED_REVISION = "d3040b7c81a0a810fa13c6f392f3e304a0e121d5"
 BASE_MODEL = "HuggingFaceM4/tiny-random-LlamaForCausalLM"
@@ -76,7 +78,12 @@ def test_merge_adapter_forwards_adapter_revision_to_load_base_model(monkeypatch,
     monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", fake_load_base_model)
 
     with pytest.raises(RuntimeError, match="stop-before-merge"):
-        merge_adapter(BASE_MODEL, str(adapter), str(tmp_path / "merged"))
+        merge_adapter(
+            BASE_MODEL,
+            str(adapter),
+            str(tmp_path / "merged"),
+            producer_provenance=ArtifactProducerProvenance.model_validate(model_provenance()),
+        )
 
     assert captured["revision"] == PINNED_REVISION
 
@@ -92,7 +99,11 @@ def test_export_final_model_forwards_adapter_revision_to_load_base_model(monkeyp
     monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", fake_load_base_model)
 
     with pytest.raises(RuntimeError, match="stop-before-export"):
-        export_final_model(out_dir=str(tmp_path / "merged"), adapter_path=str(adapter))
+        export_final_model(
+            out_dir=str(tmp_path / "merged"),
+            adapter_path=str(adapter),
+            producer_provenance=ArtifactProducerProvenance.model_validate(model_provenance()),
+        )
 
     assert captured["revision"] == PINNED_REVISION
 
@@ -113,6 +124,7 @@ def test_export_final_model_skips_adapter_revision_when_base_is_overridden(monke
             out_dir=str(tmp_path / "merged"),
             adapter_path=str(adapter),
             base_model_id="replacement/model",
+            producer_provenance=ArtifactProducerProvenance.model_validate(model_provenance()),
         )
 
     assert captured["model_id"] == "replacement/model"

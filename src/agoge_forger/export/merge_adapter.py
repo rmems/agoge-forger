@@ -66,6 +66,8 @@ def merge_adapter(
     if revision is None and infer_revision:
         revision = infer_base_revision_from_adapter(adapter_path)
 
+    provenance = require_producer_provenance(producer_provenance, adapter_path)
+
     model, tokenizer = load_base_model(
         base_model_id,
         trust_remote_code=trust_remote_code,
@@ -96,7 +98,7 @@ def merge_adapter(
 
     index_path = write_artifact_index(
         str(safe_out_dir),
-        producer_provenance=require_producer_provenance(producer_provenance, adapter_path),
+        producer_provenance=provenance,
     )
     logger.info(f"Artifact index written to {index_path}")
 

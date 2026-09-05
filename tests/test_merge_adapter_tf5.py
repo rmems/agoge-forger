@@ -42,3 +42,30 @@ def test_merge_adapter_rejects_save_safetensors_false():
             "/nonexistent/out",
             save_safetensors=False,
         )
+
+
+def test_merge_adapter_fails_closed_before_load_without_provenance(tmp_path, monkeypatch):
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    (adapter / "adapter_config.json").write_text(
+        '{"base_model_name_or_path": "dummy/base", "revision": "d" * 40}'
+    )
+    (adapter / "adapter_model.safetensors").write_bytes(b"weights")
+    loaded: list[object] = []
+
+    def fake_load_base_model(*args, **kwargs):
+        loaded.append(True)
+        raise RuntimeError("should-not-load")
+
+    monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", fake_load_base_model)
+
+    with pytest.raises(ValueError, match="cannot construct producer_provenance"):
+        merge_adapter(
+            "dummy/base",
+            str(adapter),
+            str(tmp_path / "merged"),
+            allow_unsafe=True,
+        )
+
+    assert loaded == []
+    assert not (tmp_path / "merged").exists()
