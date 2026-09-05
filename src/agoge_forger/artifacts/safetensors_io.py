@@ -5,7 +5,7 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
-from ..eval._artifact_schema import ArtifactProducerProvenance
+from ..eval import ArtifactProducerProvenance
 from ..logging import logger
 
 try:
