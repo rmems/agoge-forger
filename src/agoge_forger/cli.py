@@ -23,17 +23,18 @@ from .providers.chat_completions import ChatCompletionsConfig
 from .serving.config import ServingConfig, load_serving_config
 from .serving.serve import serve_vllm as _serve_vllm
 from .serving.smoke import run_vllm_smoke
+from .split_contract import (
+    SPLIT_NAMES,
+    CanonicalIdentityPolicy,
+    SplitMaterializationSpec,
+    SplitPolicy,
+    materialize_split,
+)
 from .train.checkpoints import infer_base_model_from_adapter, is_adapter_artifact
 from .train.lora import train_lora as _train_lora
 from .train.qlora import train_qlora as _train_qlora
 
 app = typer.Typer(help="Agoge Forger CLI")
-
-
-@app.command()
-def check_env():
-    """Run the supported PyTorch environment check."""
-    check_torch_env()
 
 
 @app.command()
@@ -206,6 +207,63 @@ def dataset_stats(
     """Get dataset token statistics."""
     safe_path = str(resolve_existing_path(path, must_be_file=True))
     _dataset_stats(safe_path, model_id, trust_remote_code=trust_remote_code)
+
+
+@app.command("freeze-split")
+def freeze_split(
+    source: str = typer.Option(..., help="Versioned curated source JSONL"),
+    source_path: str = typer.Option(
+        ...,
+        help="Canonical repository-relative path of the source at --source-revision",
+    ),
+    output_dir: str = typer.Option(..., help="New immutable snapshot directory"),
+    source_repository: str = typer.Option(...),
+    source_revision: str = typer.Option(...),
+    dataset_version: str = typer.Option(...),
+    seed: int = typer.Option(...),
+    salt: str = typer.Option(...),
+    train_weight: int = typer.Option(80),
+    validation_weight: int = typer.Option(10),
+    held_out_weight: int = typer.Option(10),
+    canonical_id_field: str = typer.Option("canonical_id"),
+    lineage_id_field: str = typer.Option("lineage_id"),
+    group_id_field: str = typer.Option("group_id"),
+):
+    """Materialize an immutable three-way SFT split from a pinned local source."""
+    safe_source = resolve_existing_path(source, must_be_file=True)
+    safe_output = resolve_output_directory(output_dir)
+    spec = SplitMaterializationSpec(
+        source_repository=source_repository,
+        source_revision=source_revision,
+        dataset_version=dataset_version,
+        source_path=source_path,
+        split_policy=SplitPolicy(
+            seed=seed,
+            salt=salt,
+            weights={
+                "train": train_weight,
+                "validation": validation_weight,
+                "held_out": held_out_weight,
+            },
+        ),
+        canonical_identity=CanonicalIdentityPolicy(
+            canonical_id_field=canonical_id_field,
+            lineage_id_field=lineage_id_field,
+            group_id_field=group_id_field,
+            content_hash_policy="normalized-training-payload-v1",
+        ),
+    )
+    manifest = materialize_split(safe_source, safe_output, spec)
+    logger.info(
+        "source: %s@%s:%s",
+        manifest.source.repository,
+        manifest.source.revision,
+        manifest.source.path,
+    )
+    logger.info("wrote %s/split_manifest.json", safe_output)
+    logger.info("wrote %s/split_report.md", safe_output)
+    counts = ", ".join(f"{name}={manifest.splits[name].record_count}" for name in SPLIT_NAMES)
+    logger.info("counts: %s", counts)
 
 
 def _merge_serving_config(config_path: str | None, overrides: dict[str, Any]) -> ServingConfig:

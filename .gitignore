@@ -78,5 +78,11 @@ datasets/samples/*.jsonl
 *.gguf
 
 
-#Ignore cursor AI rules
+# Ignore cursor AI rules
 .cursor/rules/codacy.mdc
+.cursor/rules/aikido_rules.mdc
+
+# Generated local analyzer / agent dumps (do not restage)
+.codacy/
+.claude/
+.kilo/

@@ -58,7 +58,7 @@ def config():
     cfg.training.save_total_limit = 4
     cfg.training.max_seq_length = 321
     cfg.training.gradient_checkpointing = True
-    # CI runners are CPU-only, matching configs/smoke_test.yaml.
+    # CI runners are CPU-only; disable bf16 even when configs/minicpm5_canary.yaml enables it.
     cfg.training.bf16 = False
     return cfg
 

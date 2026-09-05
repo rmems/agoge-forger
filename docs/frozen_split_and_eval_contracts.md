@@ -32,7 +32,7 @@ independent of the eventual model, tokenizer, and serializer.
 From an installed checkout:
 
 ```bash
-uv run python scripts/freeze_split.py \
+uv run agoge freeze-split \
   --source /path/to/curated.jsonl \
   --source-path datasets/curated/sft.jsonl \
   --output-dir /path/to/new-snapshot \
@@ -41,6 +41,32 @@ uv run python scripts/freeze_split.py \
   --dataset-version <version> \
   --seed 20260830 \
   --salt <versioned-policy-salt>
+```
+
+Or call the library directly:
+
+```python
+from agoge_forger.split_contract import (
+    SplitMaterializationSpec,
+    SplitPolicy,
+    materialize_split,
+)
+
+manifest = materialize_split(
+    "/path/to/curated.jsonl",
+    "/path/to/new-snapshot",
+    SplitMaterializationSpec(
+        source_repository="rmems/synthetic-factory",
+        source_revision="<immutable-commit>",
+        dataset_version="<version>",
+        source_path="datasets/curated/sft.jsonl",
+        split_policy=SplitPolicy(
+            seed=20260830,
+            salt="<versioned-policy-salt>",
+            weights={"train": 80, "validation": 10, "held_out": 10},
+        ),
+    ),
+)
 ```
 
 The output directory must not exist. Agoge refuses to overwrite or silently

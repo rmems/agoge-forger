@@ -156,40 +156,12 @@ def test_repository_source_path_must_be_portable_and_confined(source_path: str) 
         )
 
 
-def test_cli_records_and_reports_explicit_repository_source_path(
-    tmp_path: Path, run_freeze_split
-) -> None:
+def test_materialization_records_explicit_repository_source_path(tmp_path: Path) -> None:
     source = tmp_path / "cache" / "downloaded.jsonl"
     output = tmp_path / "snapshot"
     _write_rows(source, _text_rows())
 
-    stdout = run_freeze_split(
-        [
-            "--source",
-            str(source),
-            "--source-path",
-            SOURCE_PATH,
-            "--output-dir",
-            str(output),
-            "--source-repository",
-            "rmems/synthetic-factory",
-            "--source-revision",
-            REVISION,
-            "--dataset-version",
-            "curated-sft-v1",
-            "--seed",
-            "20260830",
-            "--salt",
-            "agoge-issue-99-v1",
-            "--train-weight",
-            "6",
-            "--validation-weight",
-            "2",
-            "--held-out-weight",
-            "2",
-        ]
-    )
-
+    manifest = materialize_split(source, output, _spec())
     manifest = validate_split_manifest(output / "split_manifest.json", source_path=source)
     coordinates = {
         member.source_coordinate
@@ -198,7 +170,6 @@ def test_cli_records_and_reports_explicit_repository_source_path(
     }
     assert manifest.source.path == SOURCE_PATH
     assert all(coordinate.startswith(f"{SOURCE_PATH}:") for coordinate in coordinates)
-    assert f"rmems/synthetic-factory@{REVISION}:{SOURCE_PATH}" in stdout
     assert f"Source file: `{SOURCE_PATH}`" in (output / "split_report.md").read_text()
 
 

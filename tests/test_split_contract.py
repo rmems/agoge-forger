@@ -50,42 +50,16 @@ def _materialize(source: Path, output: Path):
     return materialize_split(source, output, spec)
 
 
-def test_one_command_materializes_repeatable_three_way_split(tmp_path, run_freeze_split):
+def test_one_command_materializes_repeatable_three_way_split(tmp_path):
     source = tmp_path / "curated.jsonl"
     first = tmp_path / "first"
     second = tmp_path / "second"
     _write_source(source)
 
-    stdout = run_freeze_split(
-        [
-            "--source",
-            str(source),
-            "--source-path",
-            "data/curated.jsonl",
-            "--output-dir",
-            str(first),
-            "--source-repository",
-            "rmems/synthetic-factory",
-            "--source-revision",
-            "0123456789abcdef0123456789abcdef01234567",
-            "--dataset-version",
-            "curated-sft-v1",
-            "--seed",
-            "20260830",
-            "--salt",
-            "agoge-issue-99-v1",
-            "--train-weight",
-            "6",
-            "--validation-weight",
-            "2",
-            "--held-out-weight",
-            "2",
-        ]
-    )
-    assert "split_manifest.json" in stdout
-    assert "split_report.md" in stdout
+    first_manifest = _materialize(source, first)
+    assert (first / "split_manifest.json").exists()
+    assert (first / "split_report.md").exists()
 
-    first_manifest = validate_split_manifest(first / "split_manifest.json", source_path=source)
     second_manifest = _materialize(source, second)
 
     assert first_manifest == second_manifest

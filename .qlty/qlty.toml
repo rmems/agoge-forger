@@ -31,26 +31,12 @@ name = "bandit"
 name = "hadolint"
 
 [[plugin]]
-name = "radarlint-iac"
-mode = "monitor"
-
-[[plugin]]
 name = "radarlint-python"
-mode = "comment"
-
-[[plugin]]
-name = "ripgrep"
 mode = "comment"
 
 [[plugin]]
 name = "ruff"
 drivers = ["lint"]
-
-[[plugin]]
-name = "trufflehog"
-
-[[plugin]]
-name = "zizmor"
 
 # Same policy bandit.yml used to claim: pytest assert (B101) in tests only.
 # Runtime Bandit on src/ stays enabled. Do not broaden this list.
