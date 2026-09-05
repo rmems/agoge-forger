@@ -141,6 +141,37 @@ def test_evaluation_contract_refuses_overwrite(tmp_path):
         build_contract(tmp_path, manifest_path, base, sft)
 
 
+def test_decoding_contract_rejects_do_sample_with_zero_temperature():
+    with pytest.raises(ValidationError, match="temperature > 0"):
+        DecodingContract(
+            do_sample=True,
+            seed=1,
+            max_new_tokens=8,
+            temperature=0,
+            top_p=1,
+        )
+
+
+def test_decoding_contract_allows_greedy_zero_temperature():
+    DecodingContract(
+        do_sample=False,
+        seed=1,
+        max_new_tokens=8,
+        temperature=0,
+        top_p=1,
+    )
+
+
+def test_decoding_contract_allows_sampled_positive_temperature():
+    DecodingContract(
+        do_sample=True,
+        seed=1,
+        max_new_tokens=8,
+        temperature=0.7,
+        top_p=0.9,
+    )
+
+
 def test_evaluation_contract_rejects_non_finite_temperature_without_creating_file(tmp_path):
     manifest_path, _, base, sft = evaluation_case(tmp_path)
     invalid_decoding = base.decoding.model_copy(update={"temperature": float("inf")})

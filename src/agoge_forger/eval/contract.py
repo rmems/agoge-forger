@@ -60,6 +60,12 @@ class DecodingContract(FrozenEvaluationModel):
     temperature: float = Field(ge=0, allow_inf_nan=False)
     top_p: float = Field(gt=0, le=1)
 
+    @model_validator(mode="after")
+    def reject_sampled_zero_temperature(self) -> DecodingContract:
+        if self.do_sample and self.temperature == 0:
+            raise ValueError("do_sample=True requires temperature > 0")
+        return self
+
 
 class EvaluationArm(FrozenEvaluationModel):
     role: Literal["causal_base", "causal_sft"]
