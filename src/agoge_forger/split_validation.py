@@ -214,11 +214,17 @@ def _artifact_member_matches(
 
 def _identity_fields_match(actual: SplitMember, expected: SplitMember) -> bool:
     return (
-        actual.canonical_id == expected.canonical_id
-        and actual.lineage_id == expected.lineage_id
-        and actual.group_id == expected.group_id
-        and actual.content_sha256 == expected.content_sha256
-        and actual.materialized_line_sha256 == expected.materialized_line_sha256
+        actual.canonical_id,
+        actual.lineage_id,
+        actual.group_id,
+        actual.content_sha256,
+        actual.materialized_line_sha256,
+    ) == (
+        expected.canonical_id,
+        expected.lineage_id,
+        expected.group_id,
+        expected.content_sha256,
+        expected.materialized_line_sha256,
     )
 
 
