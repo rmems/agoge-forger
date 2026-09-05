@@ -288,3 +288,21 @@ def test_evaluation_contract_rejects_duplicate_json_keys(tmp_path):
 
     with pytest.raises(ValueError, match="invalid evaluation contract JSON"):
         validate_evaluation_contract(contract_path)
+
+
+def test_saves_embedding_layers_converts_invalid_regex_to_value_error():
+    from types import SimpleNamespace
+
+    from agoge_forger.eval._adapter_schema import saves_embedding_layers
+
+    with pytest.raises(ValueError, match="invalid target_modules regex"):
+        saves_embedding_layers(SimpleNamespace(trainable_token_indices=None, target_modules="["))
+
+
+def test_shard_metadata_and_paths_reject_malformed_input_with_value_error():
+    from agoge_forger.eval import _artifact_validation as artifact_validation
+
+    with pytest.raises(ValueError, match="metadata object"):
+        artifact_validation._require_shard_metadata({})
+    with pytest.raises(ValueError, match="shard paths must be strings"):
+        artifact_validation._require_model_shard_path(1)

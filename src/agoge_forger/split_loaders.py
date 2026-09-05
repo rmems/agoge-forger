@@ -40,18 +40,21 @@ class _FrozenDatasetRequest:
 def iter_materialized_records(
     path: Path, manifest: SplitManifest, split: SplitName
 ) -> Iterator[dict[str, Any]]:
-    with verified_split_snapshot(path, split, manifest.splits[split]) as artifact_path:
-        yield from _iter_snapshot_records(artifact_path, split)
+    artifact = manifest.splits[split]
+    with verified_split_snapshot(path, split, artifact) as snapshot_path:
+        yield from _iter_snapshot_records(snapshot_path, split, artifact.path)
 
 
-def _iter_snapshot_records(artifact_path: Path, split: SplitName) -> Iterator[dict[str, Any]]:
-    with artifact_path.open("rb") as handle:
+def _iter_snapshot_records(
+    snapshot_path: Path, split: SplitName, declared_path: str
+) -> Iterator[dict[str, Any]]:
+    with snapshot_path.open("rb") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
             if not raw_line.strip():
                 continue
             yield decode_json_object(
                 raw_line,
-                f"{artifact_path.name}:{line_number}",
+                f"{declared_path}:{line_number}",
                 object_label=f"materialized {split} row",
             )
 

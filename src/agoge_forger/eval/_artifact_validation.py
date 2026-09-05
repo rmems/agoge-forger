@@ -352,7 +352,7 @@ def _is_json_object(value: object) -> TypeGuard[dict[str, object]]:
 
 def _require_shard_metadata(shard_index: dict[str, object]) -> None:
     if not isinstance(shard_index.get("metadata"), dict):
-        raise TypeError("merged-model shard index requires a metadata object")
+        raise ValueError("merged-model shard index requires a metadata object")  # noqa: TRY004
 
 
 def _model_tensor_shard(tensor_name: str, value: object) -> PurePosixPath:
@@ -363,7 +363,7 @@ def _model_tensor_shard(tensor_name: str, value: object) -> PurePosixPath:
 
 def _require_model_shard_path(value: object) -> PurePosixPath:
     if not isinstance(value, str):
-        raise TypeError("merged-model weight_map shard paths must be strings")
+        raise ValueError("merged-model weight_map shard paths must be strings")  # noqa: TRY004
     path = _portable_artifact_path(value)
     if value != path.as_posix():
         raise ValueError("merged-model weight_map shard paths must be canonical")
@@ -475,7 +475,7 @@ def _load_verified_json(
     except ValueError as exc:
         raise ValueError(f"invalid {label}: {path}") from exc
     if not isinstance(value, dict):
-        raise TypeError(f"invalid {label}: expected a JSON object")
+        raise ValueError(f"invalid {label}: expected a JSON object")  # noqa: TRY004
     return value
 
 

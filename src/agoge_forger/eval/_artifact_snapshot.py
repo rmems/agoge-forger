@@ -74,7 +74,7 @@ def _read_verified_index(root: Path, index_relative: PurePosixPath, expected_dig
         os.close(root_descriptor)
     if digest != expected_digest:
         raise ValueError(
-            f"SFT artifact-index SHA-256 mismatch: expected {expected_digest}, found {digest}"
+            f"artifact-index SHA-256 mismatch: expected {expected_digest}, found {digest}"
         )
     return payload
 
@@ -99,7 +99,7 @@ def _copy_snapshot(
     try:
         _, index_digest = read_relative_file(root_descriptor, plan.index_relative)
         if index_digest != plan.expected_index_digest:
-            raise ValueError("SFT artifact index changed while creating bundle snapshot")
+            raise ValueError("artifact index changed while creating bundle snapshot")
         return {
             portable: (
                 entry,

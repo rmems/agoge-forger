@@ -822,3 +822,11 @@ def test_artifact_replacement_during_snapshot_validation_fails_closed(tmp_path, 
         validate_split_manifest(manifest_path)
 
     assert replaced
+
+
+def test_snapshot_row_coordinates_use_declared_artifact_path(tmp_path):
+    snapshot = tmp_path / "agoge-train-snapshot-xyz.jsonl"
+    snapshot.write_text("{bad json\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"train\.jsonl:1: invalid JSON"):
+        list(split_loaders._iter_snapshot_records(snapshot, "train", "train.jsonl"))

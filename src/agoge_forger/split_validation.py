@@ -203,19 +203,23 @@ def _artifact_member_matches(
 ) -> bool:
     """Compare artifact-derived fields without copying expected provenance onto actual."""
 
-    if (
-        actual.canonical_id != expected.canonical_id
-        or actual.lineage_id != expected.lineage_id
-        or actual.group_id != expected.group_id
-        or actual.content_sha256 != expected.content_sha256
-        or actual.materialized_line_sha256 != expected.materialized_line_sha256
-    ):
+    if not _identity_fields_match(actual, expected):
         return False
     if not _recorded_source_coordinate_matches(expected.source_coordinate, context.manifest):
         return False
     if context.source_authenticated:
         return True
     return expected.raw_line_sha256 == actual.raw_line_sha256
+
+
+def _identity_fields_match(actual: SplitMember, expected: SplitMember) -> bool:
+    return (
+        actual.canonical_id == expected.canonical_id
+        and actual.lineage_id == expected.lineage_id
+        and actual.group_id == expected.group_id
+        and actual.content_sha256 == expected.content_sha256
+        and actual.materialized_line_sha256 == expected.materialized_line_sha256
+    )
 
 
 def _recorded_source_coordinate_matches(coordinate: str, manifest: SplitManifest) -> bool:

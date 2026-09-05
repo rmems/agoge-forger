@@ -34,11 +34,21 @@ def _decode_utf8(raw: bytes, coordinate: str) -> str:
 
 def _load_unique_json(decoded: str, coordinate: str) -> Any:
     try:
-        return json.loads(decoded, object_pairs_hook=_unique_json_object)
+        return json.loads(
+            decoded,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_non_json_constant,
+        )
     except json.JSONDecodeError as exc:
         raise ValueError(f"{coordinate}: invalid JSON: {exc}") from exc
     except DuplicateJsonKey as exc:
         raise ValueError(f"{coordinate}: duplicate JSON object key '{exc.key}'") from exc
+    except ValueError as exc:
+        raise ValueError(f"{coordinate}: {exc}") from exc
+
+
+def _reject_non_json_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant: {value}")
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

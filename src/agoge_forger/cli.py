@@ -2,7 +2,6 @@
 
 import json
 import os
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -228,6 +227,22 @@ def dataset_stats(
     _dataset_stats(safe_path, model_id, trust_remote_code=trust_remote_code)
 
 
+@dataclass(frozen=True)
+class _FreezeSplitOptions:
+    source_repository: str
+    source_revision: str
+    dataset_version: str
+    source_path: str
+    seed: int
+    salt: str
+    train_weight: int
+    validation_weight: int
+    held_out_weight: int
+    canonical_id_field: str
+    lineage_id_field: str
+    group_id_field: str
+
+
 @app.command("freeze-split")
 def freeze_split(
     source: str = typer.Option(..., help="Versioned curated source JSONL"),
@@ -251,29 +266,45 @@ def freeze_split(
     """Materialize an immutable three-way SFT split from a pinned local source."""
     safe_source = resolve_existing_path(source, must_be_file=True)
     safe_output = resolve_absent_output_directory(output_dir)
-    manifest = materialize_split(safe_source, safe_output, _freeze_split_spec(locals()))
+    spec = _freeze_split_spec(
+        _FreezeSplitOptions(
+            source_repository=source_repository,
+            source_revision=source_revision,
+            dataset_version=dataset_version,
+            source_path=source_path,
+            seed=seed,
+            salt=salt,
+            train_weight=train_weight,
+            validation_weight=validation_weight,
+            held_out_weight=held_out_weight,
+            canonical_id_field=canonical_id_field,
+            lineage_id_field=lineage_id_field,
+            group_id_field=group_id_field,
+        )
+    )
+    manifest = materialize_split(safe_source, safe_output, spec)
     _log_freeze_split(manifest, str(safe_output))
 
 
-def _freeze_split_spec(options: Mapping[str, Any]) -> SplitMaterializationSpec:
+def _freeze_split_spec(options: _FreezeSplitOptions) -> SplitMaterializationSpec:
     return SplitMaterializationSpec(
-        source_repository=str(options["source_repository"]),
-        source_revision=str(options["source_revision"]),
-        dataset_version=str(options["dataset_version"]),
-        source_path=str(options["source_path"]),
+        source_repository=options.source_repository,
+        source_revision=options.source_revision,
+        dataset_version=options.dataset_version,
+        source_path=options.source_path,
         split_policy=SplitPolicy(
-            seed=int(options["seed"]),
-            salt=str(options["salt"]),
+            seed=options.seed,
+            salt=options.salt,
             weights={
-                "train": int(options["train_weight"]),
-                "validation": int(options["validation_weight"]),
-                "held_out": int(options["held_out_weight"]),
+                "train": options.train_weight,
+                "validation": options.validation_weight,
+                "held_out": options.held_out_weight,
             },
         ),
         canonical_identity=CanonicalIdentityPolicy(
-            canonical_id_field=str(options["canonical_id_field"]),
-            lineage_id_field=str(options["lineage_id_field"]),
-            group_id_field=str(options["group_id_field"]),
+            canonical_id_field=options.canonical_id_field,
+            lineage_id_field=options.lineage_id_field,
+            group_id_field=options.group_id_field,
             content_hash_policy="normalized-training-payload-v1",
         ),
     )
@@ -368,10 +399,16 @@ def _smoke_env_defaults(
         _first_non_empty(inputs.api_key, "OPENAI_API_KEY", "VLLM_API_KEY"),
         _first_non_empty(inputs.prompt, "AGOGE_SMOKE_PROMPT"),
         _first_non_empty(inputs.system, "AGOGE_SMOKE_SYSTEM"),
-        inputs.stream
-        if inputs.stream is not None
-        else (False if inputs.config_path is None else None),
+        _effective_smoke_stream(inputs.stream, inputs.config_path),
     )
+
+
+def _effective_smoke_stream(stream: bool | None, config_path: str | None) -> bool | None:
+    if stream is not None:
+        return stream
+    if config_path is None:
+        return False
+    return None
 
 
 def _merge_smoke_chat_config(

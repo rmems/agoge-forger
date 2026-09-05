@@ -98,5 +98,9 @@ def saves_embedding_layers(config: Any) -> bool:
         return False
     target_modules: Collection[str] | str | None = config.target_modules
     if isinstance(target_modules, str):
-        return any(re.fullmatch(target_modules, name) for name in ("embed_tokens", "lm_head"))
+        try:
+            pattern = re.compile(target_modules)
+        except re.error as exc:
+            raise ValueError(f"invalid target_modules regex: {target_modules!r}") from exc
+        return any(pattern.fullmatch(name) for name in ("embed_tokens", "lm_head"))
     return bool(target_modules and {"embed_tokens", "lm_head"}.intersection(target_modules))

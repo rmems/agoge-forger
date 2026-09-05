@@ -50,12 +50,14 @@ def write_token_statistics(
 ) -> TokenStatistics:
     """Write model-specific statistics without mutating canonical split identity."""
 
-    spec = _verified_spec(derivation)
+    # Fail closed before any manifest or artifact I/O.
+    context_limit = _verified_spec(derivation).context_limit
     path = Path(manifest_path).expanduser().resolve(strict=True)
     manifest_snapshot = path.read_bytes()
     manifest = validate_split_manifest_snapshot(path, manifest_snapshot)
-    counter = _TokenCounter(derivation.tokenizer, derivation.serializer, spec.context_limit)
+    counter = _TokenCounter(derivation.tokenizer, derivation.serializer, context_limit)
     split_stats = {split: counter.for_split(path, manifest, split) for split in SPLIT_NAMES}
+    # Re-derive after counting so callable mutation during counting fails closed.
     spec = _verified_spec(derivation)
     statistics = TokenStatistics(
         split_manifest_sha256=sha256_bytes(manifest_snapshot),

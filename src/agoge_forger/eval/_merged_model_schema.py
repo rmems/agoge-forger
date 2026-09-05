@@ -49,7 +49,8 @@ def _empty_causal_lm(config_payload: dict[str, object]) -> Any:
         if not isinstance(model_type, str):
             raise TypeError("model_type must be a string")
         config = AutoConfig.for_model(model_type, **values)
-        model_kwargs = {"dtype": config.dtype} if config.dtype is not None else {}
+        dtype = getattr(config, "dtype", None)
+        model_kwargs = {"dtype": dtype} if dtype is not None else {}
         with init_empty_weights(include_buffers=True):
             return AutoModelForCausalLM.from_config(
                 config,

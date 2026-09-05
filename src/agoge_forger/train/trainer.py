@@ -1,4 +1,5 @@
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -102,8 +103,8 @@ def _prepare_peft_model(config, model):
 class _TrainingFinalization:
     trainer: Any
     out_dir: str
-    gpu_report: Any
-    producer_provenance: Any = None
+    gpu_report: Mapping[str, object]
+    producer_provenance: ArtifactProducerProvenance | Mapping[str, object] | None = None
 
 
 def _finalize_training_run(config, finalization: _TrainingFinalization):

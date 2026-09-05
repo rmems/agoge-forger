@@ -215,6 +215,27 @@ def test_streaming_source_reader_rejects_duplicate_json_keys(tmp_path: Path, fie
         )
 
 
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_streaming_source_reader_rejects_non_finite_json_constants(
+    tmp_path: Path, constant: str
+) -> None:
+    source = tmp_path / "non-finite.jsonl"
+    source.write_text(
+        '{"canonical_id":"sample","lineage_id":"lineage","group_id":"group",'
+        f'"text":{constant}}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=f"{SOURCE_PATH}:1: invalid JSON constant"):
+        list(
+            iter_source_records(
+                source,
+                CanonicalIdentityPolicy(content_hash_policy="normalized-training-payload-v1"),
+                source_coordinate_path=SOURCE_PATH,
+            )
+        )
+
+
 def test_streaming_source_reader_rejects_nested_duplicate_json_keys(tmp_path: Path) -> None:
     source = tmp_path / "nested-duplicate-key.jsonl"
     source.write_text(

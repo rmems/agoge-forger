@@ -23,7 +23,7 @@ SPLIT_NAMES: tuple[SplitName, ...] = ("train", "validation", "held_out")
 class FrozenModel(BaseModel):
     """Strict base class for versioned contract records."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, protected_namespaces=())
 
 
 class SourceFile(FrozenModel):
