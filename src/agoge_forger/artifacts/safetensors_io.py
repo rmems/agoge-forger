@@ -3,8 +3,10 @@ import hashlib
 import json
 import os
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
+from .._atomic_file import publish_bytes_replace
 from ..eval import ArtifactProducerProvenance
 from ..logging import logger
 
@@ -100,9 +102,7 @@ def write_artifact_index(
     if provenance is not None:
         index["producer_provenance"] = provenance
 
-    with open(index_path, "w") as f:
-        json.dump(index, f, indent=2)
-
+    publish_bytes_replace(Path(index_path), json.dumps(index, indent=2).encode())
     return index_path
 
 

@@ -70,3 +70,41 @@ def test_publish_bytes_noreplace_propagates_parent_fsync_failure(
 
 def test_fsync_directory_opens_parent_as_directory(tmp_path: Path) -> None:
     atomic_file._fsync_directory(tmp_path)
+
+
+def test_publish_bytes_replace_keeps_destination_until_os_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "artifact_index.json"
+    previous = b'{"old": true}'
+    destination.write_bytes(previous)
+    seen_before_replace: list[bytes] = []
+    real_replace = atomic_file.os.replace
+
+    def capturing_replace(src, dst, *args, **kwargs):
+        if Path(dst) == destination:
+            seen_before_replace.append(Path(dst).read_bytes())
+        real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(atomic_file.os, "replace", capturing_replace)
+    atomic_file.publish_bytes_replace(destination, b'{"new": true}')
+
+    assert seen_before_replace == [previous]
+    assert destination.read_bytes() == b'{"new": true}'
+
+
+def test_publish_bytes_replace_fsyncs_parent_after_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "artifact.bin"
+    destination.write_bytes(b"old")
+    synced: list[Path] = []
+
+    def capture(directory: Path) -> None:
+        synced.append(directory.resolve())
+
+    monkeypatch.setattr(atomic_file, "_fsync_directory", capture)
+    atomic_file.publish_bytes_replace(destination, b"new")
+
+    assert destination.read_bytes() == b"new"
+    assert synced == [destination.parent.resolve()]

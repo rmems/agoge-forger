@@ -42,6 +42,36 @@ def test_artifact_index_hashes_file(tmp_path):
         assert "producer_provenance" not in data
 
 
+def test_write_artifact_index_replaces_existing_index_atomically(tmp_path, monkeypatch):
+    from agoge_forger import _atomic_file as atomic_file
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "first.bin").write_bytes(b"one")
+    index_path = Path(write_artifact_index(str(out_dir)))
+    previous = index_path.read_bytes()
+    json.loads(previous)
+    (out_dir / "second.bin").write_bytes(b"two")
+
+    seen_before_replace: list[bytes] = []
+    real_replace = atomic_file.os.replace
+
+    def capturing_replace(src, dst, *args, **kwargs):
+        if Path(dst) == index_path:
+            snapshot = Path(dst).read_bytes()
+            json.loads(snapshot)
+            seen_before_replace.append(snapshot)
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(atomic_file.os, "replace", capturing_replace)
+    write_artifact_index(str(out_dir))
+
+    assert seen_before_replace == [previous]
+    data = json.loads(index_path.read_text())
+    assert {item["file"] for item in data["artifacts"]} == {"first.bin", "second.bin"}
+    assert "producer_provenance" not in data
+
+
 def test_write_artifact_index_provenance_is_required_by_eval_validation(
     tmp_path, cached_test_base_config
 ):

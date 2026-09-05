@@ -1,4 +1,4 @@
-"""Atomic no-replace publication for immutable files."""
+"""Atomic file publication for immutable (no-replace) and overwriteable sinks."""
 
 from __future__ import annotations
 
@@ -31,6 +31,26 @@ def publish_bytes_noreplace(
             rename_noreplace(staged, destination)
         except FileExistsError as exc:
             raise FileExistsError(f"{refusal}: {destination}") from exc
+        _fsync_directory(destination.parent)
+
+
+def publish_bytes_replace(
+    destination: Path,
+    payload: bytes,
+    *,
+    writer: PayloadWriter | None = None,
+) -> None:
+    """Atomically replace *destination* after fsyncing the staged payload."""
+
+    write = writer or write_fsynced_bytes
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{destination.name}.",
+        dir=destination.parent,
+    ) as staging_dir:
+        staged = Path(staging_dir) / destination.name
+        write(staged, payload)
+        os.replace(staged, destination)
         _fsync_directory(destination.parent)
 
 
