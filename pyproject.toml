@@ -16,11 +16,11 @@ dependencies = [
     # and reads `Trainer.processing_class`, neither of which exists earlier.
     "transformers>=5.0.0",
     "accelerate>=0.30.0",
-    "peft>=0.10.0",
+    "peft>=0.13.0",
     "trl>=1.0.0",
     "datasets>=2.19.0",
     "bitsandbytes>=0.43.0",
-    "safetensors>=0.4.0",
+    "safetensors>=0.7.0",
     "pyyaml",
     "rich",
     "typer>=0.9.0",
@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff==0.16.4", "mypy>=1.0", "pre-commit"]
+dev = ["pytest", "ruff==0.16.5", "mypy>=1.0", "pre-commit"]
 
 [project.scripts]
 agoge = "agoge_forger.cli:app"

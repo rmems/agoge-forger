@@ -2,11 +2,13 @@
 
 import json
 import os
+from dataclasses import dataclass
 from typing import Annotated, Any, NoReturn
 
 import typer
 import yaml
 
+from .artifacts.producer_provenance import producer_provenance_from_adapter
 from .artifacts.safetensors_io import assert_no_unsafe_weight_bins, inspect_safetensors_file
 from .backends.torch_backend import check_torch_env
 from .config import load_config
@@ -18,7 +20,11 @@ from .logging import logger
 from .models.inspect import inspect_model as _inspect_model
 from .models.lora_targets import inspect_lora_targets as _inspect_lora_targets
 from .models.metadata import get_model_config_metadata
-from .path_safety import resolve_existing_path, resolve_output_directory
+from .path_safety import (
+    resolve_absent_output_directory,
+    resolve_existing_path,
+    resolve_output_directory,
+)
 from .providers.chat_completions import ChatCompletionsConfig
 from .run_status import (
     RunStatusFormat,
@@ -28,17 +34,23 @@ from .run_status import (
 from .serving.config import ServingConfig, load_serving_config
 from .serving.serve import serve_vllm as _serve_vllm
 from .serving.smoke import run_vllm_smoke
-from .train.checkpoints import infer_base_model_from_adapter, is_adapter_artifact
+from .split_contract import (
+    SPLIT_NAMES,
+    CanonicalIdentityPolicy,
+    SplitManifest,
+    SplitMaterializationSpec,
+    SplitPolicy,
+    materialize_split,
+)
+from .train.checkpoints import (
+    infer_base_model_from_adapter,
+    is_adapter_artifact,
+    resolve_export_source,
+)
 from .train.lora import train_lora as _train_lora
 from .train.qlora import train_qlora as _train_qlora
 
 app = typer.Typer(help="Agoge Forger CLI")
-
-
-@app.command()
-def check_env():
-    """Run the supported PyTorch environment check."""
-    check_torch_env()
 
 
 @app.command()
@@ -150,6 +162,7 @@ def merge_adapter(
         safe_out_dir,
         trust_remote_code=trust_remote_code,
         allow_unsafe=allow_unsafe_serialization,
+        producer_provenance=producer_provenance_from_adapter(safe_adapter_path),
     )
 
 
@@ -182,6 +195,11 @@ def export_final_model(
     safe_adapter_path = (
         str(resolve_existing_path(adapter_path, must_be_dir=True)) if adapter_path else None
     )
+    source_adapter = resolve_export_source(
+        run_dir=safe_run_dir,
+        adapter_path=safe_adapter_path,
+        allow_unsafe=allow_unsafe_serialization,
+    )
     _export_final_model(
         out_dir=safe_out_dir,
         run_dir=safe_run_dir,
@@ -191,6 +209,7 @@ def export_final_model(
         allow_unsafe=allow_unsafe_serialization,
         max_shard_size=max_shard_size,
         trust_remote_code=trust_remote_code,
+        producer_provenance=producer_provenance_from_adapter(source_adapter),
     )
 
 
@@ -287,6 +306,102 @@ def dataset_stats(
     _dataset_stats(safe_path, model_id, trust_remote_code=trust_remote_code)
 
 
+@dataclass(frozen=True)
+class _FreezeSplitOptions:
+    source_repository: str
+    source_revision: str
+    dataset_version: str
+    source_path: str
+    seed: int
+    salt: str
+    train_weight: int
+    validation_weight: int
+    held_out_weight: int
+    canonical_id_field: str
+    lineage_id_field: str
+    group_id_field: str
+
+
+@app.command("freeze-split")
+def freeze_split(
+    source: str = typer.Option(..., help="Versioned curated source JSONL"),
+    source_path: str = typer.Option(
+        ...,
+        help="Canonical repository-relative path of the source at --source-revision",
+    ),
+    output_dir: str = typer.Option(..., help="New immutable snapshot directory"),
+    source_repository: str = typer.Option(...),
+    source_revision: str = typer.Option(...),
+    dataset_version: str = typer.Option(...),
+    seed: int = typer.Option(...),
+    salt: str = typer.Option(...),
+    train_weight: int = typer.Option(80),
+    validation_weight: int = typer.Option(10),
+    held_out_weight: int = typer.Option(10),
+    canonical_id_field: str = typer.Option("canonical_id"),
+    lineage_id_field: str = typer.Option("lineage_id"),
+    group_id_field: str = typer.Option("group_id"),
+):
+    """Materialize an immutable three-way SFT split from a pinned local source."""
+    safe_source = resolve_existing_path(source, must_be_file=True)
+    safe_output = resolve_absent_output_directory(output_dir)
+    spec = _freeze_split_spec(
+        _FreezeSplitOptions(
+            source_repository=source_repository,
+            source_revision=source_revision,
+            dataset_version=dataset_version,
+            source_path=source_path,
+            seed=seed,
+            salt=salt,
+            train_weight=train_weight,
+            validation_weight=validation_weight,
+            held_out_weight=held_out_weight,
+            canonical_id_field=canonical_id_field,
+            lineage_id_field=lineage_id_field,
+            group_id_field=group_id_field,
+        )
+    )
+    manifest = materialize_split(safe_source, safe_output, spec)
+    _log_freeze_split(manifest, str(safe_output))
+
+
+def _freeze_split_spec(options: _FreezeSplitOptions) -> SplitMaterializationSpec:
+    return SplitMaterializationSpec(
+        source_repository=options.source_repository,
+        source_revision=options.source_revision,
+        dataset_version=options.dataset_version,
+        source_path=options.source_path,
+        split_policy=SplitPolicy(
+            seed=options.seed,
+            salt=options.salt,
+            weights={
+                "train": options.train_weight,
+                "validation": options.validation_weight,
+                "held_out": options.held_out_weight,
+            },
+        ),
+        canonical_identity=CanonicalIdentityPolicy(
+            canonical_id_field=options.canonical_id_field,
+            lineage_id_field=options.lineage_id_field,
+            group_id_field=options.group_id_field,
+            content_hash_policy="normalized-training-payload-v1",
+        ),
+    )
+
+
+def _log_freeze_split(manifest: SplitManifest, output_dir: str) -> None:
+    logger.info(
+        "source: %s@%s:%s",
+        manifest.source.repository,
+        manifest.source.revision,
+        manifest.source.path,
+    )
+    logger.info("wrote %s/split_manifest.json", output_dir)
+    logger.info("wrote %s/split_report.md", output_dir)
+    counts = ", ".join(f"{name}={manifest.splits[name].record_count}" for name in SPLIT_NAMES)
+    logger.info("counts: %s", counts)
+
+
 def _merge_serving_config(config_path: str | None, overrides: dict[str, Any]) -> ServingConfig:
     cfg = load_serving_config(config_path) if config_path else ServingConfig()
     for key, value in overrides.items():
@@ -342,24 +457,37 @@ def _first_non_empty(value: str | None, *env_names: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class _SmokeEnvInputs:
+    base_url: str | None
+    model: str | None
+    api_key: str | None
+    prompt: str | None
+    system: str | None
+    stream: bool | None
+    config_path: str | None
+
+
 def _smoke_env_defaults(
-    base_url: str | None,
-    model: str | None,
-    api_key: str | None,
-    prompt: str | None,
-    system: str | None,
-    stream: bool | None,
-    config_path: str | None,
+    inputs: _SmokeEnvInputs,
 ) -> tuple[str | None, str | None, str | None, str | None, str | None, bool | None]:
     """Apply environment fallbacks and determine the effective streaming flag."""
     return (
-        _first_non_empty(base_url, "AGOGE_SMOKE_BASE_URL"),
-        _first_non_empty(model, "AGOGE_SMOKE_MODEL"),
-        _first_non_empty(api_key, "OPENAI_API_KEY", "VLLM_API_KEY"),
-        _first_non_empty(prompt, "AGOGE_SMOKE_PROMPT"),
-        _first_non_empty(system, "AGOGE_SMOKE_SYSTEM"),
-        stream if stream is not None else (False if config_path is None else None),
+        _first_non_empty(inputs.base_url, "AGOGE_SMOKE_BASE_URL"),
+        _first_non_empty(inputs.model, "AGOGE_SMOKE_MODEL"),
+        _first_non_empty(inputs.api_key, "OPENAI_API_KEY", "VLLM_API_KEY"),
+        _first_non_empty(inputs.prompt, "AGOGE_SMOKE_PROMPT"),
+        _first_non_empty(inputs.system, "AGOGE_SMOKE_SYSTEM"),
+        _effective_smoke_stream(inputs.stream, inputs.config_path),
     )
+
+
+def _effective_smoke_stream(stream: bool | None, config_path: str | None) -> bool | None:
+    if stream is not None:
+        return stream
+    if config_path is None:
+        return False
+    return None
 
 
 def _merge_smoke_chat_config(
@@ -411,7 +539,15 @@ def smoke_vllm(
 ):
     """Run a vLLM/OpenAI-compatible chat-completion smoke test."""
     base_url, model, api_key, prompt, system, stream = _smoke_env_defaults(
-        base_url, model, api_key, prompt, system, stream, config
+        _SmokeEnvInputs(
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            prompt=prompt,
+            system=system,
+            stream=stream,
+            config_path=config,
+        )
     )
 
     overrides: dict[str, Any] = {

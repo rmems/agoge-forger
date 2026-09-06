@@ -214,6 +214,15 @@ def test_smoke_vllm_cli_requires_model(runner: CliRunner):
     assert "Model is required" in result.output
 
 
+def test_effective_smoke_stream_defaults():
+    from agoge_forger.cli import _effective_smoke_stream
+
+    assert _effective_smoke_stream(True, None) is True
+    assert _effective_smoke_stream(False, "config.yaml") is False
+    assert _effective_smoke_stream(None, None) is False
+    assert _effective_smoke_stream(None, "config.yaml") is None
+
+
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()

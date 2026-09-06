@@ -1,6 +1,10 @@
 import pytest
 
-from agoge_forger.path_safety import resolve_existing_path, resolve_output_directory
+from agoge_forger.path_safety import (
+    resolve_absent_output_directory,
+    resolve_existing_path,
+    resolve_output_directory,
+)
 
 
 def test_resolve_existing_path_rejects_parent_traversal(tmp_path):
@@ -23,6 +27,19 @@ def test_resolve_output_directory_creates_directory(tmp_path):
 def test_resolve_output_directory_rejects_parent_traversal(tmp_path):
     with pytest.raises(ValueError, match="must not contain"):
         resolve_output_directory(str(tmp_path / ".." / "escape"))
+
+
+def test_resolve_absent_output_directory_creates_parent_only(tmp_path):
+    out_dir = tmp_path / "nested" / "snapshot"
+    resolved = resolve_absent_output_directory(str(out_dir))
+    assert resolved == out_dir.resolve()
+    assert resolved.parent.is_dir()
+    assert not resolved.exists()
+
+
+def test_resolve_absent_output_directory_rejects_parent_traversal(tmp_path):
+    with pytest.raises(ValueError, match="must not contain"):
+        resolve_absent_output_directory(str(tmp_path / ".." / "escape"))
 
 
 def test_resolve_existing_path_allows_legitimate_absolute_paths(tmp_path):

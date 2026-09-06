@@ -1,5 +1,6 @@
 from peft import PeftModel
 
+from ..artifacts.producer_provenance import require_producer_provenance
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
 from ..logging import logger
 from ..models.load import load_base_model
@@ -31,6 +32,7 @@ def merge_adapter(
     trust_remote_code: bool = False,
     revision: str | None = None,
     infer_revision: bool = True,
+    producer_provenance=None,
 ):
     """Merge a LoRA adapter into the base model and write a shippable checkpoint.
 
@@ -64,6 +66,8 @@ def merge_adapter(
     if revision is None and infer_revision:
         revision = infer_base_revision_from_adapter(adapter_path)
 
+    provenance = require_producer_provenance(producer_provenance, adapter_path)
+
     model, tokenizer = load_base_model(
         base_model_id,
         trust_remote_code=trust_remote_code,
@@ -92,7 +96,10 @@ def merge_adapter(
     if not allow_unsafe:
         assert_no_unsafe_weight_bins(str(safe_out_dir))
 
-    index_path = write_artifact_index(str(safe_out_dir))
+    index_path = write_artifact_index(
+        str(safe_out_dir),
+        producer_provenance=provenance,
+    )
     logger.info(f"Artifact index written to {index_path}")
 
 
@@ -105,6 +112,7 @@ def export_final_model(
     allow_unsafe: bool = False,
     max_shard_size: str = "4GB",
     trust_remote_code: bool = False,
+    producer_provenance=None,
 ):
     source_adapter = resolve_export_source(
         run_dir=run_dir,
@@ -129,4 +137,5 @@ def export_final_model(
         trust_remote_code=trust_remote_code,
         revision=revision,
         infer_revision=False,
+        producer_provenance=producer_provenance,
     )
