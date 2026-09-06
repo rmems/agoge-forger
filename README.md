@@ -75,7 +75,7 @@ adapter, and an exported merge (absolute paths shortened, some fields elided):
   },
   "final_adapter": { "present": true, "path": "adapters/demo_run" },
   "merged_model": { "present": true, "path": "merged/demo_run" },
-  "base_model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "base_model": "openbmb/MiniCPM5-1B-Base",
   "resume": {
     "ready": true,
     "checkpoint_path": "adapters/demo_run/checkpoint-100"
