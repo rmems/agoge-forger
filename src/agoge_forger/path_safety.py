@@ -22,10 +22,10 @@ def resolve_existing_path(
 
     candidate = Path(path).expanduser()
     _check_no_parent_traversal(candidate)
-    resolved = candidate.resolve()
-
-    if not resolved.exists():
-        raise FileNotFoundError(f"Path does not exist: {resolved}")
+    # strict=True preserves the distinction between a missing path and an
+    # inaccessible one: the latter raises PermissionError instead of being
+    # flattened into Path.exists() == False.
+    resolved = candidate.resolve(strict=True)
     if must_be_file and not resolved.is_file():
         raise ValueError(f"Expected a file path: {resolved}")
     if must_be_dir and not resolved.is_dir():

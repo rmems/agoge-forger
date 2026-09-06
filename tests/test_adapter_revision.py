@@ -35,6 +35,38 @@ def test_infer_base_revision_from_adapter(tmp_path):
     assert infer_base_revision_from_adapter(empty) is None
 
 
+@pytest.mark.parametrize("revision", [1.5, ["main"], {"branch": "main"}, True])
+def test_infer_invalid_adapter_revision_is_rejected(tmp_path, revision):
+    adapter = _write_adapter(tmp_path / "invalid", revision=revision)
+
+    with pytest.raises(TypeError):
+        infer_base_revision_from_adapter(adapter)
+
+
+def test_smoke_eval_rejects_invalid_adapter_revision_before_loading(monkeypatch, tmp_path):
+    adapter = _write_adapter(tmp_path / "adapter", revision=["main"])
+
+    def fail_load(*args, **kwargs):
+        raise AssertionError("malformed revision reached the base-model loader")
+
+    monkeypatch.setattr("agoge_forger.eval.smoke_eval.load_base_model", fail_load)
+
+    with pytest.raises(TypeError):
+        run_smoke_eval(BASE_MODEL, str(adapter))
+
+
+def test_export_rejects_invalid_adapter_revision_before_loading(monkeypatch, tmp_path):
+    adapter = _write_adapter(tmp_path / "adapter", revision=True)
+
+    def fail_load(*args, **kwargs):
+        raise AssertionError("malformed revision reached the base-model loader")
+
+    monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", fail_load)
+
+    with pytest.raises(TypeError):
+        export_final_model(out_dir=str(tmp_path / "merged"), adapter_path=str(adapter))
+
+
 def test_smoke_eval_forwards_adapter_revision_to_load_base_model(monkeypatch, tmp_path):
     adapter = _write_adapter(tmp_path / "adapter")
     captured: dict[str, object] = {}

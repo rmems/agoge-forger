@@ -44,3 +44,11 @@ drivers = ["lint"]
 match.rules = ["bandit:B101"]
 match.file_patterns = ["tests/**"]
 set.ignored = true
+
+# Transformers saves NumPy's legacy RandomState tuple and restores it through
+# RandomState.set_state. This isolated instance validates that exact contract
+# without mutating global RNG state; Generator uses an incompatible state shape.
+[[triage]]
+match.rules = ["radarlint-python:python:S6711"]
+match.file_patterns = ["src/agoge_forger/_run_status_rng.py"]
+set.ignored = true

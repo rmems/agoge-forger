@@ -49,6 +49,64 @@ uv run agoge smoke-vllm --model merged/<run_name> --run-name smoke_<run_name>
 
 See [vLLM model compatibility](docs/vllm_model_compatibility.md) for supported artifact forms.
 
+## Inspect run readiness
+
+Before resuming or exporting, ask a run directory what it is actually ready for:
+
+```bash
+agoge run-status adapters/<run_name>
+agoge run-status adapters/<run_name> --format table
+agoge run-status adapters/<run_name> --merged-dir merged/<custom_name>
+agoge run-status adapters/<run_name> --allow-unsafe-serialization
+```
+
+The default `--format json` report, for a run with two checkpoints, a saved
+adapter, and an exported merge (absolute paths shortened, some fields elided):
+
+```json
+{
+  "schema_version": 1,
+  "run_name": "demo_run",
+  "checkpoints": {
+    "valid_count": 2,
+    "steps": [50, 100],
+    "latest_step": 100,
+    "latest_path": "adapters/demo_run/checkpoint-100"
+  },
+  "final_adapter": { "present": true, "path": "adapters/demo_run" },
+  "merged_model": { "present": true, "path": "merged/demo_run" },
+  "base_model": "openbmb/MiniCPM5-1B-Base",
+  "resume": {
+    "ready": true,
+    "checkpoint_path": "adapters/demo_run/checkpoint-100"
+  },
+  "export": {
+    "ready": true,
+    "source_path": "adapters/demo_run",
+    "source_kind": "final_adapter"
+  }
+}
+```
+
+How to read it:
+
+- `resume.checkpoint_path` is exactly the snapshot `agoge train-qlora` would pick up with `resume_from_latest_checkpoint: true`.
+- `export.source_path` is exactly what `agoge export-final-model` would merge, and `source_kind` says which kind it is: `final_adapter` means the run-root adapter, `checkpoint` means the latest valid `checkpoint-N`.
+- `checkpoints.valid_count` counts only checkpoints that pass the validity rules — a `checkpoint-N` directory holding both `trainer_state.json` and a safetensors adapter. A half-written snapshot is not counted.
+- `merged_model` probes the conventional `merged/<run_name>` sibling of `adapters/<run_name>`, or exactly `--merged-dir` when you pass it. `"present": false` means "not exported yet", not an error.
+- Legacy `.bin` adapters read as absent and not ready under the safetensors-only policy, until `--allow-unsafe-serialization` is passed.
+- The exit code is `0` for any inspectable directory, including one where nothing is ready yet. It is non-zero when the path is missing, is not a directory, contains `..`, cannot resolve a `~user` home, or inspection hits a permission/I/O failure while building the report.
+
+The report does not materialize tensor payload data, so it needs no GPU or
+network. It does use the installed PyTorch restricted `weights_only` unpickler
+to inspect bounded, memory-mapped `optimizer.pt`, `scheduler.pt`, and
+`rng_state.pth` metadata. Transformers' NumPy compatibility globals are enabled
+only while validating `rng_state.pth`; legacy `adapter_model.bin` inspection
+still requires `--allow-unsafe-serialization`. Keep the locked PyTorch version
+current with upstream security patch releases before inspecting untrusted run
+directories, because `weights_only` reduces pickle risk but is not equivalent
+to the non-executable `safetensors` format.
+
 ## Validation
 
 ```bash

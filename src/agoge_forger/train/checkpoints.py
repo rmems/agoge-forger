@@ -1,8 +1,10 @@
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
+from ..config import normalize_revision
 from ..logging import logger
 from ..path_safety import resolve_existing_path
 
@@ -13,7 +15,7 @@ LEGACY_ADAPTER_WEIGHT_FILES = ("adapter_model.bin",)
 PathLike = str | Path
 
 
-def _checkpoint_step(path: Path) -> int:
+def checkpoint_step(path: Path) -> int:
     match = CHECKPOINT_RE.match(path.name)
     if not match:
         return -1
@@ -59,7 +61,7 @@ def is_valid_checkpoint(path: PathLike, *, allow_unsafe: bool = False) -> bool:
     checkpoint_dir = Path(path)
     if not checkpoint_dir.is_dir():
         return False
-    if _checkpoint_step(checkpoint_dir) < 0:
+    if checkpoint_step(checkpoint_dir) < 0:
         return False
     if not (checkpoint_dir / "trainer_state.json").is_file():
         return False
@@ -73,7 +75,7 @@ def list_valid_checkpoints(run_dir: PathLike, *, allow_unsafe: bool = False) -> 
     checkpoints = [
         path for path in root.iterdir() if is_valid_checkpoint(path, allow_unsafe=allow_unsafe)
     ]
-    checkpoints.sort(key=_checkpoint_step)
+    checkpoints.sort(key=checkpoint_step)
     return checkpoints
 
 
@@ -102,11 +104,9 @@ def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
 
 
 def infer_base_revision_from_adapter(adapter_path: PathLike) -> str | None:
-    """Return the Hub revision persisted on a PEFT adapter, if any."""
+    """Return the normalized Hub revision persisted on a PEFT adapter."""
     revision = _load_adapter_config(adapter_path).get("revision")
-    if revision is None or revision == "":
-        return None
-    return str(revision)
+    return normalize_revision(revision)
 
 
 def resolve_resume_checkpoint(run_dir: str, config) -> str | None:
@@ -148,11 +148,27 @@ def resolve_export_source(
         raise ValueError("Either run_dir or adapter_path must be provided.")
 
     safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True))
-    if is_adapter_artifact(safe_run_dir, allow_unsafe=allow_unsafe):
-        return safe_run_dir
+    run_adapter_present = is_adapter_artifact(safe_run_dir, allow_unsafe=allow_unsafe)
+    checkpoints: Sequence[Path] = ()
+    if not run_adapter_present:
+        checkpoints = list_valid_checkpoints(safe_run_dir, allow_unsafe=allow_unsafe)
+    return resolve_export_source_from_snapshot(
+        safe_run_dir,
+        checkpoints,
+        run_adapter_present=run_adapter_present,
+    )
 
-    checkpoint_path = find_latest_valid_checkpoint(safe_run_dir, allow_unsafe=allow_unsafe)
-    if checkpoint_path:
-        return str(checkpoint_path)
 
-    raise ValueError(f"No exportable adapter artifact found under {safe_run_dir}")
+def resolve_export_source_from_snapshot(
+    run_dir: str,
+    checkpoints: Sequence[Path],
+    *,
+    run_adapter_present: bool,
+) -> str:
+    """Apply export precedence to one already-collected run snapshot."""
+    if run_adapter_present:
+        return run_dir
+    if checkpoints:
+        return str(max(checkpoints, key=checkpoint_step))
+
+    raise ValueError(f"No exportable adapter artifact found under {run_dir}")

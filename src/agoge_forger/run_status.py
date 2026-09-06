@@ -1,0 +1,290 @@
+"""Operator-facing readiness report for a training run directory.
+
+`agoge run-status adapters/<run_name>` answers the three questions an operator
+asks about a run without loading a single model weight: can I resume it, can I
+export it, and has it already been merged?
+
+Every discovery rule lives in `train/checkpoints.py` (what counts as a valid
+checkpoint, which artifact `export-final-model` would pick, which base model an
+adapter was trained from) and in `artifacts/safetensors_io.py`. This module only
+assembles their answers into one stable JSON document, so a readiness report can
+never disagree with what training and export actually do.
+"""
+
+from __future__ import annotations
+
+import unicodedata
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+from ._run_status_trainer_state import trainer_state_usable as _trainer_state_usable
+from ._run_status_validation import (
+    adapter_config_usable as _adapter_config_usable,
+)
+from ._run_status_validation import (
+    adapter_optimizer_shapes as _adapter_optimizer_shapes,
+)
+from ._run_status_validation import (
+    adapter_weights_usable as _adapter_weights_usable,
+)
+from ._run_status_validation import (
+    is_merged_model_dir,
+)
+from .path_safety import resolve_existing_path
+from .train.checkpoints import (
+    checkpoint_step,
+    infer_base_model_from_adapter,
+    infer_base_revision_from_adapter,
+    is_adapter_artifact,
+    list_valid_checkpoints,
+    resolve_export_source_from_snapshot,
+)
+
+SCHEMA_VERSION = 1
+
+PathLike = str | Path
+
+# A malformed adapter_config.json must degrade to "unknown base model", never
+# crash a status report. Permission/I/O failures propagate so the CLI can
+# exit 1. AttributeError covers a file that parses as valid JSON
+# but is not an object (`[]`, `"text"`, `3`), on which the checkpoint helpers'
+# `.get(...)` call would otherwise raise.
+_ADAPTER_CONFIG_ERRORS = (
+    ValueError,
+    KeyError,
+    TypeError,
+    AttributeError,
+    RecursionError,
+)
+
+
+class RunStatusFormat(str, Enum):
+    """Supported `agoge run-status --format` renderings."""
+
+    json = "json"
+    table = "table"
+
+
+def find_merged_model_dir(run_dir: Path, merged_dir: str | None = None) -> Path | None:
+    """Locate the merged model exported from `run_dir`, if there is one.
+
+    With `merged_dir` given, exactly that path is checked. Otherwise the
+    conventional sibling layout is probed: `adapters/<run_name>` pairs with
+    `merged/<run_name>`. A merged model that has not been exported yet is an
+    expected answer rather than an error, so a missing directory yields None.
+    """
+    if merged_dir is not None:
+        try:
+            candidate = resolve_existing_path(merged_dir, must_be_dir=True)
+        except (FileNotFoundError, NotADirectoryError, ValueError, RuntimeError):
+            # Missing, not-a-dir, empty, or '..' traversal: no merge, not a crash.
+            # Library callers get the same "absent" answer the CLI treats as
+            # non-fatal for an explicit --merged-dir that does not resolve.
+            return None
+        return candidate if is_merged_model_dir(candidate) else None
+
+    # Use the caller-supplied path, not a symlink-resolved one. If
+    # adapters/<run> points at external storage, resolve() would probe
+    # <target-grandparent>/merged/<target-basename> and miss the documented
+    # sibling merged/<run_name>. Path(".").name is empty, so resolve only
+    # then; a named symlink must keep its logical parent.
+    probe_dir = run_dir if run_dir.name else run_dir.resolve()
+    conventional = probe_dir.parent.parent / "merged" / probe_dir.name
+    try:
+        candidate = resolve_existing_path(str(conventional), must_be_dir=True)
+    except (FileNotFoundError, NotADirectoryError, ValueError, RuntimeError):
+        return None
+    if not is_merged_model_dir(candidate):
+        return None
+    return candidate
+
+
+def _as_str(value: PathLike | None) -> str | None:
+    """Render a path for JSON: `str`, or None when there is nothing to report."""
+    return None if value is None else str(value)
+
+
+def _resolve_export(
+    run_dir: Path,
+    *,
+    checkpoints: list[Path],
+    final_adapter_present: bool,
+) -> tuple[str | None, str | None]:
+    """Return the (source_path, source_kind) `export-final-model` would use."""
+    try:
+        source = resolve_export_source_from_snapshot(
+            str(run_dir),
+            checkpoints=checkpoints,
+            run_adapter_present=final_adapter_present,
+        )
+    except (FileNotFoundError, ValueError):
+        return None, None
+    kind = "final_adapter" if Path(source) == run_dir else "checkpoint"
+    return source, kind
+
+
+def _infer_base(adapter_path: PathLike | None) -> tuple[str | None, str | None]:
+    """Read the base model id and pinned revision off an adapter, tolerantly."""
+    if adapter_path is None:
+        return None, None
+
+    try:
+        base_model: str | None = infer_base_model_from_adapter(adapter_path)
+    except _ADAPTER_CONFIG_ERRORS:
+        base_model = None
+    # infer_base_model_from_adapter returns the raw truthy field. A list, dict,
+    # bool, or int would leak into the JSON report; only a real string is a
+    # usable model id. Sibling infer_base_revision_from_adapter already str().
+    if not isinstance(base_model, str) or not base_model.strip():
+        base_model = None
+
+    try:
+        base_revision = infer_base_revision_from_adapter(adapter_path)
+    except _ADAPTER_CONFIG_ERRORS:
+        base_revision = None
+
+    return base_model, base_revision
+
+
+def _checkpoint_status(checkpoints: list[Path]) -> tuple[Path | None, dict[str, Any]]:
+    """Describe one checkpoint snapshot without a second directory scan."""
+    latest = checkpoints[-1] if checkpoints else None
+    return latest, {
+        "valid_count": len(checkpoints),
+        "steps": [checkpoint_step(path) for path in checkpoints],
+        "latest_step": None if latest is None else checkpoint_step(latest),
+        "latest_path": _as_str(latest),
+    }
+
+
+def _artifact_status(path: Path | None) -> dict[str, Any]:
+    return {"present": path is not None, "path": _as_str(path)}
+
+
+def _resume_status(checkpoint: Path | None, *, allow_unsafe: bool) -> dict[str, Any]:
+    optimizer_shapes = _adapter_optimizer_shapes(checkpoint, allow_unsafe=allow_unsafe)
+    ready = bool(
+        checkpoint is not None
+        and optimizer_shapes is not None
+        and _trainer_state_usable(checkpoint, optimizer_shapes)
+    )
+    return {"ready": ready, "checkpoint_path": _as_str(checkpoint)}
+
+
+def _export_status(
+    source: str | None,
+    kind: str | None,
+    *,
+    allow_unsafe: bool,
+) -> dict[str, Any]:
+    ready = bool(
+        source is not None
+        and _adapter_config_usable(source)
+        and _adapter_weights_usable(source, allow_unsafe=allow_unsafe)
+    )
+    return {"ready": ready, "source_path": source, "source_kind": kind}
+
+
+def build_run_status(
+    run_dir: str,
+    *,
+    merged_dir: str | None = None,
+    allow_unsafe: bool = False,
+) -> dict[str, Any]:
+    """Build the JSON-serializable readiness report for one run directory.
+
+    The path is re-resolved here even though `cli.py` already validated it, so
+    direct library callers get the same traversal and existence guarantees the
+    CLI boundary enforces (the same defense in depth as `merge_adapter`).
+
+    Every key of the schema is always present; unknown values are None.
+    """
+    resolved_run_dir = resolve_existing_path(run_dir, must_be_dir=True)
+
+    checkpoints = list_valid_checkpoints(resolved_run_dir, allow_unsafe=allow_unsafe)
+    latest_checkpoint, checkpoint_status = _checkpoint_status(checkpoints)
+    final_adapter_present = is_adapter_artifact(resolved_run_dir, allow_unsafe=allow_unsafe)
+    export_source, export_kind = _resolve_export(
+        resolved_run_dir,
+        checkpoints=checkpoints,
+        final_adapter_present=final_adapter_present,
+    )
+    base_model, base_revision = _infer_base(export_source or latest_checkpoint)
+    # Anchor relative inputs to the caller's cwd without resolving named
+    # symlinks away from their documented adapters/<name> layout.
+    logical_run_dir = Path(run_dir).expanduser().absolute()
+    merged_model = find_merged_model_dir(logical_run_dir, merged_dir)
+    run_name = logical_run_dir.name or resolved_run_dir.name
+    final_adapter = resolved_run_dir if final_adapter_present else None
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "run_dir": str(resolved_run_dir),
+        "run_name": run_name,
+        "allow_unsafe_serialization": allow_unsafe,
+        "checkpoints": checkpoint_status,
+        "final_adapter": _artifact_status(final_adapter),
+        "merged_model": _artifact_status(merged_model),
+        "base_model": base_model,
+        "base_revision": base_revision,
+        "resume": _resume_status(latest_checkpoint, allow_unsafe=allow_unsafe),
+        "export": _export_status(export_source, export_kind, allow_unsafe=allow_unsafe),
+    }
+
+
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def _escape_controls(text: str) -> str:
+    """Escape Unicode control, format, and surrogate code points in table cells.
+
+    Adapter metadata and paths can carry ANSI or other control bytes into
+    `format_run_status_table`. Render those as backslash-uXXXX escapes
+    instead of emitting them raw (CWE-150 / CodeRabbit on #96).
+    """
+    unsafe_categories = {"Cc", "Cf", "Cs"}
+
+    def escaped(character: str) -> str:
+        codepoint = ord(character)
+        prefix, width = ("u", 4) if codepoint <= 0xFFFF else ("U", 8)
+        return f"\\{prefix}{codepoint:0{width}x}"
+
+    return "".join(
+        escaped(character) if unicodedata.category(character) in unsafe_categories else character
+        for character in text
+    )
+
+
+def _or_dash(value: Any) -> str:
+    return "-" if value is None else _escape_controls(str(value))
+
+
+def format_run_status_table(report: dict[str, Any]) -> str:
+    """Render a report from `build_run_status` as an aligned `key: value` block."""
+    checkpoints = report["checkpoints"]
+    steps = checkpoints["steps"]
+    rows: list[tuple[str, str]] = [
+        ("schema_version", str(report["schema_version"])),
+        ("run_name", _escape_controls(str(report["run_name"]))),
+        ("run_dir", _escape_controls(str(report["run_dir"]))),
+        ("allow_unsafe_serialization", _yes_no(report["allow_unsafe_serialization"])),
+        ("valid_checkpoints", str(checkpoints["valid_count"])),
+        ("checkpoint_steps", ", ".join(str(step) for step in steps) if steps else "-"),
+        ("latest_checkpoint_step", _or_dash(checkpoints["latest_step"])),
+        ("latest_checkpoint_path", _or_dash(checkpoints["latest_path"])),
+        ("final_adapter", _yes_no(report["final_adapter"]["present"])),
+        ("final_adapter_path", _or_dash(report["final_adapter"]["path"])),
+        ("merged_model", _yes_no(report["merged_model"]["present"])),
+        ("merged_model_path", _or_dash(report["merged_model"]["path"])),
+        ("base_model", _or_dash(report["base_model"])),
+        ("base_revision", _or_dash(report["base_revision"])),
+        ("resume_ready", _yes_no(report["resume"]["ready"])),
+        ("resume_checkpoint_path", _or_dash(report["resume"]["checkpoint_path"])),
+        ("export_ready", _yes_no(report["export"]["ready"])),
+        ("export_source_kind", _or_dash(report["export"]["source_kind"])),
+        ("export_source_path", _or_dash(report["export"]["source_path"])),
+    ]
+    width = max(len(label) for label, _ in rows) + 1
+    return "\n".join(f"{label + ':':<{width}} {value}" for label, value in rows)
