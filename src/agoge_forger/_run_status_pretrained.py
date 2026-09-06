@@ -23,13 +23,16 @@ def offline_pretrained(
     *,
     revision: str | None = None,
 ) -> Any:
-    loader = getattr(factory, "from_pretrained", None)
-    # The `is None` arm stands on its own rather than joining the callable check
-    # with `or`: static analysis narrows the optional away through a standalone
-    # `is None` guard, but not through `callable()` or a disjunction. Without it
-    # Qodana reports the call below as "'None' object is not callable".
-    if loader is None:
-        raise TypeError("from_pretrained is missing")
+    # Read the attribute directly instead of `getattr(..., None)`. The None
+    # default put None in the inferred type of `loader`, and Qodana would not
+    # narrow it back out through `callable()`, a standalone `is None` guard, or
+    # a disjunction of the two — it kept reporting the call below as "'None'
+    # object is not callable". Letting AttributeError signal a missing attribute
+    # keeps the same behavior without the optional.
+    try:
+        loader = factory.from_pretrained
+    except AttributeError as exc:
+        raise TypeError("from_pretrained is missing") from exc
     if not callable(loader):
         raise TypeError("from_pretrained is not callable")
     revision_kwarg = {} if revision is None else {"revision": revision}
