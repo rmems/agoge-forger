@@ -128,7 +128,7 @@ How it protects you:
 - `--keep-latest N` keeps the N newest *valid* checkpoints. A half-written snapshot from a crashed run never occupies one of those slots — it is reclaimable garbage, not a resume point.
 - A symlinked run directory is refused, and a symlinked `checkpoint-*` entry is skipped rather than followed.
 
-**Run cleanup before publishing an evaluation contract, not after.** The artifact index written at the end of training hashes every file in the run directory, checkpoints included, and the evaluation contract requires the index to match the files actually present. Cleanup therefore rewrites `artifact_index.json` over the survivors, which changes its `sha256` and invalidates any contract already pinning it.
+**Run cleanup before publishing an evaluation contract, not after.** The artifact index written at the end of training hashes every file in the run directory, checkpoints included, and the evaluation contract requires the index to match the files actually present. So when a run carries an index with sealed provenance, cleanup rewrites `artifact_index.json` over the survivors — which changes its `sha256` and invalidates any contract already pinning it. `artifact_index_rewritten` in the report says whether that happened. A run with no index, or one without sealed provenance, is cleaned without an index being written, and a rewrite that fails is reported under `failed` with a non-zero exit rather than passing silently.
 
 ## Validation
 
