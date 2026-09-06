@@ -469,19 +469,28 @@ def test_unsupported_structural_lora_config_is_not_export_ready(tmp_path, field,
 
 
 def test_catastrophic_target_regex_is_rejected_within_subprocess_deadline():
+    # The deadline must cover the match alone. Importing _run_status_lora pulls in
+    # torch, transformers, and peft, which costs seconds on a cold runner and would
+    # otherwise dominate a wall-clock budget meant for the regex. So the child times
+    # its own match and reports on that; subprocess.run keeps only a generous hard
+    # backstop, so a genuinely catastrophic pattern still gets killed and fails here.
     script = """
+import time
+
 from agoge_forger._run_status_lora import _module_matches_targets, _target_spec
 
 target = _target_spec('(a+)+$')
+start = time.monotonic()
 matched = target is not None and _module_matches_targets('a' * 64 + '!', target)
-raise SystemExit(1 if matched else 0)
+elapsed = time.monotonic() - start
+raise SystemExit(1 if matched or elapsed > 1.0 else 0)
 """
     result = subprocess.run(  # nosec B603 - fixed interpreter and test-only script
         [sys.executable, "-c", script],
         check=False,
         capture_output=True,
         text=True,
-        timeout=5,
+        timeout=120,
     )
 
     assert result.returncode == 0, result.stderr
