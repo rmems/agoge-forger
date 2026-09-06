@@ -38,8 +38,3 @@ docker run --rm agoge-forger:local /bin/sh -c 'env | grep -i hf || echo no HF en
 - `HF_TOKEN` must never be passed as a build arg or `ENV` in the `Dockerfile`. It should only be supplied at runtime with `-e HF_TOKEN=...` when a command genuinely needs the Hugging Face Hub.
 - If `agoge check-torch` fails to import `torch`, first check that the build completed and `uv sync` installed the locked wheels. If `uv sync` succeeded, the failure is likely a runtime issue such as an incompatible wheel, a missing runtime library, or an architecture mismatch, not a build-time resolution problem.
 - `agoge-forger` is installed as a non-editable wheel inside `/app/.venv` by the `Dockerfile`; do not expect `src` changes on the host to be reflected without a rebuild.
-
-## Devin Secrets Needed
-
-- None for CPU/smoke validation.
-- `HF_TOKEN` is needed only when running Hub-dependent commands (e.g. `agoge model-metadata`) and must be passed at runtime, never baked into the image.

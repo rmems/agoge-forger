@@ -42,3 +42,19 @@ def resolve_output_directory(path: str) -> Path:
     resolved = candidate.resolve()
     resolved.mkdir(parents=True, exist_ok=True)
     return resolved
+
+
+def resolve_absent_output_directory(path: str) -> Path:
+    """Resolve a new output directory without creating the leaf path.
+
+    Frozen-split publication requires the destination not to exist. Callers that
+    need a created directory should keep using ``resolve_output_directory``.
+    """
+    if not path or not path.strip():
+        raise ValueError("Output directory must not be empty")
+
+    candidate = Path(path).expanduser()
+    _check_no_parent_traversal(candidate)
+    resolved = candidate.resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved

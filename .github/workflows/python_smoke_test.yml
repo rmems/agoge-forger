@@ -89,7 +89,7 @@ jobs:
         run: |
           uv run python -c "
           from agoge_forger.config import load_config
-          cfg = load_config('configs/smoke_test.yaml')
+          cfg = load_config('configs/minicpm5_canary.yaml')
           print(f'Config OK: model_id={cfg.model_id}')
           "
 

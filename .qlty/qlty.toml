@@ -1,0 +1,46 @@
+config_version = "0"
+
+# Do not exclude src/, tests/, or scripts/. Qlty is the quality gate.
+exclude_patterns = []
+
+test_patterns = [
+  "**/test/**",
+  "**/spec/**",
+  "**/*.test.*",
+  "**/*.spec.*",
+  "**/*_test.*",
+  "**/*_spec.*",
+  "**/test_*.*",
+  "**/spec_*.*",
+]
+
+[smells]
+mode = "comment"
+
+[[source]]
+name = "default"
+default = true
+
+[[plugin]]
+name = "actionlint"
+
+[[plugin]]
+name = "bandit"
+
+[[plugin]]
+name = "hadolint"
+
+[[plugin]]
+name = "radarlint-python"
+mode = "comment"
+
+[[plugin]]
+name = "ruff"
+drivers = ["lint"]
+
+# Same policy bandit.yml used to claim: pytest assert (B101) in tests only.
+# Runtime Bandit on src/ stays enabled. Do not broaden this list.
+[[triage]]
+match.rules = ["bandit:B101"]
+match.file_patterns = ["tests/**"]
+set.ignored = true

@@ -1,9 +1,9 @@
 {
-    "name": "agoge-forger Python 3.12 + Rust 1.97",
+    "name": "agoge-forger Python 3.12",
     "build": {
         "dockerfile": "Dockerfile"
     },
-    "postCreateCommand": "uv venv && uv pip install -e \".[dev]\" && (cd rust-tools && cargo fetch)",
+    "postCreateCommand": "uv venv && uv pip install -e \".[dev]\"",
     "containerUser": "vscode",
     "remoteUser": "vscode",
     "features": {
@@ -23,7 +23,6 @@
                 "ms-python.python",
                 "charliermarsh.ruff",
                 "ms-python.mypy-type-checker",
-                "rust-lang.rust-analyzer",
                 "tamasfe.even-better-toml"
             ]
         }

@@ -26,8 +26,8 @@ jobs:
           enable-cache: true
 
       - name: Install dev dependencies
-        # Match security_scan.yml: editable install into .venv so pytest/ruff/mypy
-        # are on PATH without `uv run` / `uv sync` spawn quirks.
+        # Editable install into .venv so pytest/ruff/mypy are on PATH without
+        # `uv run` / `uv sync` spawn quirks.
         run: |
           uv venv
           uv pip install -e ".[dev]"
