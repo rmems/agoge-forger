@@ -124,7 +124,10 @@ def plan_cleanup(
             {
                 "path": str(candidate),
                 "step": checkpoint_step(candidate),
-                "bytes": directory_size_bytes(str(candidate)),
+                # Silent: an unreadable file must not put a log line in the
+                # middle of the JSON document. The total is an estimate either
+                # way, which the report says.
+                "bytes": directory_size_bytes(str(candidate), warn=False),
             }
         )
 
@@ -145,7 +148,7 @@ def plan_cleanup(
     }
 
 
-def _refresh_artifact_index(run_dir: Path, provenance: Any) -> bool:
+def _refresh_artifact_index(run_dir: Path, provenance: Any) -> tuple[bool, str | None]:
     """Rebuild `artifact_index.json` over whatever survived the deletion.
 
     The index written at the end of training hashes every file under the run
@@ -153,14 +156,18 @@ def _refresh_artifact_index(run_dir: Path, provenance: Any) -> bool:
     index and the live file set to match exactly
     (`eval/_artifact_snapshot.py::_require_complete_index`). Leaving a stale
     index behind would therefore break contract validation outright.
+
+    Returns `(rewritten, error)`. A rewrite that fails is an error, not a quiet
+    False: the checkpoints are already gone at that point, so the index on disk
+    now lists files that do not exist and the caller has to report it.
     """
     if provenance is None:
-        return False
+        return False, None
     try:
         write_artifact_index(str(run_dir), producer_provenance=provenance)
-    except (OSError, ValueError):
-        return False
-    return True
+    except (OSError, ValueError) as exc:
+        return False, str(exc)
+    return True, None
 
 
 def _sealed_provenance(run_dir: Path) -> Any:
@@ -197,16 +204,22 @@ def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
             continue
         removed.append(entry)
 
+    # Rebuild from the state that actually exists, not the state that was
+    # planned, so a partial failure still leaves a truthful index.
+    rewritten, index_error = (
+        _refresh_artifact_index(run_dir, provenance) if removed else (False, None)
+    )
+    if index_error is not None:
+        # The checkpoints are gone but the index still lists them, so the run's
+        # own metadata is now wrong. That is a failed cleanup, not a success.
+        failed.append({"path": str(run_dir / _ARTIFACT_INDEX_NAME), "error": index_error})
+
     report = dict(plan)
     report["dry_run"] = False
     report["removed"] = removed
     report["failed"] = failed
     report["bytes_reclaimed"] = sum(item["bytes"] for item in removed)
-    # Rebuild from the state that actually exists, not the state that was
-    # planned, so a partial failure still leaves a truthful index.
-    report["artifact_index_rewritten"] = (
-        _refresh_artifact_index(run_dir, provenance) if removed else False
-    )
+    report["artifact_index_rewritten"] = rewritten
     return report
 
 

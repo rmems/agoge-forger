@@ -330,7 +330,9 @@ def cleanup_run(
             force=force,
             merged_dir=safe_merged_dir,
         )
-    except (ValueError, OSError) as e:
+    except _RUN_STATUS_PATH_ERRORS as e:
+        # plan_cleanup re-resolves the run directory, so it can raise anything
+        # resolve_existing_path raises — RuntimeError on a symlink loop included.
         _exit_on_path_error(e)
 
     report = plan if dry_run else execute_cleanup(plan)

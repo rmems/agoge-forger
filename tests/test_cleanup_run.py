@@ -217,6 +217,34 @@ def test_run_without_an_index_is_cleaned_without_creating_one(tmp_path):
     assert not (run_dir / "artifact_index.json").exists()
 
 
+def test_failed_index_rewrite_is_reported_as_a_failure(tmp_path, monkeypatch):
+    """A stale index after deletion is a failed cleanup, not a quiet success."""
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    write_artifact_index(str(run_dir), producer_provenance=_provenance())
+
+    def explode(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("agoge_forger.cleanup_run.write_artifact_index", explode)
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert report["artifact_index_rewritten"] is False
+    assert report["failed"] == [
+        {"path": str(run_dir / "artifact_index.json"), "error": "disk full"}
+    ]
+
+
+def test_unreadable_file_does_not_log_during_sizing(tmp_path, caplog):
+    """Sizing warnings would land in stdout and corrupt the JSON document."""
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+
+    with caplog.at_level("WARNING", logger="agoge"):
+        plan_cleanup(str(run_dir))
+
+    assert not [m for m in caplog.messages if "Could not read file size" in m]
+
+
 def test_index_is_left_alone_when_nothing_was_removed(tmp_path):
     run_dir = _make_run_dir(tmp_path)
     _write_final_adapter(run_dir)
