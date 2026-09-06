@@ -58,13 +58,16 @@ def estimate_training_risk(config, gpu_report):
             logger.warning("RISK: max_seq_length > 2048 on 16GB VRAM may cause OOM.")
 
 
-def directory_size_bytes(path: str) -> int:
+def directory_size_bytes(path: str, *, warn: bool = True) -> int:
     """Sum the apparent size of every regular file under ``path``.
 
-    Unreadable files are logged and counted as zero rather than raising, so a
-    size report never fails on a permission error or a file that vanished mid
-    walk. Callers that present the total to an operator should therefore call it
-    an estimate. ``os.walk`` does not descend symlinked directories.
+    Unreadable files are counted as zero rather than raising, so a size report
+    never fails on a permission error or a file that vanished mid walk. Callers
+    that present the total to an operator should therefore call it an estimate.
+    ``os.walk`` does not descend symlinked directories.
+
+    Pass ``warn=False`` to stay silent: the shared handler renders to stdout, so
+    a caller emitting a JSON document cannot afford stray log lines.
     """
     total = 0
     for root, _, files in os.walk(path):
@@ -73,7 +76,8 @@ def directory_size_bytes(path: str) -> int:
             try:
                 total += os.path.getsize(file_path)
             except OSError:
-                logger.warning(f"Could not read file size for {file_path}")
+                if warn:
+                    logger.warning(f"Could not read file size for {file_path}")
     return total
 
 
