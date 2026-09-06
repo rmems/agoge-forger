@@ -276,6 +276,41 @@ def test_lora_weights_must_cover_every_base_module_selected_by_target(tmp_path, 
     assert build_run_status(str(run_dir), allow_unsafe=legacy)["export"]["ready"] is False
 
 
+def test_all_linear_target_sentinel_is_export_ready(tmp_path):
+    """A genuine PEFT ``target_modules="all-linear"`` adapter must not read as unready.
+
+    PEFT treats the exact string as a special target spec, resolves it against
+    the loaded base model, and persists the literal sentinel back to
+    ``adapter_config.json``. It is also a valid regex, so a naive parse matches
+    only a module literally named ``all-linear`` and every real target looks
+    unaccounted for.
+    """
+    run_dir = _make_run_dir(tmp_path)
+    base_model = tmp_path / "base-model"
+    base_model.mkdir()
+    base_config = LlamaConfig(**TINY_LLAMA_CONFIG)
+    (base_model / "config.json").write_text(base_config.to_json_string())
+    with torch.device("meta"):
+        base = AutoModelForCausalLM.from_config(base_config, trust_remote_code=False)
+        _write_base_weights(base_model, base)
+        peft_model = get_peft_model(
+            base,
+            LoraConfig(r=2, target_modules="all-linear", task_type="CAUSAL_LM"),
+        )
+    shapes = {
+        key: tuple(value.shape) for key, value in get_peft_model_state_dict(peft_model).items()
+    }
+    (run_dir / "adapter_model.safetensors").write_bytes(_safetensors_with_shapes(shapes))
+    _write_lora_config(
+        run_dir,
+        base_model_name_or_path=str(base_model),
+        r=2,
+        target_modules="all-linear",
+    )
+
+    assert build_run_status(str(run_dir))["export"]["ready"] is True
+
+
 def _assert_genuine_peft_adapter_ready(tmp_path: Path, base_config, lora_config) -> None:
     run_dir = _make_run_dir(tmp_path)
     base_model = tmp_path / "base-model"

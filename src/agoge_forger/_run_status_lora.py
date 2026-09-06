@@ -71,6 +71,10 @@ def _expected_pair_shapes(
     return (rank, base.input_size), (base.output_size, rank)
 
 
+# PEFT's documented special target spec; see peft.tuners.tuners_utils.
+_ALL_LINEAR_TARGETS = "all-linear"
+
+
 def _regex_target_spec(target: str) -> SafeTargetPattern | None:
     return parse_safe_target_pattern(target)
 
@@ -217,9 +221,18 @@ def lora_shapes_usable(
     expected_modules = {
         module for module in base_modules if _module_matches_targets(module, targets)
     }
+    # PEFT treats the exact string "all-linear" as a sentinel and resolves it
+    # against the loaded base model when the adapter is attached, then persists
+    # the literal sentinel to adapter_config.json. It is also a valid regex, so
+    # it parses here as a pattern matching a module literally named
+    # "all-linear" and leaves expected_modules empty. The target set is simply
+    # not knowable from adapter metadata, so skip the two coverage comparisons
+    # rather than report a genuine all-linear adapter as not ready. Every
+    # shape, DoRA, and inventory check below still applies.
+    coverage_knowable = config.target_modules != _ALL_LINEAR_TARGETS
     checks = (
-        _targets_cover_modules(targets, modules),
-        normalized_modules == expected_modules,
+        not coverage_knowable or _targets_cover_modules(targets, modules),
+        not coverage_knowable or normalized_modules == expected_modules,
         _left_pair_shapes_usable(shapes, pairs, config, base_modules),
         _dora_shapes_usable(shapes, modules, config, base_modules),
         _inventory_usable(shapes, pairs, config, base_modules),
