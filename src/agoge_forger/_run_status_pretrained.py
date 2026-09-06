@@ -24,11 +24,13 @@ def offline_pretrained(
     revision: str | None = None,
 ) -> Any:
     loader = getattr(factory, "from_pretrained", None)
-    # The `is None` arm is spelled out separately from `callable(...)` so static
-    # analysis can narrow the optional away before the call below. Qodana's
-    # PyCallingNonCallable does not narrow through `callable()` on its own and
-    # reports the call as "'None' object is not callable" without it.
-    if loader is None or not callable(loader):
+    # The `is None` arm stands on its own rather than joining the callable check
+    # with `or`: static analysis narrows the optional away through a standalone
+    # `is None` guard, but not through `callable()` or a disjunction. Without it
+    # Qodana reports the call below as "'None' object is not callable".
+    if loader is None:
+        raise TypeError("from_pretrained is missing")
+    if not callable(loader):
         raise TypeError("from_pretrained is not callable")
     revision_kwarg = {} if revision is None else {"revision": revision}
     return loader(
