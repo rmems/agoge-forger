@@ -58,7 +58,14 @@ def estimate_training_risk(config, gpu_report):
             logger.warning("RISK: max_seq_length > 2048 on 16GB VRAM may cause OOM.")
 
 
-def _directory_size_bytes(path: str) -> int:
+def directory_size_bytes(path: str) -> int:
+    """Sum the apparent size of every regular file under ``path``.
+
+    Unreadable files are logged and counted as zero rather than raising, so a
+    size report never fails on a permission error or a file that vanished mid
+    walk. Callers that present the total to an operator should therefore call it
+    an estimate. ``os.walk`` does not descend symlinked directories.
+    """
     total = 0
     for root, _, files in os.walk(path):
         for filename in files:
@@ -94,7 +101,7 @@ def collect_disk_pressure_report(config, monitored_paths=None):
     for path in monitored_paths:
         entry = {"path": path, "exists": os.path.exists(path), "size_gb": 0.0}
         if entry["exists"]:
-            entry["size_gb"] = _directory_size_bytes(path) / BYTES_PER_GB
+            entry["size_gb"] = directory_size_bytes(path) / BYTES_PER_GB
         report["paths"].append(entry)
 
     return report
