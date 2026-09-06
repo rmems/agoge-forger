@@ -11,7 +11,12 @@ import numpy as np
 import pytest
 import torch
 from peft import LoraConfig, get_peft_model
-from test_run_status import (
+from transformers import AutoModelForCausalLM, LlamaConfig, Trainer
+from transformers.training_args import ParallelMode
+
+from agoge_forger._run_status_torch_archive import torch_mapping
+from agoge_forger.run_status import build_run_status
+from tests.test_run_status import (
     TINY_LLAMA_CONFIG,
     _make_run_dir,
     _minimal_safetensors,
@@ -20,11 +25,6 @@ from test_run_status import (
     _write_test_tokenizer,
     _write_torch_state,
 )
-from transformers import AutoModelForCausalLM, LlamaConfig, Trainer
-from transformers.training_args import ParallelMode
-
-from agoge_forger._run_status_torch_archive import torch_mapping
-from agoge_forger.run_status import build_run_status
 
 
 def test_empty_checkpoint_weights_are_not_resume_ready(tmp_path):

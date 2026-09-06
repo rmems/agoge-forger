@@ -4,17 +4,17 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from test_run_status import (
-    TINY_LLAMA_CONFIG,
-    TINY_LLAMA_SHAPES,
-    TINY_TOKENIZER,
-    _safetensors_with_shapes,
-)
 from transformers.utils import hub as transformers_hub
 
 import agoge_forger._run_status_base_model as base_model_validation
 import agoge_forger._run_status_hub_cache as hub_cache
 import agoge_forger._run_status_validation as validation
+from tests.test_run_status import (
+    TINY_LLAMA_CONFIG,
+    TINY_LLAMA_SHAPES,
+    TINY_TOKENIZER,
+    _safetensors_with_shapes,
+)
 
 REVISION = "d3040b7c81a0a810fa13c6f392f3e304a0e121d5"
 OTHER_REVISION = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

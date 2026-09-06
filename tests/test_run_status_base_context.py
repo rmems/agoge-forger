@@ -2,10 +2,9 @@
 
 import json
 
-from test_run_status import TINY_LLAMA_CONFIG, TINY_LLAMA_SHAPES, _safetensors_with_shapes
-from test_run_status_adapters import _make_run_dir, _write_final_adapter
-
 from agoge_forger.run_status import build_run_status
+from tests.test_run_status import TINY_LLAMA_CONFIG, TINY_LLAMA_SHAPES, _safetensors_with_shapes
+from tests.test_run_status_adapters import _make_run_dir, _write_final_adapter
 
 
 def test_local_adapter_base_requires_usable_tokenizer(tmp_path):

@@ -6,7 +6,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from test_run_status import (
+from typer.testing import CliRunner
+
+from agoge_forger._run_status_artifact_index import artifact_index_usable
+from agoge_forger.artifacts.safetensors_io import write_artifact_index
+from agoge_forger.cli import app
+from agoge_forger.run_status import build_run_status, find_merged_model_dir, is_merged_model_dir
+from tests.test_run_status import (
     TINY_LLAMA_CONFIG,
     TINY_LLAMA_SHAPES,
     TINY_TOKENIZER,
@@ -19,12 +25,6 @@ from test_run_status import (
     _write_final_adapter,
     _write_merged_model,
 )
-from typer.testing import CliRunner
-
-from agoge_forger._run_status_artifact_index import artifact_index_usable
-from agoge_forger.artifacts.safetensors_io import write_artifact_index
-from agoge_forger.cli import app
-from agoge_forger.run_status import build_run_status, find_merged_model_dir, is_merged_model_dir
 
 
 @pytest.fixture

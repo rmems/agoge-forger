@@ -1,7 +1,8 @@
 """Exact serialized LoRA tensor-inventory tests."""
 
 import pytest
-from test_run_status_adapters import _lora_shapes_ready
+
+from tests.test_run_status_adapters import _lora_shapes_ready
 
 
 @pytest.mark.parametrize("legacy", [False, True], ids=["safetensors", "legacy-bin"])

@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 import torch
-from test_run_status import _make_run_dir, _write_checkpoint, _write_torch_state
 from transformers import get_scheduler
 
 from agoge_forger import _run_status_trainer_state as trainer_state_validation
 from agoge_forger.run_status import build_run_status
+from tests.test_run_status import _make_run_dir, _write_checkpoint, _write_torch_state
 
 
 def test_genuine_trainer_lambda_scheduler_requires_serialized_lambda_state(tmp_path):

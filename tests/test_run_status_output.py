@@ -3,16 +3,16 @@
 import json
 
 import pytest
-from test_run_status import (
+from typer.testing import CliRunner
+
+from agoge_forger.cli import app
+from agoge_forger.run_status import build_run_status, format_run_status_table
+from tests.test_run_status import (
     _make_run_dir,
     _write_checkpoint,
     _write_final_adapter,
     _write_merged_model,
 )
-from typer.testing import CliRunner
-
-from agoge_forger.cli import app
-from agoge_forger.run_status import build_run_status, format_run_status_table
 
 
 @pytest.fixture

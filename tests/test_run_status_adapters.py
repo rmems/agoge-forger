@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 import torch
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
-from test_run_status import (
+from transformers import AutoModelForCausalLM, GPT2Config, LlamaConfig
+from typer.testing import CliRunner
+
+from agoge_forger.cli import app
+from agoge_forger.run_status import build_run_status
+from tests.test_run_status import (
     SKIP_IF_ROOT,
     TINY_LLAMA_CONFIG,
     _deny_read_access_or_skip,
@@ -23,11 +28,6 @@ from test_run_status import (
     _write_legacy_bin_adapter,
     _write_test_tokenizer,
 )
-from transformers import AutoModelForCausalLM, GPT2Config, LlamaConfig
-from typer.testing import CliRunner
-
-from agoge_forger.cli import app
-from agoge_forger.run_status import build_run_status
 
 
 @pytest.fixture

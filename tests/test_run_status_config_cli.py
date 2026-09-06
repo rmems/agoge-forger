@@ -4,7 +4,11 @@ import json
 import os
 
 import pytest
-from test_run_status import (
+from typer.testing import CliRunner
+
+from agoge_forger.cli import app
+from agoge_forger.run_status import build_run_status, find_merged_model_dir
+from tests.test_run_status import (
     SKIP_IF_ROOT,
     _deny_read_access_or_skip,
     _make_run_dir,
@@ -13,10 +17,6 @@ from test_run_status import (
     _write_final_adapter,
     _write_merged_model,
 )
-from typer.testing import CliRunner
-
-from agoge_forger.cli import app
-from agoge_forger.run_status import build_run_status, find_merged_model_dir
 
 
 @pytest.fixture

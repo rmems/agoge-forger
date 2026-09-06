@@ -3,10 +3,10 @@
 import pytest
 import torch
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
-from test_run_status import TINY_LLAMA_CONFIG
 from transformers import AutoModelForCausalLM, GPT2Config, LlamaConfig
 
 from agoge_forger._run_status_optimizer_order import ordered_trainable_shapes
+from tests.test_run_status import TINY_LLAMA_CONFIG
 
 
 @pytest.mark.parametrize(
