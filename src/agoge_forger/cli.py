@@ -1,23 +1,33 @@
 """Agoge Forger Typer CLI entry point.
 
-The commands live in `_cli_*` modules grouped by responsibility; importing them
-here is what registers each one against the shared `app`. The console script
-stays `agoge_forger.cli:app`, so no command name or invocation changes.
+The commands live in `_cli_*` modules grouped by responsibility. Importing each
+module is what registers its commands against the shared `app`, so the console
+script stays `agoge_forger.cli:app` and no command name or invocation changes.
+
+The modules are imported by name rather than with `import` statements because
+nothing here references them: as plain imports they read as unused to every
+linter, and the suppressions needed to quiet that would also hide a genuinely
+dead one. Listing them makes the registration explicit, and the order is the
+order `agoge --help` prints, pinned to the pre-split listing.
 """
 
-# ruff: noqa: I001
-# Import order is registration order, which is the order `agoge --help` lists
-# commands in. It is pinned to the pre-split listing rather than sorted, so the
-# help output a reader already knows does not get reshuffled by a refactor.
-from ._cli_app import app
-from . import _cli_env  # noqa: F401
-from . import _cli_train  # noqa: F401
-from . import _cli_export  # noqa: F401
-from . import _cli_runs  # noqa: F401
-from . import _cli_data  # noqa: F401
-from . import _cli_serving  # noqa: F401
+from importlib import import_module
 
-__all__ = ["app"]
+from ._cli_app import app
+
+COMMAND_MODULES = (
+    "_cli_env",
+    "_cli_train",
+    "_cli_export",
+    "_cli_runs",
+    "_cli_data",
+    "_cli_serving",
+)
+
+for _module_name in COMMAND_MODULES:
+    import_module(f".{_module_name}", __package__)
+
+__all__ = ["COMMAND_MODULES", "app"]
 
 
 if __name__ == "__main__":
