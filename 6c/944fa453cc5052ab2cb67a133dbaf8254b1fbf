@@ -1,0 +1,31 @@
+src/agoge_forger/_cli_train.py
+  s_c521f183ceb59a::t_2284aa38950bd1 5,11-23,27,34
+src/agoge_forger/artifacts/safetensors_io.py
+  s_c521f183ceb59a::t_2284aa38950bd1 46-49,51
+src/agoge_forger/_cli_export.py
+  s_c521f183ceb59a::t_2284aa38950bd1 19-20,25,55,86-98,120,144
+src/agoge_forger/_cli_env.py
+  s_c521f183ceb59a::t_2284aa38950bd1 16-18,28-29,37-38,47,49
+src/agoge_forger/_cli_runs.py
+  s_c521f183ceb59a::t_2284aa38950bd1 32,39-43
+src/agoge_forger/_cli_serving.py
+  s_c521f183ceb59a::t_2284aa38950bd1 118-128,134-137
+tests/test_cli_defects.py
+  s_c521f183ceb59a::t_2284aa38950bd1 9,14-18,207-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6c944fa453cc5052ab2cb67a133dbaf8254b1fbf",
+  "prompts": {},
+  "sessions": {
+    "s_c521f183ceb59a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d8860f5f-78ff-48ae-8850-8817a3c51c76",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
