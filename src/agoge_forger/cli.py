@@ -4,30 +4,28 @@ The commands live in `_cli_*` modules grouped by responsibility. Importing each
 module is what registers its commands against the shared `app`, so the console
 script stays `agoge_forger.cli:app` and no command name or invocation changes.
 
-The modules are imported by name rather than with `import` statements because
-nothing here references them: as plain imports they read as unused to every
-linter, and the suppressions needed to quiet that would also hide a genuinely
-dead one. Listing them makes the registration explicit, and the order is the
-order `agoge --help` prints, pinned to the pre-split listing.
+Nothing here references the imported modules, so they read as unused: the
+`pylint: disable` below is scoped to just that block, matching how this file
+already scopes `too-many-arguments` around the wide serving commands.
 """
 
-from importlib import import_module
-
+# ruff: noqa: I001
+# Import order is registration order, which is the order `agoge --help` lists
+# commands in. It is pinned to the pre-split listing rather than sorted, so the
+# help output a reader already knows does not get reshuffled by a refactor.
 from ._cli_app import app
 
-COMMAND_MODULES = (
-    "_cli_env",
-    "_cli_train",
-    "_cli_export",
-    "_cli_runs",
-    "_cli_data",
-    "_cli_serving",
-)
+# pylint: disable=unused-import
+from . import _cli_env  # noqa: F401
+from . import _cli_train  # noqa: F401
+from . import _cli_export  # noqa: F401
+from . import _cli_runs  # noqa: F401
+from . import _cli_data  # noqa: F401
+from . import _cli_serving  # noqa: F401
 
-for _module_name in COMMAND_MODULES:
-    import_module(f".{_module_name}", __package__)
+# pylint: enable=unused-import
 
-__all__ = ["COMMAND_MODULES", "app"]
+__all__ = ["app"]
 
 
 if __name__ == "__main__":
