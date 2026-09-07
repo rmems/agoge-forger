@@ -20,7 +20,14 @@ _DEFAULT_SMOKE_BASE_URL: str = ChatCompletionsConfig.model_fields["base_url"].de
 
 
 def _merge_serving_config(config_path: str | None, overrides: dict[str, Any]) -> ServingConfig:
-    cfg = load_serving_config(config_path) if config_path else ServingConfig()
+    try:
+        cfg = load_serving_config(config_path) if config_path else ServingConfig()
+    except TypeError as exc:
+        # load_serving_config validates the shape but signals a non-mapping config
+        # with TypeError, which no boundary caught — so `serve-vllm --config` on a
+        # YAML sequence produced a traceback. smoke-vllm's side of this was fixed
+        # in 6c944fa4; this is the same defect on the serving path.
+        raise typer.BadParameter(str(exc), param_hint="--config") from exc
     for key, value in overrides.items():
         if value is not None:
             setattr(cfg, key, value)

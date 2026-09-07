@@ -9,6 +9,7 @@ import json
 import os
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from agoge_forger._cli_serving import (
@@ -96,6 +97,18 @@ def test_dry_run_defaults_off_without_a_config():
     cfg = _merge_serving_config(None, {"model": "example/model", "dry_run": None})
 
     assert cfg.dry_run is False
+
+
+@pytest.mark.parametrize("body", ["- a\n- b\n", "just a string\n", "42\n"])
+def test_non_mapping_serving_config_is_a_usage_error(tmp_path, body):
+    """`load_serving_config` signals a non-mapping config with TypeError, which no
+    boundary caught — so `serve-vllm --config` on a sequence gave a traceback.
+    smoke-vllm's side of this was already closed; this is the serving path."""
+    path = tmp_path / "serving.yaml"
+    path.write_text(body)
+
+    with pytest.raises(typer.BadParameter):
+        _merge_serving_config(str(path), {"model": "example/model"})
 
 
 # --- inspect-safetensors -----------------------------------------------------
