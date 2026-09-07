@@ -72,17 +72,24 @@ class CleanupOptions:
     merged_dir: str | None = None
 
 
-def _keep_set(run_dir: Path, steps: list[int], keep_latest: int) -> set[Path]:
+def _keep_set(candidates: list[Path], steps: list[int], keep_latest: int) -> set[Path]:
     """The N highest-step checkpoints worth keeping as a resume point.
 
-    `steps` is the ascending list of *valid* checkpoint steps that
+    Selected from the directories actually on disk, matched to the valid steps
     `build_run_status` already scanned for, so the keep set costs no extra
-    directory walk. Only valid checkpoints qualify: keeping a half-written
-    snapshot would reclaim less disk while leaving nothing to resume from.
+    directory walk. The paths must come from the real entries rather than being
+    rebuilt from a step number: `checkpoint-001` parses as step 1, and a
+    reconstructed `checkpoint-1` would match nothing, so `--keep-latest 1` would
+    delete the very snapshot it was asked to keep.
+
+    Only valid checkpoints qualify: keeping a half-written one would reclaim less
+    disk while leaving nothing to resume from.
     """
     if keep_latest <= 0:
         return set()
-    return {(run_dir / f"checkpoint-{step}").resolve() for step in steps[-keep_latest:]}
+    valid = {step for step in steps}
+    keepable = [path for path in candidates if checkpoint_step(path) in valid]
+    return {path.resolve() for path in keepable[-keep_latest:]}
 
 
 def _guard(report: dict[str, Any]) -> bool:
@@ -151,20 +158,32 @@ def _resolved_run_dir(run_dir: str) -> tuple[Path, Path]:
     return logical, resolve_existing_path(run_dir, must_be_dir=True)
 
 
+def contains_mount(root: Path) -> bool:
+    """True when `root` or anything beneath it is a mount point.
+
+    `rmtree` descends into a mounted subdirectory and deletes its contents before
+    failing on the busy mount itself, so testing only the checkpoint root would
+    still let `checkpoint-100/cache` take data from another filesystem with it.
+    """
+    if os.path.ismount(root):
+        return True
+    for parent, dirs, _ in os.walk(root):
+        if any(os.path.ismount(os.path.join(parent, name)) for name in dirs):
+            return True
+    return False
+
+
 def _partition_candidates(
-    run_dir: Path, keep: set[Path]
+    candidates: list[Path], keep: set[Path]
 ) -> tuple[list[dict[str, Any]], list[str], list[dict[str, str]]]:
     """Split `checkpoint-*` entries into removable, kept, and skipped."""
     removable: list[dict[str, Any]] = []
     kept: list[str] = []
     skipped: list[dict[str, str]] = []
-    for candidate in _candidate_dirs(run_dir):
+    for candidate in candidates:
         if candidate.is_symlink():
             skipped.append({"path": str(candidate), "reason": "symlink"})
-        elif os.path.ismount(candidate):
-            # rmtree would descend into the mounted filesystem and delete its
-            # contents before failing on the busy mount point itself, destroying
-            # data that is not part of this run.
+        elif contains_mount(candidate):
             skipped.append({"path": str(candidate), "reason": "mount"})
         elif candidate.resolve() in keep:
             kept.append(str(candidate))
@@ -202,8 +221,9 @@ def plan_cleanup(run_dir: str, options: CleanupOptions | None = None) -> dict[st
     recoverable = _guard(report)
     _require_recoverable(recoverable, resolved_run_dir, force=options.force)
 
-    keep = _keep_set(resolved_run_dir, report["checkpoints"]["steps"], options.keep_latest)
-    removable, kept, skipped = _partition_candidates(resolved_run_dir, keep)
+    candidates = _candidate_dirs(resolved_run_dir)
+    keep = _keep_set(candidates, report["checkpoints"]["steps"], options.keep_latest)
+    removable, kept, skipped = _partition_candidates(candidates, keep)
 
     return {
         "schema_version": CLEANUP_SCHEMA_VERSION,
@@ -250,54 +270,35 @@ def _refresh_artifact_index(run_dir: Path, provenance: Any) -> tuple[bool, str |
 
 
 def _surviving_files_unchanged(run_dir: Path) -> str | None:
-    """Confirm the survivors still match what the old index recorded.
+    """Confirm the files that survived still hash to what the old index recorded.
 
     Cleanup carries the old producer provenance into the rewritten index. If a
-    surviving file has been modified, or a new one has appeared, since that index
-    was written, resealing would stamp the original attestation onto content it
-    never covered and produce an index that validates -- laundering the change
-    past the evaluation contract. Report the discrepancy instead of rewriting.
+    surviving adapter or tokenizer file has been modified since that index was
+    written, resealing would stamp the original provenance onto altered content
+    and produce an index that validates -- laundering the change past the
+    evaluation contract. Report a mismatch instead of rewriting.
 
-    Returns None when everything checks out, or a message naming the first
-    problem found.
+    Returns None when everything checks out, or a message naming the first file
+    that does not.
     """
     index_path = run_dir / _ARTIFACT_INDEX_NAME
     try:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
         entries = payload["artifacts"]
-        # Validate the shape here, inside the guard: by the time this runs the
-        # checkpoints are already gone, so an index with `"artifacts": null` or a
-        # non-object entry must not raise its way out of a completed deletion.
-        indexed = {str(entry["file"]): entry.get("sha256") for entry in entries}
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        # An index we cannot read is handled by the provenance path instead;
-        # there is nothing here to verify against.
+    except (OSError, ValueError, KeyError, TypeError):
+        # An index we cannot read is handled by the provenance path; nothing to
+        # verify against here.
         return None
-
-    for name, digest in indexed.items():
-        target = run_dir / name
+    for entry in entries:
+        target = run_dir / str(entry.get("file", ""))
         if not target.is_file():
             # Deleted checkpoints are exactly what this rewrite is for.
             continue
         try:
-            if sha256_file(str(target)) != digest:
+            if sha256_file(str(target)) != entry.get("sha256"):
                 return f"{target} changed since {_ARTIFACT_INDEX_NAME} was written"
         except OSError as exc:
             return f"could not verify {target}: {exc}"
-
-    unindexed = _unindexed_survivor(run_dir, set(indexed))
-    if unindexed is not None:
-        return f"{unindexed} appeared since {_ARTIFACT_INDEX_NAME} was written"
-    return None
-
-
-def _unindexed_survivor(run_dir: Path, indexed: set[str]) -> Path | None:
-    """The first surviving file the old index never covered, if there is one."""
-    for path in sorted(run_dir.rglob("*")):
-        if not path.is_file() or path.name == _ARTIFACT_INDEX_NAME:
-            continue
-        if str(path.relative_to(run_dir)) not in indexed:
-            return path
     return None
 
 
@@ -316,6 +317,43 @@ def _sealed_provenance(run_dir: Path) -> Any:
         return None
 
 
+def _remove_checkpoints(
+    entries: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Delete each planned checkpoint, returning what went and what refused.
+
+    One failure does not abort the rest: a checkpoint held open by another
+    process should not strand the others on disk.
+    """
+    removed: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = []
+    for entry in entries:
+        try:
+            shutil.rmtree(Path(entry["path"]))
+        except OSError as exc:
+            failed.append({"path": entry["path"], "error": str(exc)})
+        else:
+            removed.append(entry)
+    return removed, failed
+
+
+def _reseal_index(
+    run_dir: Path, provenance: Any, removed: list[dict[str, Any]]
+) -> tuple[bool, str | None]:
+    """Rebuild the artifact index over the state that actually exists.
+
+    Keyed off what was really removed rather than what was planned, so a partial
+    failure still leaves a truthful index. Nothing was deleted means nothing to
+    reseal.
+    """
+    if not removed:
+        return False, None
+    tampered = _surviving_files_unchanged(run_dir)
+    if tampered is not None:
+        return False, tampered
+    return _refresh_artifact_index(run_dir, provenance)
+
+
 def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
     """Remove the checkpoints named by ``plan`` and report what actually went.
 
@@ -327,25 +365,8 @@ def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
     run_dir = Path(plan["run_dir"])
     provenance = _sealed_provenance(run_dir)
 
-    removed: list[dict[str, Any]] = []
-    failed: list[dict[str, str]] = []
-    for entry in plan["removed"]:
-        target = Path(entry["path"])
-        try:
-            shutil.rmtree(target)
-        except OSError as exc:
-            failed.append({"path": entry["path"], "error": str(exc)})
-            continue
-        removed.append(entry)
-
-    # Rebuild from the state that actually exists, not the state that was
-    # planned, so a partial failure still leaves a truthful index.
-    rewritten: bool = False
-    index_error: str | None = None
-    if removed:
-        index_error = _surviving_files_unchanged(run_dir)
-        if index_error is None:
-            rewritten, index_error = _refresh_artifact_index(run_dir, provenance)
+    removed, failed = _remove_checkpoints(plan["removed"])
+    rewritten, index_error = _reseal_index(run_dir, provenance, removed)
     if index_error is not None:
         # The checkpoints are gone but the index still lists them, so the run's
         # own metadata is now wrong. That is a failed cleanup, not a success.
