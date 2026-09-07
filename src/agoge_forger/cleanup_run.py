@@ -13,6 +13,8 @@ touching the filesystem (that is exactly what `--dry-run` runs), and
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -21,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts.producer_provenance import producer_provenance_from_adapter
-from .artifacts.safetensors_io import write_artifact_index
+from .artifacts.safetensors_io import sha256_file, write_artifact_index
 from .logging import logger
 from .path_safety import resolve_existing_path
 from .run_status import build_run_status
@@ -84,8 +86,41 @@ def _keep_set(run_dir: Path, steps: list[int], keep_latest: int) -> set[Path]:
 
 
 def _guard(report: dict[str, Any]) -> bool:
-    """True when a final artifact survives cleanup, so pruning is recoverable."""
-    return bool(report["final_adapter"]["present"] or report["merged_model"]["present"])
+    """True when a *usable* final artifact survives cleanup.
+
+    `final_adapter.present` only says the expected filenames exist, so a run
+    interrupted after `save_pretrained` but before the tokenizer or the index was
+    written still looks finished. `export.ready` is the validated answer, but on
+    its own it is not enough: with no run-root adapter it reports the latest
+    *checkpoint* as the export source, which is precisely what is about to be
+    deleted. So the guard requires a ready export whose source is the final
+    adapter -- something that survives the prune.
+
+    A merged model counts only when its sealed provenance matches the run's.
+    `merged/<run_name>` is a naming convention, so a leftover directory from an
+    older experiment of the same name would otherwise satisfy a destructive
+    guard for a run it has nothing to do with.
+    """
+    export = report["export"]
+    adapter_ready = bool(export["ready"] and export["source_kind"] == "final_adapter")
+    return bool(adapter_ready or report["merged_model"]["matches_run"])
+
+
+def _merged_matches_run(run_dir: Path, merged_path: str | None) -> bool:
+    """True when the merged model was sealed from this run's adapter.
+
+    Compares the producer provenance on both sides. A merged directory with no
+    provenance, or one carrying a different run's, does not count: the point of
+    the guard is that something recoverable *from this run* survives.
+    """
+    if merged_path is None:
+        return False
+    try:
+        merged = producer_provenance_from_adapter(merged_path)
+        run = producer_provenance_from_adapter(run_dir)
+    except (OSError, ValueError, TypeError):
+        return False
+    return bool(merged == run)
 
 
 def _resolved_run_dir(run_dir: str) -> tuple[Path, Path]:
@@ -96,8 +131,12 @@ def _resolved_run_dir(run_dir: str) -> tuple[Path, Path]:
     command has to refuse the link itself before resolving.
     """
     logical = Path(run_dir).expanduser()
-    if logical.is_symlink():
-        raise ValueError(f"Refusing to clean a symlinked run directory: {logical}")
+    # Check every component, not just the leaf: a symlinked *parent* redirects
+    # the whole walk just as effectively as a symlinked run directory.
+    probe = logical if logical.is_absolute() else Path.cwd() / logical
+    for parent in (probe, *probe.parents):
+        if parent.is_symlink():
+            raise ValueError(f"Refusing to clean through a symlinked path: {parent}")
     return logical, resolve_existing_path(run_dir, must_be_dir=True)
 
 
@@ -111,6 +150,11 @@ def _partition_candidates(
     for candidate in _candidate_dirs(run_dir):
         if candidate.is_symlink():
             skipped.append({"path": str(candidate), "reason": "symlink"})
+        elif os.path.ismount(candidate):
+            # rmtree would descend into the mounted filesystem and delete its
+            # contents before failing on the busy mount point itself, destroying
+            # data that is not part of this run.
+            skipped.append({"path": str(candidate), "reason": "mount"})
         elif candidate.resolve() in keep:
             kept.append(str(candidate))
         else:
@@ -141,6 +185,9 @@ def plan_cleanup(run_dir: str, options: CleanupOptions | None = None) -> dict[st
         run_dir, merged_dir=options.merged_dir, allow_unsafe=options.allow_unsafe
     )
 
+    report["merged_model"]["matches_run"] = _merged_matches_run(
+        resolved_run_dir, report["merged_model"]["path"]
+    )
     recoverable = _guard(report)
     if not recoverable and not options.force:
         raise ValueError(
@@ -185,13 +232,48 @@ def _refresh_artifact_index(run_dir: Path, provenance: Any) -> tuple[bool, str |
     False: the checkpoints are already gone at that point, so the index on disk
     now lists files that do not exist and the caller has to report it.
     """
-    if provenance is None:
+    if not (run_dir / _ARTIFACT_INDEX_NAME).is_file():
+        # Nothing to maintain, and cleanup should not invent an index a run
+        # never had.
         return False, None
     try:
         write_artifact_index(str(run_dir), producer_provenance=provenance)
     except (OSError, ValueError) as exc:
         return False, str(exc)
     return True, None
+
+
+def _surviving_files_unchanged(run_dir: Path) -> str | None:
+    """Confirm the files that survived still hash to what the old index recorded.
+
+    Cleanup carries the old producer provenance into the rewritten index. If a
+    surviving adapter or tokenizer file has been modified since that index was
+    written, resealing would stamp the original provenance onto altered content
+    and produce an index that validates -- laundering the change past the
+    evaluation contract. Report a mismatch instead of rewriting.
+
+    Returns None when everything checks out, or a message naming the first file
+    that does not.
+    """
+    index_path = run_dir / _ARTIFACT_INDEX_NAME
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        entries = payload["artifacts"]
+    except (OSError, ValueError, KeyError, TypeError):
+        # An index we cannot read is handled by the provenance path; nothing to
+        # verify against here.
+        return None
+    for entry in entries:
+        target = run_dir / str(entry.get("file", ""))
+        if not target.is_file():
+            # Deleted checkpoints are exactly what this rewrite is for.
+            continue
+        try:
+            if sha256_file(str(target)) != entry.get("sha256"):
+                return f"{target} changed since {_ARTIFACT_INDEX_NAME} was written"
+        except OSError as exc:
+            return f"could not verify {target}: {exc}"
+    return None
 
 
 def _sealed_provenance(run_dir: Path) -> Any:
@@ -233,9 +315,12 @@ def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
 
     # Rebuild from the state that actually exists, not the state that was
     # planned, so a partial failure still leaves a truthful index.
-    rewritten, index_error = (
-        _refresh_artifact_index(run_dir, provenance) if removed else (False, None)
-    )
+    rewritten: bool = False
+    index_error: str | None = None
+    if removed:
+        index_error = _surviving_files_unchanged(run_dir)
+        if index_error is None:
+            rewritten, index_error = _refresh_artifact_index(run_dir, provenance)
     if index_error is not None:
         # The checkpoints are gone but the index still lists them, so the run's
         # own metadata is now wrong. That is a failed cleanup, not a success.

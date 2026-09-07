@@ -143,13 +143,41 @@ def test_force_overrides_the_guard_and_records_it(tmp_path):
     assert len(plan["removed"]) == 3
 
 
-def test_a_merged_model_alone_satisfies_the_guard(tmp_path):
+def test_unrelated_merged_model_does_not_satisfy_the_guard(tmp_path):
+    """`merged/<run_name>` is a naming convention. A leftover model from an older
+    experiment of the same name must not authorize deleting a new run's only
+    checkpoints."""
     run_dir = _run_with_checkpoints(tmp_path, final_adapter=False)
     _write_merged_model(tmp_path / "merged" / "demo_run")
+
+    with pytest.raises(ValueError, match="only recoverable artifact"):
+        plan_cleanup(str(run_dir))
+
+    assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-150", "checkpoint-50"]
+
+
+def test_merged_model_sealed_from_this_run_satisfies_the_guard(tmp_path):
+    run_dir = _run_with_checkpoints(tmp_path, final_adapter=False)
+    merged = tmp_path / "merged" / "demo_run"
+    _write_merged_model(merged)
+    # Same sealed provenance on both sides is what binds the merge to this run.
+    write_artifact_index(str(run_dir), producer_provenance=_provenance())
+    write_artifact_index(str(merged), producer_provenance=_provenance())
 
     plan = plan_cleanup(str(run_dir))
 
     assert plan["guard"] == {"final_artifact": True, "forced": False}
+
+
+def test_incomplete_final_adapter_does_not_satisfy_the_guard(tmp_path):
+    """Filenames alone are not readiness: a run interrupted before its weights
+    were written still looks finished to a presence check."""
+    run_dir = _run_with_checkpoints(tmp_path, final_adapter=False)
+    (run_dir / "adapter_config.json").write_text(json.dumps({"base_model_name_or_path": "x/y"}))
+    (run_dir / "adapter_model.safetensors").write_bytes(b"truncated")
+
+    with pytest.raises(ValueError, match="only recoverable artifact"):
+        plan_cleanup(str(run_dir))
 
 
 def test_symlinked_run_dir_is_refused(tmp_path):
@@ -157,7 +185,7 @@ def test_symlinked_run_dir_is_refused(tmp_path):
     link = tmp_path / "adapters" / "link_run"
     link.symlink_to(run_dir, target_is_directory=True)
 
-    with pytest.raises(ValueError, match="symlinked run directory"):
+    with pytest.raises(ValueError, match="symlinked path"):
         plan_cleanup(str(link))
 
     assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-150", "checkpoint-50"]
@@ -266,15 +294,50 @@ def test_unreadable_file_is_counted_as_zero_not_fatal(tmp_path, monkeypatch):
 
 
 def test_malformed_artifact_index_does_not_crash_cleanup(tmp_path):
-    """A JSON array parses fine but raises TypeError, not ValueError, on read."""
+    """A JSON array parses fine but raises TypeError, not ValueError, on read.
+
+    The index is still rebuilt: one that exists must never be left listing files
+    cleanup just deleted, whether or not its provenance could be read.
+    """
     run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
     (run_dir / "artifact_index.json").write_text("[]")
 
     report = execute_cleanup(plan_cleanup(str(run_dir)))
 
-    assert report["artifact_index_rewritten"] is False
+    assert report["artifact_index_rewritten"] is True
     assert report["failed"] == []
     assert _checkpoint_names(run_dir) == []
+    assert not any(name.startswith("checkpoint-") for name in _indexed_files(run_dir))
+
+
+def test_index_without_provenance_is_still_rebuilt(tmp_path):
+    """Otherwise cleanup deletes the checkpoints and leaves the index naming
+    them, which is exactly what breaks evaluation-contract validation."""
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    write_artifact_index(str(run_dir))  # no producer_provenance
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert report["artifact_index_rewritten"] is True
+    assert not any(name.startswith("checkpoint-") for name in _indexed_files(run_dir))
+
+
+def test_modified_surviving_file_blocks_the_reseal(tmp_path):
+    """Resealing would stamp the original provenance onto altered content, so a
+    later contract check could no longer detect the change."""
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    _write_final_adapter(run_dir)
+    # A sealed file that is not the adapter weights, so the run stays
+    # export-ready and the guard lets cleanup reach the reseal.
+    (run_dir / "README.txt").write_text("sealed contents")
+    write_artifact_index(str(run_dir), producer_provenance=_provenance())
+    (run_dir / "README.txt").write_text("edited after sealing")
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert report["artifact_index_rewritten"] is False
+    assert len(report["failed"]) == 1
+    assert "changed since" in report["failed"][0]["error"]
 
 
 def test_index_is_left_alone_when_nothing_was_removed(tmp_path):
