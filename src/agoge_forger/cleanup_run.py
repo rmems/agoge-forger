@@ -106,6 +106,17 @@ def _guard(report: dict[str, Any]) -> bool:
     return bool(adapter_ready or report["merged_model"]["matches_run"])
 
 
+def _require_recoverable(recoverable: bool, run_dir: Path, *, force: bool) -> None:
+    """Stop unless something usable survives the prune, or the operator insisted."""
+    if recoverable or force:
+        return
+    raise ValueError(
+        f"No final adapter or merged model found under {run_dir}; "
+        "the checkpoints are the only recoverable artifact. "
+        "Re-run with --force to remove them anyway."
+    )
+
+
 def _merged_matches_run(run_dir: Path, merged_path: str | None) -> bool:
     """True when the merged model was sealed from this run's adapter.
 
@@ -189,12 +200,7 @@ def plan_cleanup(run_dir: str, options: CleanupOptions | None = None) -> dict[st
         resolved_run_dir, report["merged_model"]["path"]
     )
     recoverable = _guard(report)
-    if not recoverable and not options.force:
-        raise ValueError(
-            f"No final adapter or merged model found under {resolved_run_dir}; "
-            "the checkpoints are the only recoverable artifact. "
-            "Re-run with --force to remove them anyway."
-        )
+    _require_recoverable(recoverable, resolved_run_dir, force=options.force)
 
     keep = _keep_set(resolved_run_dir, report["checkpoints"]["steps"], options.keep_latest)
     removable, kept, skipped = _partition_candidates(resolved_run_dir, keep)
@@ -343,25 +349,30 @@ def log_cleanup(report: dict[str, Any]) -> None:
     this or the payload stops being parseable.
     """
     prefix = "[dry-run] " if report["dry_run"] else ""
-    removed = report["removed"]
-    gib = report["bytes_reclaimed"] / BYTES_PER_GB
-    verb = "would remove" if report["dry_run"] else "removed"
+    _log_removals(report, prefix)
+    _log_untouched(report, prefix)
+    _log_warnings(report)
 
+
+def _log_removals(report: dict[str, Any], prefix: str) -> None:
+    removed = report["removed"]
     if not removed:
         logger.info("%snothing to remove under %s", prefix, report["run_dir"])
-    else:
-        logger.info(
-            "%s%s %d checkpoint director%s under %s (~%.2f GiB)",
-            prefix,
-            verb,
-            len(removed),
-            "y" if len(removed) == 1 else "ies",
-            report["run_dir"],
-            gib,
-        )
-        for entry in removed:
-            logger.info("%s  %s (%.2f GiB)", prefix, entry["path"], entry["bytes"] / BYTES_PER_GB)
+        return
+    logger.info(
+        "%s%s %d checkpoint director%s under %s (~%.2f GiB)",
+        prefix,
+        "would remove" if report["dry_run"] else "removed",
+        len(removed),
+        "y" if len(removed) == 1 else "ies",
+        report["run_dir"],
+        report["bytes_reclaimed"] / BYTES_PER_GB,
+    )
+    for entry in removed:
+        logger.info("%s  %s (%.2f GiB)", prefix, entry["path"], entry["bytes"] / BYTES_PER_GB)
 
+
+def _log_untouched(report: dict[str, Any], prefix: str) -> None:
     for path in report["kept"]:
         logger.info("%skept %s", prefix, path)
     for entry in report["skipped"]:
@@ -369,13 +380,14 @@ def log_cleanup(report: dict[str, Any]) -> None:
     for entry in report["failed"]:
         logger.error("failed %s: %s", entry["path"], entry["error"])
 
+
+def _log_warnings(report: dict[str, Any]) -> None:
     if report["artifact_index_rewritten"]:
         logger.warning(
             "Rewrote %s over the surviving files; its sha256 changed, so publish any "
             "evaluation contract for this run after cleanup, not before.",
             _ARTIFACT_INDEX_NAME,
         )
-
     if report["guard"]["forced"]:
         logger.warning(
             "--force removed the only recoverable artifact under %s; this run can no "
