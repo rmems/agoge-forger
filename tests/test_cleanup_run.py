@@ -246,12 +246,22 @@ def test_unreadable_file_is_counted_as_zero_not_fatal(tmp_path, monkeypatch):
             raise OSError("vanished")
         return real_getsize(path, *args, **kwargs)
 
+    checkpoint = run_dir / "checkpoint-50"
+    # Everything except the file that will be unreadable; that one must
+    # contribute exactly zero rather than aborting the walk.
+    expected = sum(
+        real_getsize(p)
+        for p in checkpoint.rglob("*")
+        if p.is_file() and p.name != "adapter_model.safetensors"
+    )
+    assert expected > 0
+
     monkeypatch.setattr(os.path, "getsize", flaky)
 
     plan = plan_cleanup(str(run_dir))
 
     assert len(plan["removed"]) == 1
-    assert plan["bytes_reclaimed"] > 0
+    assert plan["bytes_reclaimed"] == expected
 
 
 def test_malformed_artifact_index_does_not_crash_cleanup(tmp_path):
