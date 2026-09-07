@@ -15,6 +15,7 @@ from .artifacts.safetensors_io import assert_no_unsafe_weight_bins, inspect_safe
 from .backends.torch_backend import check_torch_env
 from .cleanup_run import (
     CleanupFormat,
+    CleanupOptions,
     execute_cleanup,
     format_cleanup_table,
     log_cleanup,
@@ -350,10 +351,12 @@ def cleanup_run(
         with _quiet_logger(quiet):
             plan = plan_cleanup(
                 run_dir,
-                keep_latest=keep_latest,
-                allow_unsafe=allow_unsafe_serialization,
-                force=force,
-                merged_dir=safe_merged_dir,
+                CleanupOptions(
+                    keep_latest=keep_latest,
+                    allow_unsafe=allow_unsafe_serialization,
+                    force=force,
+                    merged_dir=safe_merged_dir,
+                ),
             )
             report = plan if dry_run else execute_cleanup(plan)
     except _RUN_STATUS_PATH_ERRORS as e:
