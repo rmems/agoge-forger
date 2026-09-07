@@ -1,6 +1,7 @@
 """CLI surface for `agoge cleanup-run`: exit codes, dry-run, force, formats."""
 
 import json
+import os
 
 import pytest
 from typer.testing import CliRunner
@@ -87,6 +88,44 @@ def test_json_output_is_a_clean_document(runner, tmp_path):
     assert result.stdout.lstrip().startswith("{")
     assert "[dry-run]" not in result.stdout
     assert json.loads(result.stdout)["bytes_reclaimed"] > 0
+
+
+def test_json_stays_parseable_when_a_deep_call_logs(runner, tmp_path, monkeypatch):
+    """Sizing and hashing log from inside shared helpers, straight to stdout."""
+    run_dir = _run_with_checkpoints(tmp_path)
+    real_getsize = os.path.getsize
+
+    def flaky(path, *args, **kwargs):
+        if str(path).endswith("adapter_model.safetensors"):
+            raise OSError("vanished")
+        return real_getsize(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "getsize", flaky)
+
+    result = runner.invoke(app, ["cleanup-run", str(run_dir), "--dry-run", "--format", "json"])
+
+    _assert_clean_exit(result, 0)
+    assert "Could not read file size" not in result.stdout
+    assert json.loads(result.stdout)["dry_run"] is True
+
+
+def test_table_mode_still_surfaces_sizing_warnings(runner, tmp_path, monkeypatch, caplog):
+    """The mute is scoped to JSON mode; humans still get told."""
+    run_dir = _run_with_checkpoints(tmp_path)
+    real_getsize = os.path.getsize
+
+    def flaky(path, *args, **kwargs):
+        if str(path).endswith("adapter_model.safetensors"):
+            raise OSError("vanished")
+        return real_getsize(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "getsize", flaky)
+
+    with caplog.at_level("WARNING", logger="agoge"):
+        result = runner.invoke(app, ["cleanup-run", str(run_dir), "--dry-run"])
+
+    _assert_clean_exit(result, 0)
+    assert any("Could not read file size" in message for message in caplog.messages)
 
 
 def test_refuses_without_a_final_artifact(runner, tmp_path, caplog):

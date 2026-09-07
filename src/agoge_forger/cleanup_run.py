@@ -124,10 +124,7 @@ def plan_cleanup(
             {
                 "path": str(candidate),
                 "step": checkpoint_step(candidate),
-                # Silent: an unreadable file must not put a log line in the
-                # middle of the JSON document. The total is an estimate either
-                # way, which the report says.
-                "bytes": directory_size_bytes(str(candidate), warn=False),
+                "bytes": directory_size_bytes(str(candidate)),
             }
         )
 
@@ -176,9 +173,12 @@ def _sealed_provenance(run_dir: Path) -> Any:
         return None
     try:
         return producer_provenance_from_adapter(run_dir)
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         # An unreadable or provenance-less index is not something cleanup should
-        # fail on; it just means there is no index worth maintaining.
+        # fail on; it just means there is no index worth maintaining. TypeError
+        # is in the list because _load_artifact_index_payload raises it — not
+        # ValueError — for an index that parses as valid JSON but is not an
+        # object (`[]`, `"text"`, `3`).
         return None
 
 

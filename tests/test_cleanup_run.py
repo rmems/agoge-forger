@@ -1,6 +1,7 @@
 """Library-level behavior for `agoge cleanup-run`."""
 
 import json
+import os
 
 import pytest
 
@@ -235,14 +236,34 @@ def test_failed_index_rewrite_is_reported_as_a_failure(tmp_path, monkeypatch):
     ]
 
 
-def test_unreadable_file_does_not_log_during_sizing(tmp_path, caplog):
-    """Sizing warnings would land in stdout and corrupt the JSON document."""
+def test_unreadable_file_is_counted_as_zero_not_fatal(tmp_path, monkeypatch):
+    """A file that vanishes mid-walk must not abort a cleanup plan."""
     run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    real_getsize = os.path.getsize
 
-    with caplog.at_level("WARNING", logger="agoge"):
-        plan_cleanup(str(run_dir))
+    def flaky(path, *args, **kwargs):
+        if str(path).endswith("adapter_model.safetensors"):
+            raise OSError("vanished")
+        return real_getsize(path, *args, **kwargs)
 
-    assert not [m for m in caplog.messages if "Could not read file size" in m]
+    monkeypatch.setattr(os.path, "getsize", flaky)
+
+    plan = plan_cleanup(str(run_dir))
+
+    assert len(plan["removed"]) == 1
+    assert plan["bytes_reclaimed"] > 0
+
+
+def test_malformed_artifact_index_does_not_crash_cleanup(tmp_path):
+    """A JSON array parses fine but raises TypeError, not ValueError, on read."""
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    (run_dir / "artifact_index.json").write_text("[]")
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert report["artifact_index_rewritten"] is False
+    assert report["failed"] == []
+    assert _checkpoint_names(run_dir) == []
 
 
 def test_index_is_left_alone_when_nothing_was_removed(tmp_path):
