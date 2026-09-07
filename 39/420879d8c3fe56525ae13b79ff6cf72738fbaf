@@ -1,0 +1,21 @@
+tests/test_preflight.py
+  s_c521f183ceb59a::t_2e457c4a76fe1f 2,11,246-275
+src/agoge_forger/cleanup_run.py
+  s_c521f183ceb59a::t_2e457c4a76fe1f 75,78,80-86,90-92,161-175,177,183,186,224-226,273,276-279,281-282,288-290,292-293,298,320-356,368-369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "39420879d8c3fe56525ae13b79ff6cf72738fbaf",
+  "prompts": {},
+  "sessions": {
+    "s_c521f183ceb59a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d8860f5f-78ff-48ae-8850-8817a3c51c76",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
