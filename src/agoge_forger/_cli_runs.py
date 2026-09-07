@@ -29,13 +29,18 @@ def _resolve_optional_merged_dir(merged_dir: str | None) -> str | None:
     if merged_dir is None:
         return None
     try:
-        return str(resolve_existing_path(merged_dir, must_be_dir=True))
+        resolved = resolve_existing_path(merged_dir)
     except FileNotFoundError:
         # A merged model that has not been exported yet is a legitimate
         # "not ready" answer, so report it as absent instead of failing.
         return merged_dir
     except CLI_PATH_ERRORS as e:
         exit_on_error(e)
+    if not resolved.is_dir():
+        # Something exists there but it is not an exported merge. run-status
+        # reports that as absent too; failing here would be the odd one out.
+        return merged_dir
+    return str(resolved)
 
 
 def _emit_run_status(report: dict[str, Any], output_format: RunStatusFormat) -> None:

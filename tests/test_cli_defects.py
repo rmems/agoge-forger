@@ -6,11 +6,16 @@ a traceback, and an inspection command that crashed on every valid file.
 """
 
 import json
+import os
 
 import pytest
 from typer.testing import CliRunner
 
-from agoge_forger._cli_serving import _merge_serving_config
+from agoge_forger._cli_serving import (
+    _DEFAULT_SMOKE_BASE_URL,
+    _fill_smoke_defaults,
+    _merge_serving_config,
+)
 from agoge_forger.artifacts.safetensors_io import inspect_safetensors_file
 from agoge_forger.cli import app
 from tests.test_run_status import _make_run_dir, _minimal_safetensors, _write_final_adapter
@@ -196,6 +201,81 @@ def test_malformed_index_is_an_error_not_a_traceback(runner, tmp_path, caplog):
                 str(tmp_path / "merged" / "demo_run"),
             ],
         )
+
+    _assert_clean_exit(result, 1)
+    assert caplog.messages
+
+
+# --- boundaries and config validation surfaced on #130 ----------------------
+
+
+def test_unreadable_safetensors_exits_nonzero(runner, tmp_path, caplog):
+    """An I/O failure used to be logged and swallowed into an empty result, so
+    the command printed `{}` and exited 0 on a file it could not read."""
+    target = tmp_path / "adapter_model.safetensors"
+    target.write_bytes(_minimal_safetensors())
+    target.chmod(0o000)
+    if os.access(target, os.R_OK):  # running as root: the chmod means nothing
+        pytest.skip("cannot make a file unreadable as this user")
+
+    try:
+        with caplog.at_level("ERROR", logger="agoge"):
+            result = runner.invoke(app, ["inspect-safetensors", "--path", str(target)])
+    finally:
+        target.chmod(0o644)
+
+    _assert_clean_exit(result, 1)
+    assert caplog.messages
+
+
+def test_non_mapping_chat_config_is_a_usage_error(runner, tmp_path):
+    """A YAML sequence reached `data[key]` and crashed with a raw TypeError."""
+    config = tmp_path / "chat.yaml"
+    config.write_text("- not\n- a mapping\n")
+
+    result = runner.invoke(app, ["smoke-vllm", "--config", str(config)])
+
+    assert result.exit_code != 0
+    assert "YAML mapping" in result.output
+
+
+@pytest.mark.parametrize("value", [0, False, []])
+def test_invalid_falsey_base_url_is_not_defaulted(value):
+    """`not data.get(...)` turned 0/False/[] into a silent call to localhost."""
+    data = {"base_url": value}
+
+    _fill_smoke_defaults(data)
+
+    assert data["base_url"] == value
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_absent_base_url_takes_the_default(value):
+    data = {"base_url": value}
+
+    _fill_smoke_defaults(data)
+
+    assert data["base_url"] == _DEFAULT_SMOKE_BASE_URL
+
+
+def test_merged_dir_pointing_at_a_file_reads_as_absent(runner, tmp_path):
+    """run-status reports a non-directory merged path as absent; passing one
+    explicitly used to exit 1 instead."""
+    run_dir = _write_final_adapter(_make_run_dir(tmp_path))
+    not_a_dir = tmp_path / "merged.txt"
+    not_a_dir.write_text("x")
+
+    result = runner.invoke(app, ["run-status", str(run_dir), "--merged-dir", str(not_a_dir)])
+
+    _assert_clean_exit(result, 0)
+    assert json.loads(result.stdout)["merged_model"]["present"] is False
+
+
+def test_bad_training_config_path_exits_one(runner, tmp_path, caplog):
+    """load_config resolves the path and requires keys; those are operator
+    mistakes, not tracebacks."""
+    with caplog.at_level("ERROR", logger="agoge"):
+        result = runner.invoke(app, ["train-lora", "--config", str(tmp_path / "nope.yaml")])
 
     _assert_clean_exit(result, 1)
     assert caplog.messages

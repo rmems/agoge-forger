@@ -115,13 +115,26 @@ def _smoke_config_base(config_path: str | None) -> dict[str, Any]:
     """Start from the YAML config when one is given, else the model's defaults."""
     if config_path:
         path = resolve_existing_path(config_path, must_be_file=True)
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            # A sequence or scalar would reach `data[key]` below and crash with a
+            # raw TypeError instead of a usage error.
+            raise typer.BadParameter(
+                "Chat-completions config must be a YAML mapping",
+                param_hint="--config",
+            )
+        return data
     return ChatCompletionsConfig().model_dump()
 
 
 def _fill_smoke_defaults(data: dict[str, Any]) -> None:
     """Supply the values the endpoint needs but an operator may leave unset."""
-    if not data.get("base_url"):
+    # Only a missing, null, or blank value takes the default. `not ...` would
+    # also swallow 0, False and [], turning invalid config into a silent call to
+    # localhost instead of a validation error.
+    if data.get("base_url") in (None, ""):
         data["base_url"] = _DEFAULT_SMOKE_BASE_URL
     if data.get("api_key") is None:
         data["api_key"] = ""

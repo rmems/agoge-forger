@@ -16,11 +16,13 @@ from .train.checkpoints import (
     resolve_export_source,
 )
 
+_TRUST_REMOTE_CODE_HELP = "Trust remote code from the model repo"
+
 
 @app.command()
 def smoke_eval(
     adapter_path: str = typer.Option(..., help="Path to PEFT adapter"),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
     allow_unsafe_serialization: bool = typer.Option(
         False, help="Allow .bin weight files in the adapter"
     ),
@@ -50,7 +52,7 @@ def merge_adapter(
     base_model: str = typer.Option(..., help="Base model ID"),
     adapter_path: str = typer.Option(..., help="Path to PEFT adapter"),
     out_dir: str = typer.Option(..., help="Output directory"),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
     allow_unsafe_serialization: bool = typer.Option(
         False, help="Allow .bin weight files in the adapter"
     ),
@@ -81,6 +83,19 @@ def merge_adapter(
     )
 
 
+def _run_export(**kwargs) -> None:
+    """Run the export, reporting its input rejections through the boundary.
+
+    `_export_final_model` still validates on its own — `save_safetensors=False`
+    is refused outright under Transformers 5 — and those rejections are operator
+    input errors, not crashes.
+    """
+    try:
+        _export_final_model(**kwargs)
+    except CLI_PATH_ERRORS as e:
+        exit_on_error(e)
+
+
 @app.command()
 def export_final_model(
     out_dir: str = typer.Option(..., help="Output directory for the merged model"),
@@ -102,7 +117,7 @@ def export_final_model(
         False, help="Allow unsafe .bin input adapters / skip post-save .bin assert"
     ),
     max_shard_size: str = typer.Option("4GB", help="Maximum shard size for merged weights"),
-    trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
 ):
     """Export one final merged model from the latest valid checkpoint or adapter."""
     safe_out_dir = str(resolve_output_directory(out_dir))
@@ -126,7 +141,7 @@ def export_final_model(
         # -- not ValueError -- for an index that parses as valid JSON but is not
         # an object (`[]`, `"text"`, `3`).
         exit_on_error(e)
-    _export_final_model(
+    _run_export(
         out_dir=safe_out_dir,
         run_dir=safe_run_dir,
         adapter_path=safe_adapter_path,
