@@ -14,6 +14,10 @@ from .serving.config import ServingConfig, load_serving_config
 from .serving.serve import serve_vllm as _serve_vllm
 from .serving.smoke import run_vllm_smoke
 
+# Sourced from the model rather than repeated, so the CLI fallback cannot drift
+# away from the field default it is standing in for.
+_DEFAULT_SMOKE_BASE_URL: str = ChatCompletionsConfig.model_fields["base_url"].default
+
 
 def _merge_serving_config(config_path: str | None, overrides: dict[str, Any]) -> ServingConfig:
     cfg = load_serving_config(config_path) if config_path else ServingConfig()
@@ -107,6 +111,22 @@ def _effective_smoke_stream(stream: bool | None, config_path: str | None) -> boo
     return None
 
 
+def _smoke_config_base(config_path: str | None) -> dict[str, Any]:
+    """Start from the YAML config when one is given, else the model's defaults."""
+    if config_path:
+        path = resolve_existing_path(config_path, must_be_file=True)
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return ChatCompletionsConfig().model_dump()
+
+
+def _fill_smoke_defaults(data: dict[str, Any]) -> None:
+    """Supply the values the endpoint needs but an operator may leave unset."""
+    if not data.get("base_url"):
+        data["base_url"] = _DEFAULT_SMOKE_BASE_URL
+    if data.get("api_key") is None:
+        data["api_key"] = ""
+
+
 def _merge_smoke_chat_config(
     config_path: str | None, overrides: dict[str, Any]
 ) -> ChatCompletionsConfig:
@@ -115,23 +135,13 @@ def _merge_smoke_chat_config(
     Overrides are merged into a dict and then re-validated so that Pydantic
     field validators (e.g. stripping trailing slashes from ``base_url``) run.
     """
-    if config_path:
-        path = resolve_existing_path(config_path, must_be_file=True)
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    else:
-        data = ChatCompletionsConfig().model_dump()
-
+    data = _smoke_config_base(config_path)
     for key, value in overrides.items():
         if value is not None:
             data[key] = value
-
-    if not data.get("base_url"):
-        data["base_url"] = "http://localhost:8000/v1"
+    _fill_smoke_defaults(data)
     if not data.get("model"):
         raise typer.BadParameter("Model is required (--model or config.model)")
-    if data.get("api_key") is None:
-        data["api_key"] = ""
-
     return ChatCompletionsConfig.model_validate(data)
 
 
