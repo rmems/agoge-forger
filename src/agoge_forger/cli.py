@@ -1,7 +1,9 @@
 """Agoge Forger Typer CLI entry point."""
 
 import json
+import logging
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any, NoReturn
 
@@ -294,6 +296,27 @@ def run_status(
     _emit_run_status(report, output_format)
 
 
+@contextmanager
+def _quiet_logger(quiet: bool):
+    """Silence the shared logger while a single JSON document is produced.
+
+    The logger renders to stdout, so anything logged from any depth — a sizing
+    warning, a hashing error raised up through `write_artifact_index` — lands in
+    the middle of the payload and stops it parsing. Everything an operator needs
+    is already in the report, so the whole run is muted rather than chasing each
+    call site that might log.
+    """
+    if not quiet:
+        yield
+        return
+    previous = logger.level
+    logger.setLevel(logging.CRITICAL + 1)
+    try:
+        yield
+    finally:
+        logger.setLevel(previous)
+
+
 def _emit_cleanup(report: dict[str, Any], output_format: CleanupFormat) -> None:
     # Same split as run-status: the machine-readable payload goes to stdout so
     # it can be piped, while the operator account goes through the logger.
@@ -322,24 +345,23 @@ def cleanup_run(
     """Remove checkpoint directories from a run that has already been exported."""
     _resolve_run_status_run_dir(run_dir)
     safe_merged_dir = _resolve_optional_merged_dir(merged_dir)
+    quiet = output_format == CleanupFormat.json
     try:
-        plan = plan_cleanup(
-            run_dir,
-            keep_latest=keep_latest,
-            allow_unsafe=allow_unsafe_serialization,
-            force=force,
-            merged_dir=safe_merged_dir,
-        )
+        with _quiet_logger(quiet):
+            plan = plan_cleanup(
+                run_dir,
+                keep_latest=keep_latest,
+                allow_unsafe=allow_unsafe_serialization,
+                force=force,
+                merged_dir=safe_merged_dir,
+            )
+            report = plan if dry_run else execute_cleanup(plan)
     except _RUN_STATUS_PATH_ERRORS as e:
         # plan_cleanup re-resolves the run directory, so it can raise anything
         # resolve_existing_path raises — RuntimeError on a symlink loop included.
         _exit_on_path_error(e)
 
-    report = plan if dry_run else execute_cleanup(plan)
-    # The shared logger renders to stdout, so the per-checkpoint account is
-    # emitted only when the caller asked for human output. --format json stays
-    # a clean single document that pipes into jq.
-    if output_format != CleanupFormat.json:
+    if not quiet:
         log_cleanup(report)
     _emit_cleanup(report, output_format)
     if report["failed"]:
