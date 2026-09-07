@@ -366,7 +366,7 @@ def test_cli_reports_inspection_failure_as_exit_one(runner, tmp_path, monkeypatc
     def _boom(*args, **kwargs):
         raise PermissionError(f"Permission denied: {run_dir}")
 
-    monkeypatch.setattr("agoge_forger.cli.build_run_status", _boom)
+    monkeypatch.setattr("agoge_forger._cli_runs.build_run_status", _boom)
 
     with caplog.at_level("ERROR", logger="agoge"):
         result = runner.invoke(app, ["run-status", str(run_dir)])
