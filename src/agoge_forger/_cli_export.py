@@ -121,7 +121,10 @@ def export_final_model(
             allow_unsafe=allow_unsafe_serialization,
         )
         provenance = producer_provenance_from_adapter(source_adapter)
-    except CLI_PATH_ERRORS as e:
+    except (*CLI_PATH_ERRORS, TypeError) as e:
+        # TypeError joins the tuple because _load_artifact_index_payload raises it
+        # -- not ValueError -- for an index that parses as valid JSON but is not
+        # an object (`[]`, `"text"`, `3`).
         exit_on_error(e)
     _export_final_model(
         out_dir=safe_out_dir,

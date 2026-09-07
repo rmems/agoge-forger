@@ -178,3 +178,24 @@ def test_export_json_of_a_valid_adapter_still_resolves(tmp_path):
 
     assert (run_dir / "adapter_config.json").is_file()
     assert json.loads((run_dir / "adapter_config.json").read_text())["base_model_name_or_path"]
+
+
+def test_malformed_index_is_an_error_not_a_traceback(runner, tmp_path, caplog):
+    """A JSON array parses fine but raises TypeError, which the handler missed."""
+    run_dir = _write_final_adapter(_make_run_dir(tmp_path))
+    (run_dir / "artifact_index.json").write_text("[]")
+
+    with caplog.at_level("ERROR", logger="agoge"):
+        result = runner.invoke(
+            app,
+            [
+                "export-final-model",
+                "--run-dir",
+                str(run_dir),
+                "--out-dir",
+                str(tmp_path / "merged" / "demo_run"),
+            ],
+        )
+
+    _assert_clean_exit(result, 1)
+    assert caplog.messages
