@@ -1,0 +1,21 @@
+.codescene/code-health-rules.json
+  s_a955cb94852197::t_39284000b0933b 1-18
+.codescene/README.md
+  s_a955cb94852197::t_12834b49c00409 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d13775d69e4dc708b4bbdd0b9e14606b53d0c6db",
+  "prompts": {},
+  "sessions": {
+    "s_a955cb94852197": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b6f2cfc-6ee1-4a6c-ba43-bfb1b49013fc",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
