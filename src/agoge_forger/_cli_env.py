@@ -4,7 +4,7 @@ import json
 
 import typer
 
-from ._cli_app import app
+from ._cli_app import CLI_PATH_ERRORS, app, exit_on_error
 from .artifacts.safetensors_io import inspect_safetensors_file
 from .backends.torch_backend import check_torch_env
 from .logging import logger
@@ -52,6 +52,14 @@ def inspect_lora_targets(
 @app.command()
 def inspect_safetensors(path: str = typer.Option(..., help="Path to safetensors file")):
     """Inspect a safetensors file."""
-    safe_path = str(resolve_existing_path(path, must_be_file=True))
-    info = inspect_safetensors_file(safe_path)
+    try:
+        safe_path = str(resolve_existing_path(path, must_be_file=True))
+        info = inspect_safetensors_file(safe_path)
+    except CLI_PATH_ERRORS as e:
+        exit_on_error(e)
+    except Exception as e:  # noqa: BLE001
+        # safetensors raises its own SafetensorError for a malformed header, which
+        # is not an OSError and so slips past inspect_safetensors_file's own
+        # handling. A corrupt file is an operator-facing error, not a traceback.
+        exit_on_error(e)
     logger.info(json.dumps(info, indent=2))

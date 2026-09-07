@@ -32,7 +32,11 @@ def inspect_safetensors_file(path: str) -> dict[str, Any]:
     try:
         with safe_open(path, framework="pt") as f:
             info["metadata"] = f.metadata()
-            for key in f:
+            # `safe_open` exposes keys() but is not itself iterable, so `for key
+            # in f` raised TypeError on every valid file and escaped the handler
+            # below, which does not catch TypeError. SIM118 assumes a dict here
+            # and its suggested rewrite is exactly the bug, so it stays silenced.
+            for key in f.keys():  # noqa: SIM118
                 tensor = f.get_slice(key)
                 info["tensors"][key] = {
                     "shape": tensor.get_shape(),

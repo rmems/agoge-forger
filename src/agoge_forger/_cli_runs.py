@@ -3,11 +3,11 @@
 import json
 import logging
 from contextlib import contextmanager
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any
 
 import typer
 
-from ._cli_app import app
+from ._cli_app import CLI_PATH_ERRORS, app, exit_on_error
 from .cleanup_run import (
     CleanupFormat,
     CleanupOptions,
@@ -24,14 +24,6 @@ from .run_status import (
     format_run_status_table,
 )
 
-_RUN_STATUS_PATH_ERRORS = (FileNotFoundError, ValueError, NotADirectoryError, OSError, RuntimeError)
-
-
-def _exit_on_path_error(exc: BaseException) -> NoReturn:
-    """Log a path/inspection failure and stop the CLI with exit 1."""
-    logger.error(str(exc))
-    raise typer.Exit(code=1)
-
 
 def _resolve_run_status_run_dir(run_dir: str) -> str:
     # Keep RuntimeError in the controlled boundary for platforms whose user-home
@@ -39,8 +31,8 @@ def _resolve_run_status_run_dir(run_dir: str) -> str:
     # which becomes FileNotFoundError during strict resolution.
     try:
         return str(resolve_existing_path(run_dir, must_be_dir=True))
-    except _RUN_STATUS_PATH_ERRORS as e:
-        _exit_on_path_error(e)
+    except CLI_PATH_ERRORS as e:
+        exit_on_error(e)
 
 
 def _resolve_optional_merged_dir(merged_dir: str | None) -> str | None:
@@ -53,8 +45,8 @@ def _resolve_optional_merged_dir(merged_dir: str | None) -> str | None:
         # A merged model that has not been exported yet is a legitimate
         # "not ready" answer, so report it as absent instead of failing.
         return merged_dir
-    except _RUN_STATUS_PATH_ERRORS as e:
-        _exit_on_path_error(e)
+    except CLI_PATH_ERRORS as e:
+        exit_on_error(e)
 
 
 def _emit_run_status(report: dict[str, Any], output_format: RunStatusFormat) -> None:
@@ -94,7 +86,7 @@ def run_status(
         # Inspection walks the run directory, so a permission or I/O failure can
         # surface here rather than at path resolution. Report it the same way as
         # a bad path — a logged error and exit 1 — instead of a raw traceback.
-        _exit_on_path_error(e)
+        exit_on_error(e)
     _emit_run_status(report, output_format)
 
 
@@ -160,10 +152,10 @@ def cleanup_run(
                 ),
             )
             report = plan if dry_run else execute_cleanup(plan)
-    except _RUN_STATUS_PATH_ERRORS as e:
+    except CLI_PATH_ERRORS as e:
         # plan_cleanup re-resolves the run directory, so it can raise anything
         # resolve_existing_path raises — RuntimeError on a symlink loop included.
-        _exit_on_path_error(e)
+        exit_on_error(e)
 
     if not quiet:
         log_cleanup(report)

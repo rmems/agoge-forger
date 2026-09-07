@@ -35,7 +35,11 @@ def serve_vllm(
     max_model_len: int | None = typer.Option(None, help="Maximum model context length"),
     dtype: str | None = typer.Option(None, help="Model dtype"),
     gpu_memory_utilization: float | None = typer.Option(None, help="GPU memory utilization"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print command and exit"),
+    dry_run: bool | None = typer.Option(
+        None,
+        "--dry-run/--no-dry-run",
+        help="Print command and exit; unset defers to the config file",
+    ),
     extra_arg: Annotated[
         list[str] | None, typer.Option("--extra-arg", help="Extra vllm serve argument")
     ] = None,
