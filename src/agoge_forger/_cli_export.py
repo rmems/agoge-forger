@@ -2,7 +2,7 @@
 
 import typer
 
-from ._cli_app import app
+from ._cli_app import CLI_PATH_ERRORS, app, exit_on_error
 from .artifacts.producer_provenance import producer_provenance_from_adapter
 from .artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from .eval.smoke_eval import run_smoke_eval
@@ -106,15 +106,23 @@ def export_final_model(
 ):
     """Export one final merged model from the latest valid checkpoint or adapter."""
     safe_out_dir = str(resolve_output_directory(out_dir))
-    safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True)) if run_dir else None
-    safe_adapter_path = (
-        str(resolve_existing_path(adapter_path, must_be_dir=True)) if adapter_path else None
-    )
-    source_adapter = resolve_export_source(
-        run_dir=safe_run_dir,
-        adapter_path=safe_adapter_path,
-        allow_unsafe=allow_unsafe_serialization,
-    )
+    # Selecting the source and reading its sealed provenance both happen before a
+    # single weight is loaded, and both fail on ordinary operator mistakes: a run
+    # with no exportable artifact, or an adapter never finalized with an
+    # artifact_index.json. Report those the way the rest of the boundary does.
+    try:
+        safe_run_dir = str(resolve_existing_path(run_dir, must_be_dir=True)) if run_dir else None
+        safe_adapter_path = (
+            str(resolve_existing_path(adapter_path, must_be_dir=True)) if adapter_path else None
+        )
+        source_adapter = resolve_export_source(
+            run_dir=safe_run_dir,
+            adapter_path=safe_adapter_path,
+            allow_unsafe=allow_unsafe_serialization,
+        )
+        provenance = producer_provenance_from_adapter(source_adapter)
+    except CLI_PATH_ERRORS as e:
+        exit_on_error(e)
     _export_final_model(
         out_dir=safe_out_dir,
         run_dir=safe_run_dir,
@@ -124,5 +132,5 @@ def export_final_model(
         allow_unsafe=allow_unsafe_serialization,
         max_shard_size=max_shard_size,
         trust_remote_code=trust_remote_code,
-        producer_provenance=producer_provenance_from_adapter(source_adapter),
+        producer_provenance=provenance,
     )
