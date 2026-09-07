@@ -250,35 +250,54 @@ def _refresh_artifact_index(run_dir: Path, provenance: Any) -> tuple[bool, str |
 
 
 def _surviving_files_unchanged(run_dir: Path) -> str | None:
-    """Confirm the files that survived still hash to what the old index recorded.
+    """Confirm the survivors still match what the old index recorded.
 
     Cleanup carries the old producer provenance into the rewritten index. If a
-    surviving adapter or tokenizer file has been modified since that index was
-    written, resealing would stamp the original provenance onto altered content
-    and produce an index that validates -- laundering the change past the
-    evaluation contract. Report a mismatch instead of rewriting.
+    surviving file has been modified, or a new one has appeared, since that index
+    was written, resealing would stamp the original attestation onto content it
+    never covered and produce an index that validates -- laundering the change
+    past the evaluation contract. Report the discrepancy instead of rewriting.
 
-    Returns None when everything checks out, or a message naming the first file
-    that does not.
+    Returns None when everything checks out, or a message naming the first
+    problem found.
     """
     index_path = run_dir / _ARTIFACT_INDEX_NAME
     try:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
         entries = payload["artifacts"]
-    except (OSError, ValueError, KeyError, TypeError):
-        # An index we cannot read is handled by the provenance path; nothing to
-        # verify against here.
+        # Validate the shape here, inside the guard: by the time this runs the
+        # checkpoints are already gone, so an index with `"artifacts": null` or a
+        # non-object entry must not raise its way out of a completed deletion.
+        indexed = {str(entry["file"]): entry.get("sha256") for entry in entries}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        # An index we cannot read is handled by the provenance path instead;
+        # there is nothing here to verify against.
         return None
-    for entry in entries:
-        target = run_dir / str(entry.get("file", ""))
+
+    for name, digest in indexed.items():
+        target = run_dir / name
         if not target.is_file():
             # Deleted checkpoints are exactly what this rewrite is for.
             continue
         try:
-            if sha256_file(str(target)) != entry.get("sha256"):
+            if sha256_file(str(target)) != digest:
                 return f"{target} changed since {_ARTIFACT_INDEX_NAME} was written"
         except OSError as exc:
             return f"could not verify {target}: {exc}"
+
+    unindexed = _unindexed_survivor(run_dir, set(indexed))
+    if unindexed is not None:
+        return f"{unindexed} appeared since {_ARTIFACT_INDEX_NAME} was written"
+    return None
+
+
+def _unindexed_survivor(run_dir: Path, indexed: set[str]) -> Path | None:
+    """The first surviving file the old index never covered, if there is one."""
+    for path in sorted(run_dir.rglob("*")):
+        if not path.is_file() or path.name == _ARTIFACT_INDEX_NAME:
+            continue
+        if str(path.relative_to(run_dir)) not in indexed:
+            return path
     return None
 
 
