@@ -1,9 +1,7 @@
 """Agoge Forger Typer CLI entry point."""
 
 import json
-import logging
 import os
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any, NoReturn
 
@@ -13,13 +11,6 @@ import yaml
 from .artifacts.producer_provenance import producer_provenance_from_adapter
 from .artifacts.safetensors_io import assert_no_unsafe_weight_bins, inspect_safetensors_file
 from .backends.torch_backend import check_torch_env
-from .cleanup_run import (
-    CleanupFormat,
-    execute_cleanup,
-    format_cleanup_table,
-    log_cleanup,
-    plan_cleanup,
-)
 from .config import load_config
 from .datasets import dataset_stats as _dataset_stats
 from .eval.smoke_eval import run_smoke_eval
@@ -294,78 +285,6 @@ def run_status(
         # a bad path — a logged error and exit 1 — instead of a raw traceback.
         _exit_on_path_error(e)
     _emit_run_status(report, output_format)
-
-
-@contextmanager
-def _quiet_logger(quiet: bool):
-    """Silence the shared logger while a single JSON document is produced.
-
-    The logger renders to stdout, so anything logged from any depth — a sizing
-    warning, a hashing error raised up through `write_artifact_index` — lands in
-    the middle of the payload and stops it parsing. Everything an operator needs
-    is already in the report, so the whole run is muted rather than chasing each
-    call site that might log.
-    """
-    if not quiet:
-        yield
-        return
-    previous = logger.level
-    logger.setLevel(logging.CRITICAL + 1)
-    try:
-        yield
-    finally:
-        logger.setLevel(previous)
-
-
-def _emit_cleanup(report: dict[str, Any], output_format: CleanupFormat) -> None:
-    # Same split as run-status: the machine-readable payload goes to stdout so
-    # it can be piped, while the operator account goes through the logger.
-    if output_format == CleanupFormat.table:
-        typer.echo(format_cleanup_table(report))
-        return
-    typer.echo(json.dumps(report, indent=2))
-
-
-@app.command()
-def cleanup_run(
-    run_dir: str = typer.Argument(..., help="Run directory to prune (adapters/<run_name>)"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="List candidates and exit"),
-    keep_latest: int = typer.Option(0, help="Keep the N newest valid checkpoints"),
-    force: bool = typer.Option(False, "--force", help="Prune even when no final artifact exists"),
-    merged_dir: str | None = typer.Option(
-        None, "--merged-dir", help="Merged model directory (defaults to merged/<run_name>)"
-    ),
-    output_format: Annotated[
-        CleanupFormat, typer.Option("--format", help="Report format")
-    ] = CleanupFormat.table,
-    allow_unsafe_serialization: bool = typer.Option(
-        False, help="Accept legacy .bin adapter artifacts"
-    ),
-):
-    """Remove checkpoint directories from a run that has already been exported."""
-    _resolve_run_status_run_dir(run_dir)
-    safe_merged_dir = _resolve_optional_merged_dir(merged_dir)
-    quiet = output_format == CleanupFormat.json
-    try:
-        with _quiet_logger(quiet):
-            plan = plan_cleanup(
-                run_dir,
-                keep_latest=keep_latest,
-                allow_unsafe=allow_unsafe_serialization,
-                force=force,
-                merged_dir=safe_merged_dir,
-            )
-            report = plan if dry_run else execute_cleanup(plan)
-    except _RUN_STATUS_PATH_ERRORS as e:
-        # plan_cleanup re-resolves the run directory, so it can raise anything
-        # resolve_existing_path raises — RuntimeError on a symlink loop included.
-        _exit_on_path_error(e)
-
-    if not quiet:
-        log_cleanup(report)
-    _emit_cleanup(report, output_format)
-    if report["failed"]:
-        raise typer.Exit(code=1)
 
 
 @app.command()
