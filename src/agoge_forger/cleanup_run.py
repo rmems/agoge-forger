@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ from .artifacts.safetensors_io import write_artifact_index
 from .logging import logger
 from .path_safety import resolve_existing_path
 from .run_status import build_run_status
-from .train.checkpoints import CHECKPOINT_RE, checkpoint_step, list_valid_checkpoints
+from .train.checkpoints import CHECKPOINT_RE, checkpoint_step
 from .train.preflight import BYTES_PER_GB, directory_size_bytes
 
 CLEANUP_SCHEMA_VERSION = 1
@@ -55,16 +56,31 @@ def _candidate_dirs(run_dir: Path) -> list[Path]:
     return candidates
 
 
-def _keep_set(run_dir: Path, keep_latest: int, *, allow_unsafe: bool) -> set[Path]:
+@dataclass(frozen=True)
+class CleanupOptions:
+    """Everything `plan_cleanup` needs beyond the run directory itself.
+
+    Bundled rather than passed as five keywords, matching how the CLI already
+    groups wide option sets (`_FreezeSplitOptions`, `_SmokeEnvInputs`).
+    """
+
+    keep_latest: int = 0
+    allow_unsafe: bool = False
+    force: bool = False
+    merged_dir: str | None = None
+
+
+def _keep_set(run_dir: Path, steps: list[int], keep_latest: int) -> set[Path]:
     """The N highest-step checkpoints worth keeping as a resume point.
 
-    Only *valid* checkpoints qualify: keeping a half-written snapshot would
-    reclaim less disk while leaving nothing you could actually resume from.
+    `steps` is the ascending list of *valid* checkpoint steps that
+    `build_run_status` already scanned for, so the keep set costs no extra
+    directory walk. Only valid checkpoints qualify: keeping a half-written
+    snapshot would reclaim less disk while leaving nothing to resume from.
     """
     if keep_latest <= 0:
         return set()
-    valid = list_valid_checkpoints(run_dir, allow_unsafe=allow_unsafe)
-    return {path.resolve() for path in valid[-keep_latest:]}
+    return {(run_dir / f"checkpoint-{step}").resolve() for step in steps[-keep_latest:]}
 
 
 def _guard(report: dict[str, Any]) -> bool:
@@ -72,70 +88,81 @@ def _guard(report: dict[str, Any]) -> bool:
     return bool(report["final_adapter"]["present"] or report["merged_model"]["present"])
 
 
-def plan_cleanup(
-    run_dir: str,
-    *,
-    keep_latest: int = 0,
-    allow_unsafe: bool = False,
-    force: bool = False,
-    merged_dir: str | None = None,
-) -> dict[str, Any]:
+def _resolved_run_dir(run_dir: str) -> tuple[Path, Path]:
+    """Return the (logical, resolved) run directory, refusing a symlinked one.
+
+    path_safety guards '..' but explicitly not symlink escape (see
+    tests/test_path_safety.py), and it resolves the link away, so a destructive
+    command has to refuse the link itself before resolving.
+    """
+    logical = Path(run_dir).expanduser()
+    if logical.is_symlink():
+        raise ValueError(f"Refusing to clean a symlinked run directory: {logical}")
+    return logical, resolve_existing_path(run_dir, must_be_dir=True)
+
+
+def _partition_candidates(
+    run_dir: Path, keep: set[Path]
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, str]]]:
+    """Split `checkpoint-*` entries into removable, kept, and skipped."""
+    removable: list[dict[str, Any]] = []
+    kept: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for candidate in _candidate_dirs(run_dir):
+        if candidate.is_symlink():
+            skipped.append({"path": str(candidate), "reason": "symlink"})
+        elif candidate.resolve() in keep:
+            kept.append(str(candidate))
+        else:
+            removable.append(
+                {
+                    "path": str(candidate),
+                    "step": checkpoint_step(candidate),
+                    "bytes": directory_size_bytes(str(candidate)),
+                }
+            )
+    return removable, kept, skipped
+
+
+def plan_cleanup(run_dir: str, options: CleanupOptions | None = None) -> dict[str, Any]:
     """Decide what cleanup would remove, without removing anything.
 
     Raises ValueError when the run directory is a symlink, or when no final
     artifact exists and ``force`` was not passed.
     """
-    if keep_latest < 0:
-        raise ValueError(f"--keep-latest must not be negative: {keep_latest}")
+    options = options or CleanupOptions()
+    if options.keep_latest < 0:
+        raise ValueError(f"--keep-latest must not be negative: {options.keep_latest}")
 
-    logical_run_dir = Path(run_dir).expanduser()
-    # path_safety guards '..' but explicitly not symlink escape (see
-    # tests/test_path_safety.py), and it resolves the link away, so a
-    # destructive command has to refuse the link itself before resolving.
-    if logical_run_dir.is_symlink():
-        raise ValueError(f"Refusing to clean a symlinked run directory: {logical_run_dir}")
-
-    resolved_run_dir = resolve_existing_path(run_dir, must_be_dir=True)
+    logical_run_dir, resolved_run_dir = _resolved_run_dir(run_dir)
     # Pass the caller's path so merged/<run_name> sibling discovery keeps the
     # documented adapters/<run_name> layout, matching build_run_status.
-    report = build_run_status(run_dir, merged_dir=merged_dir, allow_unsafe=allow_unsafe)
+    report = build_run_status(
+        run_dir, merged_dir=options.merged_dir, allow_unsafe=options.allow_unsafe
+    )
 
     recoverable = _guard(report)
-    if not recoverable and not force:
+    if not recoverable and not options.force:
         raise ValueError(
             f"No final adapter or merged model found under {resolved_run_dir}; "
             "the checkpoints are the only recoverable artifact. "
             "Re-run with --force to remove them anyway."
         )
 
-    keep = _keep_set(resolved_run_dir, keep_latest, allow_unsafe=allow_unsafe)
-    removable: list[dict[str, Any]] = []
-    kept: list[str] = []
-    skipped: list[dict[str, str]] = []
-
-    for candidate in _candidate_dirs(resolved_run_dir):
-        if candidate.is_symlink():
-            skipped.append({"path": str(candidate), "reason": "symlink"})
-            continue
-        if candidate.resolve() in keep:
-            kept.append(str(candidate))
-            continue
-        removable.append(
-            {
-                "path": str(candidate),
-                "step": checkpoint_step(candidate),
-                "bytes": directory_size_bytes(str(candidate)),
-            }
-        )
+    keep = _keep_set(resolved_run_dir, report["checkpoints"]["steps"], options.keep_latest)
+    removable, kept, skipped = _partition_candidates(resolved_run_dir, keep)
 
     return {
         "schema_version": CLEANUP_SCHEMA_VERSION,
         "run_dir": str(resolved_run_dir),
         "run_name": logical_run_dir.name or resolved_run_dir.name,
         "dry_run": True,
-        "keep_latest": keep_latest,
-        "allow_unsafe_serialization": allow_unsafe,
-        "guard": {"final_artifact": recoverable, "forced": bool(force and not recoverable)},
+        "keep_latest": options.keep_latest,
+        "allow_unsafe_serialization": options.allow_unsafe,
+        "guard": {
+            "final_artifact": recoverable,
+            "forced": bool(options.force and not recoverable),
+        },
         "removed": removable,
         "kept": kept,
         "skipped": skipped,

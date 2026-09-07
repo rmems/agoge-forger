@@ -8,6 +8,7 @@ import pytest
 from agoge_forger.artifacts.safetensors_io import write_artifact_index
 from agoge_forger.cleanup_run import (
     CLEANUP_SCHEMA_VERSION,
+    CleanupOptions,
     execute_cleanup,
     format_cleanup_table,
     plan_cleanup,
@@ -63,7 +64,7 @@ def test_bytes_reclaimed_counts_only_what_was_removed(tmp_path):
     run_dir = _run_with_checkpoints(tmp_path)
     everything = plan_cleanup(str(run_dir))["bytes_reclaimed"]
 
-    report = execute_cleanup(plan_cleanup(str(run_dir), keep_latest=1))
+    report = execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=1)))
 
     assert report["bytes_reclaimed"] == sum(entry["bytes"] for entry in report["removed"])
     # One checkpoint was kept, so less was reclaimed than a full sweep would.
@@ -96,7 +97,7 @@ def test_execute_removes_checkpoints_and_keeps_the_adapter(tmp_path):
 def test_keep_latest_retains_the_newest_valid_checkpoints(tmp_path, keep, survivors):
     run_dir = _run_with_checkpoints(tmp_path)
 
-    execute_cleanup(plan_cleanup(str(run_dir), keep_latest=keep))
+    execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=keep)))
 
     assert _checkpoint_names(run_dir) == survivors
 
@@ -109,7 +110,7 @@ def test_invalid_checkpoint_is_reclaimed_even_inside_the_keep_window(tmp_path):
     partial.mkdir()
     (partial / "trainer_state.json").write_text(json.dumps({"global_step": 999}))
 
-    execute_cleanup(plan_cleanup(str(run_dir), keep_latest=1))
+    execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=1)))
 
     assert _checkpoint_names(run_dir) == ["checkpoint-50"]
 
@@ -118,7 +119,7 @@ def test_negative_keep_latest_is_rejected(tmp_path):
     run_dir = _run_with_checkpoints(tmp_path)
 
     with pytest.raises(ValueError, match="must not be negative"):
-        plan_cleanup(str(run_dir), keep_latest=-1)
+        plan_cleanup(str(run_dir), CleanupOptions(keep_latest=-1))
 
 
 # --- refusal paths -----------------------------------------------------------
@@ -136,7 +137,7 @@ def test_refuses_when_checkpoints_are_the_only_artifact(tmp_path):
 def test_force_overrides_the_guard_and_records_it(tmp_path):
     run_dir = _run_with_checkpoints(tmp_path, final_adapter=False)
 
-    plan = plan_cleanup(str(run_dir), force=True)
+    plan = plan_cleanup(str(run_dir), CleanupOptions(force=True))
 
     assert plan["guard"] == {"final_artifact": False, "forced": True}
     assert len(plan["removed"]) == 3
