@@ -1,0 +1,9 @@
+.github/workflows/qodana_code_quality.yml
+  ai_agent 28-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "05bf68edbc091795de33d7ff0e1dbdc1a8271ae4",
+  "prompts": {}
+}
