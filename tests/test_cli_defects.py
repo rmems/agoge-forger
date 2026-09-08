@@ -308,8 +308,9 @@ def test_export_merges_the_source_its_provenance_came_from(runner, tmp_path, mon
         seen.update(kwargs)
 
     def fake_provenance(path):
+        # Returning None is the point: the export layer accepts absent provenance,
+        # so the test isolates *which path* it was read from.
         seen["provenance_source"] = str(path)
-        return None
 
     monkeypatch.setattr("agoge_forger._cli_export._run_export", fake_export)
     monkeypatch.setattr(
