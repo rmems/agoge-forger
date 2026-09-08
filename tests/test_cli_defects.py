@@ -292,3 +292,35 @@ def test_bad_training_config_path_exits_one(runner, tmp_path, caplog):
 
     _assert_clean_exit(result, 1)
     assert caplog.messages
+
+
+def test_export_merges_the_source_its_provenance_came_from(runner, tmp_path, monkeypatch):
+    """The command resolved the export source to read provenance, then let the
+    export layer resolve again. A checkpoint written between the two would be
+    merged under provenance describing the earlier one."""
+    run_dir = _write_final_adapter(_make_run_dir(tmp_path))
+    (run_dir / "artifact_index.json").write_text(
+        json.dumps({"output_dir": str(run_dir), "artifacts": [], "producer_provenance": None})
+    )
+    seen = {}
+
+    def fake_export(**kwargs):
+        seen.update(kwargs)
+
+    def fake_provenance(path):
+        seen["provenance_source"] = str(path)
+        return None
+
+    monkeypatch.setattr("agoge_forger._cli_export._run_export", fake_export)
+    monkeypatch.setattr(
+        "agoge_forger._cli_export.producer_provenance_from_adapter", fake_provenance
+    )
+
+    result = runner.invoke(
+        app,
+        ["export-final-model", "--run-dir", str(run_dir), "--out-dir", str(tmp_path / "merged")],
+    )
+
+    _assert_clean_exit(result, 0)
+    # Whatever provenance was read from is exactly what gets exported.
+    assert seen["adapter_path"] == seen["provenance_source"]

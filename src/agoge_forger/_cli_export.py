@@ -144,7 +144,10 @@ def export_final_model(
     _run_export(
         out_dir=safe_out_dir,
         run_dir=safe_run_dir,
-        adapter_path=safe_adapter_path,
+        # Hand over the source already selected, not the run directory: otherwise
+        # the export re-runs resolve_export_source, and a checkpoint written in
+        # between would be merged under provenance read from the earlier one.
+        adapter_path=source_adapter,
         base_model_id=base_model,
         save_safetensors=save_safetensors,
         allow_unsafe=allow_unsafe_serialization,
