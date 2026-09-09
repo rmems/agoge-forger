@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,8 @@ from agoge_forger.path_safety import (
     resolve_output_directory,
 )
 
+_Layout = Callable[[Path], tuple[Path, Path, tuple[Path, ...]]]
+
 
 def _allowlist_ambient_tmp(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     """Simulate macOS `/tmp` → `/private/tmp` with a pytest-owned prefix pair."""
@@ -18,6 +21,47 @@ def _allowlist_ambient_tmp(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     ambient.symlink_to(real_tmp, target_is_directory=True)
     monkeypatch.setattr(path_safety, "AMBIENT_TEMP_PREFIXES", (ambient, real_tmp))
     return ambient, real_tmp
+
+
+def _dangling_leaf(root: Path) -> tuple[Path, Path, tuple[Path, ...]]:
+    target = root / "elsewhere" / "hijacked"
+    output = root / "snapshot"
+    output.symlink_to(target, target_is_directory=True)
+    return output, output, (target, target.parent)
+
+
+def _existing_leaf(root: Path) -> tuple[Path, Path, tuple[Path, ...]]:
+    target = root / "elsewhere"
+    target.mkdir()
+    output = root / "snapshot"
+    output.symlink_to(target, target_is_directory=True)
+    return output, output, ()
+
+
+def _symlinked_parent(root: Path) -> tuple[Path, Path, tuple[Path, ...]]:
+    real_parent = root / "real-parent"
+    linked = root / "linked-parent"
+    real_parent.mkdir()
+    linked.symlink_to(real_parent, target_is_directory=True)
+    return linked / "snapshot", linked, (real_parent / "snapshot",)
+
+
+def _symlink_above_existing(root: Path) -> tuple[Path, Path, tuple[Path, ...]]:
+    real = root / "real"
+    existing = real / "existing"
+    linked = root / "linked"
+    real.mkdir()
+    existing.mkdir()
+    linked.symlink_to(real, target_is_directory=True)
+    return linked / "existing" / "snapshot", linked, (existing / "snapshot",)
+
+
+def _user_parent(root: Path) -> tuple[Path, Path, tuple[Path, ...]]:
+    elsewhere = root.parent / "elsewhere"
+    elsewhere.mkdir()
+    linked = root / "linked-parent"
+    linked.symlink_to(elsewhere, target_is_directory=True)
+    return linked / "snapshot", linked, (elsewhere / "snapshot",)
 
 
 def test_resolve_existing_path_rejects_parent_traversal(tmp_path):
@@ -55,65 +99,32 @@ def test_resolve_absent_output_directory_rejects_parent_traversal(tmp_path):
         resolve_absent_output_directory(str(tmp_path / ".." / "escape"))
 
 
-def test_resolve_absent_output_directory_rejects_dangling_leaf_symlink(tmp_path):
-    elsewhere = tmp_path / "elsewhere" / "hijacked"
-    output = tmp_path / "snapshot"
-    output.symlink_to(elsewhere, target_is_directory=True)
+@pytest.mark.parametrize(
+    ("allowlist", "layout"),
+    [
+        pytest.param(False, _dangling_leaf, id="dangling-leaf"),
+        pytest.param(False, _existing_leaf, id="existing-leaf"),
+        pytest.param(False, _symlinked_parent, id="symlinked-parent"),
+        pytest.param(False, _symlink_above_existing, id="symlink-above-existing"),
+        pytest.param(True, _dangling_leaf, id="allowlisted-prefix-leaf"),
+        pytest.param(True, _user_parent, id="allowlisted-prefix-parent"),
+    ],
+)
+def test_resolve_absent_output_directory_refuses_symlinks(
+    tmp_path, monkeypatch, allowlist: bool, layout: _Layout
+):
+    root = tmp_path
+    if allowlist:
+        root, _real_tmp = _allowlist_ambient_tmp(tmp_path, monkeypatch)
+    output, link, forbidden = layout(root)
 
     with pytest.raises(ValueError, match="symlinked path"):
         resolve_absent_output_directory(str(output))
 
-    assert output.is_symlink()
-    assert not elsewhere.exists()
-    assert not (tmp_path / "elsewhere").exists()
-
-
-def test_resolve_absent_output_directory_rejects_existing_leaf_symlink(tmp_path):
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    output = tmp_path / "snapshot"
-    output.symlink_to(elsewhere, target_is_directory=True)
-
-    with pytest.raises(ValueError, match="symlinked path"):
-        resolve_absent_output_directory(str(output))
-
-    assert output.is_symlink()
-    assert list(elsewhere.iterdir()) == []
-
-
-def test_resolve_absent_output_directory_rejects_symlinked_parent(tmp_path):
-    real_parent = tmp_path / "real-parent"
-    linked_parent = tmp_path / "linked-parent"
-    real_parent.mkdir()
-    linked_parent.symlink_to(real_parent, target_is_directory=True)
-
-    with pytest.raises(ValueError, match="symlinked path"):
-        resolve_absent_output_directory(str(linked_parent / "snapshot"))
-
-    assert linked_parent.is_symlink()
-    assert not (real_parent / "snapshot").exists()
-    assert list(real_parent.iterdir()) == []
-
-
-def test_resolve_absent_output_directory_rejects_symlink_above_existing_dir(tmp_path):
-    """An existing real directory under a symlink must still be refused.
-
-    Stopping at the first existing ancestor would treat link/existing as safe
-    and let Path.resolve() publish under the symlink target.
-    """
-    real = tmp_path / "real"
-    existing = real / "existing"
-    linked = tmp_path / "linked"
-    real.mkdir()
-    existing.mkdir()
-    linked.symlink_to(real, target_is_directory=True)
-
-    with pytest.raises(ValueError, match="symlinked path"):
-        resolve_absent_output_directory(str(linked / "existing" / "snapshot"))
-
-    assert linked.is_symlink()
-    assert not (existing / "snapshot").exists()
-    assert list(existing.iterdir()) == []
+    assert link.is_symlink()
+    assert all(not path.exists() for path in forbidden)
+    if output.exists():
+        assert list(output.iterdir()) == []
 
 
 def test_resolve_absent_output_directory_allows_allowlisted_temp_prefix(tmp_path, monkeypatch):
@@ -126,38 +137,6 @@ def test_resolve_absent_output_directory_allows_allowlisted_temp_prefix(tmp_path
     assert resolved == (real_tmp / "nested" / "snapshot").resolve()
     assert resolved.parent.is_dir()
     assert not resolved.exists()
-
-
-def test_resolve_absent_output_directory_allowlisted_prefix_still_refuses_leaf(
-    tmp_path, monkeypatch
-):
-    ambient, _real_tmp = _allowlist_ambient_tmp(tmp_path, monkeypatch)
-    elsewhere = tmp_path / "elsewhere" / "hijacked"
-    output = ambient / "snapshot"
-    output.symlink_to(elsewhere, target_is_directory=True)
-
-    with pytest.raises(ValueError, match="symlinked path"):
-        resolve_absent_output_directory(str(output))
-
-    assert output.is_symlink()
-    assert not elsewhere.exists()
-
-
-def test_resolve_absent_output_directory_allowlisted_prefix_still_refuses_parent(
-    tmp_path, monkeypatch
-):
-    ambient, real_tmp = _allowlist_ambient_tmp(tmp_path, monkeypatch)
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    linked = ambient / "linked-parent"
-    linked.symlink_to(elsewhere, target_is_directory=True)
-
-    with pytest.raises(ValueError, match="symlinked path"):
-        resolve_absent_output_directory(str(linked / "snapshot"))
-
-    assert linked.is_symlink()
-    assert not (elsewhere / "snapshot").exists()
-    assert not (real_tmp / "linked-parent" / "snapshot").exists()
 
 
 def test_resolve_existing_path_allows_legitimate_absolute_paths(tmp_path):
