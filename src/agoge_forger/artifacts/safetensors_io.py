@@ -32,14 +32,23 @@ def inspect_safetensors_file(path: str) -> dict[str, Any]:
     try:
         with safe_open(path, framework="pt") as f:
             info["metadata"] = f.metadata()
-            for key in f:
+            # `safe_open` exposes keys() but is not itself iterable, so `for key
+            # in f` raised TypeError on every valid file and escaped the handler
+            # below, which does not catch TypeError. SIM118 assumes a dict here
+            # and its suggested rewrite is exactly the bug, so it stays silenced.
+            for key in f.keys():  # noqa: SIM118
                 tensor = f.get_slice(key)
                 info["tensors"][key] = {
                     "shape": tensor.get_shape(),
                     "dtype": str(tensor.get_dtype()),
                 }
     except (OSError, RuntimeError, ValueError, KeyError) as e:
+        # Do not hand back a half-filled result: the caller cannot tell it from a
+        # file that genuinely has no tensors, and the CLI would print `{}` and
+        # exit 0 on an unreadable file. Log for context, then let the caller's
+        # boundary turn it into a reported failure.
         logger.error(f"Failed to inspect safetensors file {path}: {e}")
+        raise
     return info
 
 

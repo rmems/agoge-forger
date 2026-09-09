@@ -215,7 +215,7 @@ def test_smoke_vllm_cli_requires_model(runner: CliRunner):
 
 
 def test_effective_smoke_stream_defaults():
-    from agoge_forger.cli import _effective_smoke_stream
+    from agoge_forger._cli_serving import _effective_smoke_stream
 
     assert _effective_smoke_stream(True, None) is True
     assert _effective_smoke_stream(False, "config.yaml") is False
