@@ -2,6 +2,8 @@
 
 import json
 import os
+import shutil
+from pathlib import Path
 
 import pytest
 
@@ -107,6 +109,37 @@ def test_keep_latest_retains_the_newest_valid_checkpoints(tmp_path, keep, surviv
     assert _checkpoint_names(run_dir) == survivors
 
 
+def test_keep_latest_preserves_zero_padded_checkpoint_names(tmp_path):
+    """`checkpoint-050` parses as step 50. Rebuilding `checkpoint-50` would
+    miss the keep set and delete the snapshot `--keep-latest 1` asked to keep.
+    """
+    run_dir = _make_run_dir(tmp_path)
+    _write_checkpoint(run_dir, 50).rename(run_dir / "checkpoint-050")
+    _write_final_adapter(run_dir)
+    write_artifact_index(str(run_dir), producer_provenance=_provenance())
+
+    execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=1)))
+
+    assert _checkpoint_names(run_dir) == ["checkpoint-050"]
+
+
+def test_keep_latest_does_not_spend_slots_on_symlinked_checkpoints(tmp_path):
+    """A symlink to a valid checkpoint still parses as a valid step. If it
+    consumed the keep slot, `--keep-latest 1` would delete every real snapshot.
+    """
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50, 100))
+    real = run_dir / "checkpoint-100"
+    outside = tmp_path / "elsewhere"
+    real.rename(outside)
+    (run_dir / "checkpoint-100").symlink_to(outside, target_is_directory=True)
+
+    execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=1)))
+
+    assert (run_dir / "checkpoint-50").is_dir()
+    assert (run_dir / "checkpoint-100").is_symlink()
+    assert (outside / "adapter_model.safetensors").is_file()
+
+
 def test_invalid_checkpoint_is_reclaimed_even_inside_the_keep_window(tmp_path):
     run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
     # A crashed run leaves a half-written snapshot with the highest step. It must
@@ -196,6 +229,17 @@ def test_symlinked_run_dir_is_refused(tmp_path):
     assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-150", "checkpoint-50"]
 
 
+def test_symlinked_parent_of_run_dir_is_refused(tmp_path):
+    run_dir = _run_with_checkpoints(tmp_path)
+    linked_parent = tmp_path / "linked_adapters"
+    linked_parent.symlink_to(run_dir.parent, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked path"):
+        plan_cleanup(str(linked_parent / run_dir.name))
+
+    assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-150", "checkpoint-50"]
+
+
 def test_symlinked_checkpoint_is_skipped_not_followed(tmp_path):
     run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
     outside = tmp_path / "elsewhere"
@@ -207,6 +251,21 @@ def test_symlinked_checkpoint_is_skipped_not_followed(tmp_path):
 
     assert report["skipped"] == [{"path": str(run_dir / "checkpoint-900"), "reason": "symlink"}]
     assert (outside / "keepme.txt").is_file()
+
+
+def test_mounted_checkpoint_is_skipped(tmp_path, monkeypatch):
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50, 100))
+    mounted = run_dir / "checkpoint-100"
+    monkeypatch.setattr(
+        "agoge_forger.cleanup_run.os.path.ismount",
+        lambda path: Path(path) == mounted,
+    )
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert {"path": str(mounted), "reason": "mount"} in report["skipped"]
+    assert mounted.is_dir()
+    assert not (run_dir / "checkpoint-50").exists()
 
 
 def test_missing_run_dir_raises(tmp_path):
@@ -253,6 +312,31 @@ def test_run_without_an_index_is_cleaned_without_creating_one(tmp_path):
 
     assert report["artifact_index_rewritten"] is False
     assert not (run_dir / "artifact_index.json").exists()
+
+
+def test_one_rmtree_failure_does_not_abort_the_rest(tmp_path, monkeypatch):
+    """One busy checkpoint must not strand the others, and the index must
+    still be rewritten over what actually survived.
+    """
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50, 100))
+    busy = run_dir / "checkpoint-50"
+    real_rmtree = shutil.rmtree
+
+    def flaky(path, *args, **kwargs):
+        if Path(path) == busy:
+            raise OSError("busy")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("agoge_forger.cleanup_run.shutil.rmtree", flaky)
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert busy.is_dir()
+    assert not (run_dir / "checkpoint-100").exists()
+    assert report["failed"] == [{"path": str(busy), "error": "busy"}]
+    assert report["artifact_index_rewritten"] is True
+    assert any(name.startswith("checkpoint-50/") for name in _indexed_files(run_dir))
+    assert not any(name.startswith("checkpoint-100/") for name in _indexed_files(run_dir))
 
 
 def test_failed_index_rewrite_is_reported_as_a_failure(tmp_path, monkeypatch):
@@ -330,6 +414,48 @@ def test_index_without_provenance_is_still_rebuilt(tmp_path):
     assert not any(name.startswith("checkpoint-") for name in _indexed_files(run_dir))
 
 
+def test_missing_recorded_survivor_blocks_the_reseal(tmp_path):
+    """A sealed non-checkpoint file deleted outside cleanup must not be
+    dropped from the index while the old attestation is kept.
+    """
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    (run_dir / "README.txt").write_text("sealed contents")
+    write_artifact_index(str(run_dir), producer_provenance=_provenance())
+    (run_dir / "README.txt").unlink()
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert report["artifact_index_rewritten"] is False
+    assert len(report["failed"]) == 1
+    assert "is missing but" in report["failed"][0]["error"]
+
+
+def test_index_without_artifacts_does_not_carry_old_provenance(tmp_path):
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    payload = {
+        "output_dir": str(run_dir),
+        "producer_provenance": _provenance(),
+    }
+    (run_dir / "artifact_index.json").write_text(json.dumps(payload))
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert report["artifact_index_rewritten"] is False
+    assert report["failed"]
+    assert "no verifiable artifacts list" in report["failed"][0]["error"]
+
+
+def test_file_added_after_sealing_blocks_the_reseal(tmp_path):
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    write_artifact_index(str(run_dir), producer_provenance=_provenance())
+    (run_dir / "planted.txt").write_text("added after sealing")
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert report["artifact_index_rewritten"] is False
+    assert "appeared after" in report["failed"][0]["error"]
+
+
 def test_modified_surviving_file_blocks_the_reseal(tmp_path):
     """Resealing would stamp the original provenance onto altered content, so a
     later contract check could no longer detect the change."""
@@ -371,6 +497,8 @@ def test_table_renders_every_reported_field(tmp_path):
 
     for label in ("run_name:", "dry_run:", "keep_latest:", "gib_reclaimed:", "final_artifact:"):
         assert label in table
+    assert "dry_run:" in table and "yes" in table.split("dry_run:")[1].splitlines()[0]
+    assert "final_artifact:" in table and "yes" in table.split("final_artifact:")[1].splitlines()[0]
 
 
 def _provenance():

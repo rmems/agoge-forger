@@ -142,11 +142,24 @@ def cleanup_run(
     ),
 ):
     """Remove checkpoint directories from a run that has already been exported."""
-    _resolve_run_status_run_dir(run_dir)
-    safe_merged_dir = _resolve_optional_merged_dir(merged_dir)
     quiet = output_format == CleanupFormat.json
     try:
         with _quiet_logger(quiet):
+            # Resolve here so a missing path is the same error in both formats,
+            # but do not go through exit_on_error until after the quiet scope:
+            # that helper logs via RichHandler on stdout and would break JSON.
+            resolve_existing_path(run_dir, must_be_dir=True)
+            if merged_dir is None:
+                safe_merged_dir = None
+            else:
+                try:
+                    resolved_merged = resolve_existing_path(merged_dir)
+                except FileNotFoundError:
+                    safe_merged_dir = merged_dir
+                else:
+                    safe_merged_dir = (
+                        merged_dir if not resolved_merged.is_dir() else str(resolved_merged)
+                    )
             plan = plan_cleanup(
                 run_dir,
                 CleanupOptions(
@@ -160,6 +173,9 @@ def cleanup_run(
     except CLI_PATH_ERRORS as e:
         # plan_cleanup re-resolves the run directory, so it can raise anything
         # resolve_existing_path raises — RuntimeError on a symlink loop included.
+        if quiet:
+            typer.echo(json.dumps({"error": str(e)}))
+            raise typer.Exit(code=1)
         exit_on_error(e)
 
     if not quiet:

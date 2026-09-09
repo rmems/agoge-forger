@@ -85,6 +85,30 @@ def test_table_format_is_rendered(runner, tmp_path):
     assert "[dry-run]" in result.stdout
 
 
+def test_partial_deletion_exits_one_with_parseable_json(runner, tmp_path, monkeypatch):
+    """A failed rmtree must still emit the JSON report, then exit 1."""
+    import shutil
+    from pathlib import Path
+
+    run_dir = _run_with_checkpoints(tmp_path)
+    busy = run_dir / "checkpoint-50"
+    real_rmtree = shutil.rmtree
+
+    def flaky(path, *args, **kwargs):
+        if Path(path) == busy:
+            raise OSError("busy")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("agoge_forger.cleanup_run.shutil.rmtree", flaky)
+
+    result = runner.invoke(app, ["cleanup-run", str(run_dir), "--format", "json"])
+
+    _assert_clean_exit(result, 1)
+    report = json.loads(result.stdout)
+    assert report["failed"]
+    assert report["failed"][0]["path"] == str(busy)
+
+
 def test_json_output_is_a_clean_document(runner, tmp_path):
     """--format json must stay pipeable: the logger renders to stdout too."""
     run_dir = _run_with_checkpoints(tmp_path)
@@ -143,6 +167,18 @@ def test_refuses_without_a_final_artifact(runner, tmp_path, caplog):
 
     _assert_clean_exit(result, 1)
     assert any("only recoverable artifact" in message for message in caplog.messages)
+    assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-50"]
+
+
+def test_json_refusal_emits_a_parseable_error(runner, tmp_path):
+    """A refusal in --format json must stay a JSON document on stdout."""
+    run_dir = _run_with_checkpoints(tmp_path, final_adapter=False)
+
+    result = runner.invoke(app, ["cleanup-run", str(run_dir), "--format", "json"])
+
+    _assert_clean_exit(result, 1)
+    payload = json.loads(result.stdout)
+    assert "only recoverable artifact" in payload["error"]
     assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-50"]
 
 

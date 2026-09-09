@@ -273,3 +273,20 @@ def test_directory_size_bytes_counts_an_unreadable_file_as_zero(tmp_path, monkey
 
 def test_directory_size_bytes_of_an_empty_directory_is_zero(tmp_path):
     assert directory_size_bytes(str(tmp_path)) == 0
+
+
+def test_directory_size_bytes_of_a_file_path_is_zero(tmp_path):
+    target = tmp_path / "just-a-file.bin"
+    target.write_bytes(b"x" * 16)
+    assert directory_size_bytes(str(target)) == 0
+
+
+def test_directory_size_bytes_can_count_a_symlink_as_the_link_itself(tmp_path):
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"x" * 100)
+    linked = tmp_path / "tree"
+    linked.mkdir()
+    (linked / "alias.bin").symlink_to(outside)
+
+    assert directory_size_bytes(str(linked)) == 100
+    assert directory_size_bytes(str(linked), follow_symlinks=False) == (linked / "alias.bin").lstat().st_size

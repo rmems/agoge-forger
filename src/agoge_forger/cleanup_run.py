@@ -72,6 +72,15 @@ class CleanupOptions:
     merged_dir: str | None = None
 
 
+def _skip_reason(candidate: Path) -> str | None:
+    """Why this checkpoint must not be deleted or counted as a keep slot."""
+    if candidate.is_symlink():
+        return "symlink"
+    if contains_mount(candidate):
+        return "mount"
+    return None
+
+
 def _keep_set(candidates: list[Path], steps: list[int], keep_latest: int) -> set[Path]:
     """The N highest-step checkpoints worth keeping as a resume point.
 
@@ -82,8 +91,10 @@ def _keep_set(candidates: list[Path], steps: list[int], keep_latest: int) -> set
     reconstructed `checkpoint-1` would match nothing, so `--keep-latest 1` would
     delete the very snapshot it was asked to keep.
 
-    Only valid checkpoints qualify: keeping a half-written one would reclaim less
-    disk while leaving nothing to resume from.
+    Only valid, non-skippable checkpoints qualify. A symlink or mount can still
+    parse as a valid step (the link target looks like a resume point) but is
+    later skipped; if it consumed a keep slot, `--keep-latest 1` would delete
+    every real checkpoint. Callers must pass already-filtered candidates.
     """
     if keep_latest <= 0:
         return set()
@@ -199,10 +210,9 @@ def _partition_candidates(
     kept: list[str] = []
     skipped: list[dict[str, str]] = []
     for candidate in candidates:
-        if candidate.is_symlink():
-            skipped.append({"path": str(candidate), "reason": "symlink"})
-        elif contains_mount(candidate):
-            skipped.append({"path": str(candidate), "reason": "mount"})
+        reason = _skip_reason(candidate)
+        if reason is not None:
+            skipped.append({"path": str(candidate), "reason": reason})
         elif candidate.resolve() in keep:
             kept.append(str(candidate))
         else:
@@ -210,7 +220,7 @@ def _partition_candidates(
                 {
                     "path": str(candidate),
                     "step": checkpoint_step(candidate),
-                    "bytes": directory_size_bytes(str(candidate)),
+                    "bytes": directory_size_bytes(str(candidate), follow_symlinks=False),
                 }
             )
     return removable, kept, skipped
@@ -241,7 +251,9 @@ def plan_cleanup(run_dir: str, options: CleanupOptions | None = None) -> dict[st
     _require_recoverable(recoverable, resolved_run_dir, force=options.force)
 
     candidates = _candidate_dirs(resolved_run_dir)
-    keep = _keep_set(candidates, report["checkpoints"]["steps"], options.keep_latest)
+    # Symlinks and mounts are skipped later; they must not consume keep slots.
+    keepable = [path for path in candidates if _skip_reason(path) is None]
+    keep = _keep_set(keepable, report["checkpoints"]["steps"], options.keep_latest)
     removable, kept, skipped = _partition_candidates(candidates, keep)
 
     return {
@@ -288,42 +300,91 @@ def _refresh_artifact_index(run_dir: Path, provenance: Any) -> tuple[bool, str |
     return True, None
 
 
-def _surviving_files_unchanged(run_dir: Path) -> str | None:
-    """Confirm the files that survived still hash to what the old index recorded.
+def _index_artifact_entries(
+    run_dir: Path,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Load the old index's artifact list, or explain why it cannot be verified.
 
-    Cleanup carries the old producer provenance into the rewritten index. If a
-    surviving adapter or tokenizer file has been modified since that index was
-    written, resealing would stamp the original provenance onto altered content
-    and produce an index that validates -- laundering the change past the
-    evaluation contract. Report a mismatch instead of rewriting.
-
-    Returns None when everything checks out, or a message naming the first file
-    that does not.
+    Returns ``(entries, error)``. ``entries`` is None when there is no mapping
+    to verify against (missing index, non-object JSON, no ``artifacts`` key).
+    ``error`` is set when the index exists but its artifact list is the wrong
+    shape, so a sealed provenance must not be carried forward blindly.
     """
     index_path = run_dir / _ARTIFACT_INDEX_NAME
+    if not index_path.is_file():
+        return None, None
     try:
         payload = json.loads(index_path.read_text(encoding="utf-8"))
-        entries = payload["artifacts"]
-    except (OSError, ValueError, KeyError, TypeError):
-        # An index we cannot read is handled by the provenance path; nothing to
-        # verify against here.
-        return None
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    raw = payload.get("artifacts")
+    if raw is None:
+        return None, None
+    if not isinstance(raw, list):
+        return None, f"{_ARTIFACT_INDEX_NAME} artifacts is not a list"
+    entries: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None, f"{_ARTIFACT_INDEX_NAME} contains a non-object artifact entry"
+        entries.append(entry)
+    return entries, None
+
+
+def _unsafe_indexed_path(run_dir: Path, name: str) -> str | None:
+    """Reject index paths that would hash a file outside the run directory."""
+    if not name or Path(name).is_absolute() or ".." in Path(name).parts:
+        return f"refuses to follow artifact path {name!r} outside {run_dir}"
+    try:
+        (run_dir / name).resolve().relative_to(run_dir.resolve())
+    except (OSError, ValueError):
+        return f"refuses to follow artifact path {name!r} outside {run_dir}"
+    return None
+
+
+def _unindexed_survivor(run_dir: Path, indexed: set[str]) -> str | None:
+    """First non-checkpoint file on disk that the old index never recorded."""
+    for root, dirs, files in os.walk(run_dir):
+        dirs[:] = [name for name in dirs if not _CANDIDATE_RE.match(name)]
+        for filename in files:
+            if filename == _ARTIFACT_INDEX_NAME and Path(root) == run_dir:
+                continue
+            relative = Path(os.path.relpath(os.path.join(root, filename), run_dir)).as_posix()
+            if relative not in indexed:
+                return str(run_dir / relative)
+    return None
+
+
+def _verify_surviving_entries(run_dir: Path, entries: list[dict[str, Any]]) -> str | None:
+    """Confirm survivors still match the old index, and that nothing extra appeared.
+
+    Cleanup carries the old producer provenance into the rewritten index. A
+    modified survivor, a missing non-checkpoint file, or a file added after
+    sealing would otherwise be stamped with that attestation.
+    """
+    indexed: set[str] = set()
     for entry in entries:
         name = str(entry.get("file", ""))
+        unsafe = _unsafe_indexed_path(run_dir, name)
+        if unsafe is not None:
+            return unsafe
+        first = Path(name).parts[0] if Path(name).parts else ""
         target = run_dir / name
+        if not _CANDIDATE_RE.match(first):
+            indexed.add(Path(name).as_posix())
         if not target.is_file():
-            if _CANDIDATE_RE.match(Path(name).parts[0] if Path(name).parts else ""):
-                # A checkpoint file this command removed: exactly what the
-                # rewrite is for.
+            if _CANDIDATE_RE.match(first):
                 continue
-            # Anything else vanished outside cleanup's control. Resealing would
-            # quietly drop it from the index while keeping the old attestation.
             return f"{target} is missing but {_ARTIFACT_INDEX_NAME} records it"
         try:
             if sha256_file(str(target)) != entry.get("sha256"):
                 return f"{target} changed since {_ARTIFACT_INDEX_NAME} was written"
         except OSError as exc:
             return f"could not verify {target}: {exc}"
+    extra = _unindexed_survivor(run_dir, indexed)
+    if extra is not None:
+        return f"{extra} appeared after {_ARTIFACT_INDEX_NAME} was written"
     return None
 
 
@@ -353,8 +414,15 @@ def _remove_checkpoints(
     removed: list[dict[str, Any]] = []
     failed: list[dict[str, str]] = []
     for entry in entries:
+        path = Path(entry["path"])
+        # Re-check at delete time: a symlink or mount swapped in after planning
+        # would otherwise go straight to rmtree.
+        reason = _skip_reason(path)
+        if reason is not None:
+            failed.append({"path": entry["path"], "error": f"became a {reason} after planning"})
+            continue
         try:
-            shutil.rmtree(Path(entry["path"]))
+            shutil.rmtree(path)
         except OSError as exc:
             failed.append({"path": entry["path"], "error": str(exc)})
         else:
@@ -363,19 +431,30 @@ def _remove_checkpoints(
 
 
 def _reseal_index(
-    run_dir: Path, provenance: Any, removed: list[dict[str, Any]]
+    run_dir: Path,
+    provenance: Any,
+    *,
+    touched: bool,
 ) -> tuple[bool, str | None]:
     """Rebuild the artifact index over the state that actually exists.
 
-    Keyed off what was really removed rather than what was planned, so a partial
-    failure still leaves a truthful index. Nothing was deleted means nothing to
-    reseal.
+    Keyed off whether deletion was attempted — including a failed ``rmtree``
+    that may have removed some files — so a partial failure still leaves a
+    truthful index. Nothing was touched means nothing to reseal.
     """
-    if not removed:
+    if not touched:
         return False, None
-    tampered = _surviving_files_unchanged(run_dir)
-    if tampered is not None:
-        return False, tampered
+    entries, shape_error = _index_artifact_entries(run_dir)
+    if provenance is not None:
+        if shape_error is not None:
+            return False, shape_error
+        if entries is None:
+            return False, (
+                f"{_ARTIFACT_INDEX_NAME} has sealed provenance but no verifiable artifacts list"
+            )
+        tampered = _verify_surviving_entries(run_dir, entries)
+        if tampered is not None:
+            return False, tampered
     return _refresh_artifact_index(run_dir, provenance)
 
 
@@ -391,7 +470,9 @@ def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
     provenance = _sealed_provenance(run_dir)
 
     removed, failed = _remove_checkpoints(plan["removed"])
-    rewritten, index_error = _reseal_index(run_dir, provenance, removed)
+    rewritten, index_error = _reseal_index(
+        run_dir, provenance, touched=bool(removed or failed)
+    )
     if index_error is not None:
         # The checkpoints are gone but the index still lists them, so the run's
         # own metadata is now wrong. That is a failed cleanup, not a success.
@@ -419,10 +500,14 @@ def log_cleanup(report: dict[str, Any]) -> None:
     _log_warnings(report)
 
 
+def _log_path(value: object) -> str:
+    return _escape_controls(str(value))
+
+
 def _log_removals(report: dict[str, Any], prefix: str) -> None:
     removed = report["removed"]
     if not removed:
-        logger.info("%snothing to remove under %s", prefix, report["run_dir"])
+        logger.info("%snothing to remove under %s", prefix, _log_path(report["run_dir"]))
         return
     logger.info(
         "%s%s %d checkpoint director%s under %s (~%.2f GiB)",
@@ -430,20 +515,34 @@ def _log_removals(report: dict[str, Any], prefix: str) -> None:
         "would remove" if report["dry_run"] else "removed",
         len(removed),
         "y" if len(removed) == 1 else "ies",
-        report["run_dir"],
+        _log_path(report["run_dir"]),
         report["bytes_reclaimed"] / BYTES_PER_GB,
     )
     for entry in removed:
-        logger.info("%s  %s (%.2f GiB)", prefix, entry["path"], entry["bytes"] / BYTES_PER_GB)
+        logger.info(
+            "%s  %s (%.2f GiB)",
+            prefix,
+            _log_path(entry["path"]),
+            entry["bytes"] / BYTES_PER_GB,
+        )
 
 
 def _log_untouched(report: dict[str, Any], prefix: str) -> None:
     for path in report["kept"]:
-        logger.info("%skept %s", prefix, path)
+        logger.info("%skept %s", prefix, _log_path(path))
     for entry in report["skipped"]:
-        logger.info("%sskipped %s (%s)", prefix, entry["path"], entry["reason"])
+        logger.info("%sskipped %s (%s)", prefix, _log_path(entry["path"]), entry["reason"])
     for entry in report["failed"]:
-        logger.error("failed %s: %s", entry["path"], entry["error"])
+        logger.error("failed %s: %s", _log_path(entry["path"]), entry["error"])
+
+
+def _force_left_nothing_usable(report: dict[str, Any]) -> bool:
+    """True when --force deleted the last resume/export point."""
+    if not report["guard"]["forced"]:
+        return False
+    if report["kept"]:
+        return False
+    return bool(report["removed"])
 
 
 def _log_warnings(report: dict[str, Any]) -> None:
@@ -453,14 +552,11 @@ def _log_warnings(report: dict[str, Any]) -> None:
             "evaluation contract for this run after cleanup, not before.",
             _ARTIFACT_INDEX_NAME,
         )
-    # Only when nothing usable is actually left. `--force --keep-latest 1` bypasses
-    # the guard but still leaves a resumable checkpoint, and so does a run where
-    # every deletion failed.
-    if report["guard"]["forced"] and not report["kept"] and report["removed"]:
+    if _force_left_nothing_usable(report):
         logger.warning(
             "--force removed the only recoverable artifact under %s; this run can no "
             "longer be resumed or exported.",
-            report["run_dir"],
+            _log_path(report["run_dir"]),
         )
 
 

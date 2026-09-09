@@ -58,20 +58,28 @@ def estimate_training_risk(config, gpu_report):
             logger.warning("RISK: max_seq_length > 2048 on 16GB VRAM may cause OOM.")
 
 
-def directory_size_bytes(path: str) -> int:
-    """Sum the apparent size of every regular file under ``path``.
+def directory_size_bytes(path: str, *, follow_symlinks: bool = True) -> int:
+    """Sum file sizes under a directory tree.
 
-    Unreadable files are logged and counted as zero rather than raising, so a
-    size report never fails on a permission error or a file that vanished mid
-    walk. Callers that present the total to an operator should therefore call it
-    an estimate. ``os.walk`` does not descend symlinked directories.
+    A non-directory path measures 0 (``os.walk`` yields nothing). Symlinked
+    directories are never descended. Unreadable or vanished files are logged
+    and counted as zero rather than raising, so callers should treat the total
+    as an estimate.
+
+    With ``follow_symlinks=True`` (the default, used by disk preflight) a
+    symlink-to-file counts its target's size; a broken symlink counts 0.
+    Cleanup passes ``follow_symlinks=False`` so a link's own size is counted —
+    ``rmtree`` only unlinks it and does not free the target.
     """
     total = 0
     for root, _, files in os.walk(path):
         for filename in files:
             file_path = os.path.join(root, filename)
             try:
-                total += os.path.getsize(file_path)
+                if follow_symlinks:
+                    total += os.path.getsize(file_path)
+                else:
+                    total += os.lstat(file_path).st_size
             except OSError:
                 logger.warning(f"Could not read file size for {file_path}")
     return total
