@@ -13,6 +13,7 @@ from agoge_forger.cleanup_run import (
     CleanupOptions,
     execute_cleanup,
     format_cleanup_table,
+    log_cleanup,
     plan_cleanup,
 )
 from agoge_forger.run_status import build_run_status
@@ -428,6 +429,7 @@ def test_missing_recorded_survivor_blocks_the_reseal(tmp_path):
     assert report["artifact_index_rewritten"] is False
     assert len(report["failed"]) == 1
     assert "is missing but" in report["failed"][0]["error"]
+    assert _checkpoint_names(run_dir) == ["checkpoint-50"]
 
 
 def test_index_without_artifacts_does_not_carry_old_provenance(tmp_path):
@@ -443,6 +445,7 @@ def test_index_without_artifacts_does_not_carry_old_provenance(tmp_path):
     assert report["artifact_index_rewritten"] is False
     assert report["failed"]
     assert "no verifiable artifacts list" in report["failed"][0]["error"]
+    assert _checkpoint_names(run_dir) == ["checkpoint-50"]
 
 
 def test_file_added_after_sealing_blocks_the_reseal(tmp_path):
@@ -454,6 +457,32 @@ def test_file_added_after_sealing_blocks_the_reseal(tmp_path):
 
     assert report["artifact_index_rewritten"] is False
     assert "appeared after" in report["failed"][0]["error"]
+    assert _checkpoint_names(run_dir) == ["checkpoint-50"]
+
+
+def test_extra_file_in_kept_checkpoint_blocks_before_delete(tmp_path):
+    """write_artifact_index walks kept trees; a post-seal add there must not
+    be attested, and the planned removal must still be on disk."""
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50, 100))
+    (run_dir / "checkpoint-100" / "planted.bin").write_bytes(b"after seal")
+
+    report = execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=1)))
+
+    assert report["artifact_index_rewritten"] is False
+    assert "appeared after" in report["failed"][0]["error"]
+    assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-50"]
+
+
+def test_extra_file_in_planned_removal_does_not_block(tmp_path):
+    """A file inside a checkpoint that is about to be deleted is not a survivor."""
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50, 100))
+    (run_dir / "checkpoint-50" / "planted.bin").write_bytes(b"doomed")
+
+    report = execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=1)))
+
+    assert report["failed"] == []
+    assert report["artifact_index_rewritten"] is True
+    assert _checkpoint_names(run_dir) == ["checkpoint-100"]
 
 
 def test_modified_surviving_file_blocks_the_reseal(tmp_path):
@@ -472,6 +501,26 @@ def test_modified_surviving_file_blocks_the_reseal(tmp_path):
     assert report["artifact_index_rewritten"] is False
     assert len(report["failed"]) == 1
     assert "changed since" in report["failed"][0]["error"]
+    assert _checkpoint_names(run_dir) == ["checkpoint-50"]
+
+
+def test_failed_error_escapes_controls_in_logs(caplog):
+    report = {
+        "dry_run": False,
+        "run_dir": "/run",
+        "removed": [],
+        "kept": [],
+        "skipped": [],
+        "failed": [{"path": "/run/artifact_index.json", "error": "missing \x1b[31mfile"}],
+        "guard": {"forced": False},
+        "artifact_index_rewritten": False,
+        "bytes_reclaimed": 0,
+    }
+    with caplog.at_level("ERROR", logger="agoge"):
+        log_cleanup(report)
+    joined = "".join(caplog.messages)
+    assert "\x1b" not in joined
+    assert "\\u001b" in joined
 
 
 def test_index_is_left_alone_when_nothing_was_removed(tmp_path):

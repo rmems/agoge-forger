@@ -389,10 +389,25 @@ def _first_unindexed_file(
     return None
 
 
-def _unindexed_survivor(run_dir: Path, indexed: set[str]) -> str | None:
-    """First non-checkpoint file on disk that the old index never recorded."""
+def _removed_dir_names(entries: list[dict[str, Any]]) -> frozenset[str]:
+    return frozenset(Path(entry["path"]).name for entry in entries)
+
+
+def _is_planned_removal(name: str, skip_dirs: frozenset[str]) -> bool:
+    first = Path(name).parts[0] if Path(name).parts else ""
+    return first in skip_dirs
+
+
+def _unindexed_survivor(run_dir: Path, indexed: set[str], skip_dirs: frozenset[str]) -> str | None:
+    """First survivor the old index never recorded.
+
+    Planned removals are skipped: those trees are about to be deleted, so an
+    extra file there is not something cleanup will attest. Kept and skipped
+    checkpoint trees are walked, because ``write_artifact_index`` will hash
+    them and would otherwise stamp the old provenance onto a post-seal add.
+    """
     for root, dirs, files in os.walk(run_dir):
-        dirs[:] = [name for name in dirs if not _CANDIDATE_RE.match(name)]
+        dirs[:] = [name for name in dirs if name not in skip_dirs]
         extra = _first_unindexed_file(run_dir, root, files, indexed)
         if extra is not None:
             return extra
@@ -409,13 +424,17 @@ def _entry_hash_error(target: Path, expected: object) -> str | None:
     return None
 
 
-def _note_non_checkpoint(name: str, indexed: set[str]) -> None:
-    if _is_checkpoint_entry(name):
+def _note_indexed_survivor(name: str, indexed: set[str], skip_dirs: frozenset[str]) -> None:
+    if _is_planned_removal(name, skip_dirs):
         return
     indexed.add(Path(name).as_posix())
 
 
-def _present_or_missing(run_dir: Path, name: str, expected: object) -> str | None:
+def _present_or_missing(
+    run_dir: Path, name: str, expected: object, skip_dirs: frozenset[str]
+) -> str | None:
+    if _is_planned_removal(name, skip_dirs):
+        return None
     target = run_dir / name
     if target.is_file():
         return _entry_hash_error(target, expected)
@@ -424,23 +443,32 @@ def _present_or_missing(run_dir: Path, name: str, expected: object) -> str | Non
     return f"{target} is missing but {_ARTIFACT_INDEX_NAME} records it"
 
 
-def _verify_one_entry(run_dir: Path, entry: dict[str, Any], indexed: set[str]) -> str | None:
+def _verify_one_entry(
+    run_dir: Path,
+    entry: dict[str, Any],
+    indexed: set[str],
+    skip_dirs: frozenset[str],
+) -> str | None:
     name = str(entry.get("file", ""))
     unsafe = _unsafe_indexed_path(run_dir, name)
     if unsafe is not None:
         return unsafe
-    _note_non_checkpoint(name, indexed)
-    return _present_or_missing(run_dir, name, entry.get("sha256"))
+    _note_indexed_survivor(name, indexed, skip_dirs)
+    return _present_or_missing(run_dir, name, entry.get("sha256"), skip_dirs)
 
 
-def _extra_survivor_error(run_dir: Path, indexed: set[str]) -> str | None:
-    extra = _unindexed_survivor(run_dir, indexed)
+def _extra_survivor_error(
+    run_dir: Path, indexed: set[str], skip_dirs: frozenset[str]
+) -> str | None:
+    extra = _unindexed_survivor(run_dir, indexed, skip_dirs)
     if extra is None:
         return None
     return f"{extra} appeared after {_ARTIFACT_INDEX_NAME} was written"
 
 
-def _verify_surviving_entries(run_dir: Path, entries: list[dict[str, Any]]) -> str | None:
+def _verify_surviving_entries(
+    run_dir: Path, entries: list[dict[str, Any]], skip_dirs: frozenset[str]
+) -> str | None:
     """Confirm survivors still match the old index, and that nothing extra appeared.
 
     Cleanup carries the old producer provenance into the rewritten index. A
@@ -449,10 +477,10 @@ def _verify_surviving_entries(run_dir: Path, entries: list[dict[str, Any]]) -> s
     """
     indexed: set[str] = set()
     for entry in entries:
-        error = _verify_one_entry(run_dir, entry, indexed)
+        error = _verify_one_entry(run_dir, entry, indexed, skip_dirs)
         if error is not None:
             return error
-    return _extra_survivor_error(run_dir, indexed)
+    return _extra_survivor_error(run_dir, indexed, skip_dirs)
 
 
 def _sealed_provenance(run_dir: Path) -> Any:
@@ -507,17 +535,17 @@ def _reseal_index(
 
     Keyed off whether deletion was attempted — including a failed ``rmtree``
     that may have removed some files — so a partial failure still leaves a
-    truthful index. Nothing was touched means nothing to reseal.
+    truthful index. Nothing was touched means nothing to reseal. Integrity is
+    checked *before* deletion; this only rewrites a verified tree.
     """
     if not touched:
         return False, None
-    guard_error = _provenance_guard_error(run_dir, provenance)
-    if guard_error is not None:
-        return False, guard_error
     return _refresh_artifact_index(run_dir, provenance)
 
 
-def _provenance_guard_error(run_dir: Path, provenance: Any) -> str | None:
+def _provenance_guard_error(
+    run_dir: Path, provenance: Any, skip_dirs: frozenset[str]
+) -> str | None:
     """Refuse to carry sealed provenance when the old index cannot be verified."""
     if provenance is None:
         return None
@@ -526,7 +554,24 @@ def _provenance_guard_error(run_dir: Path, provenance: Any) -> str | None:
         return shape_error
     if entries is None:
         return f"{_ARTIFACT_INDEX_NAME} has sealed provenance but no verifiable artifacts list"
-    return _verify_surviving_entries(run_dir, entries)
+    return _verify_surviving_entries(run_dir, entries, skip_dirs)
+
+
+def _pre_delete_error(run_dir: Path, plan: dict[str, Any], provenance: Any) -> str | None:
+    """Integrity failure that must abort while checkpoints are still on disk."""
+    if not plan["removed"]:
+        return None
+    return _provenance_guard_error(run_dir, provenance, _removed_dir_names(plan["removed"]))
+
+
+def _aborted_cleanup(plan: dict[str, Any], error: str) -> dict[str, Any]:
+    report = dict(plan)
+    report["dry_run"] = False
+    report["removed"] = []
+    report["failed"] = [{"path": str(Path(plan["run_dir"]) / _ARTIFACT_INDEX_NAME), "error": error}]
+    report["bytes_reclaimed"] = 0
+    report["artifact_index_rewritten"] = False
+    return report
 
 
 def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
@@ -539,6 +584,9 @@ def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
     """
     run_dir = Path(plan["run_dir"])
     provenance = _sealed_provenance(run_dir)
+    guard_error = _pre_delete_error(run_dir, plan, provenance)
+    if guard_error is not None:
+        return _aborted_cleanup(plan, guard_error)
 
     removed, failed = _remove_checkpoints(plan["removed"])
     rewritten, index_error = _reseal_index(run_dir, provenance, touched=bool(removed or failed))
@@ -602,7 +650,7 @@ def _log_untouched(report: dict[str, Any], prefix: str) -> None:
     for entry in report["skipped"]:
         logger.info("%sskipped %s (%s)", prefix, _log_path(entry["path"]), entry["reason"])
     for entry in report["failed"]:
-        logger.error("failed %s: %s", _log_path(entry["path"]), entry["error"])
+        logger.error("failed %s: %s", _log_path(entry["path"]), _log_path(entry["error"]))
 
 
 def _force_left_nothing_usable(report: dict[str, Any]) -> bool:
