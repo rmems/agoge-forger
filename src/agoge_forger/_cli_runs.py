@@ -3,7 +3,7 @@
 import json
 import logging
 from contextlib import contextmanager
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import typer
 
@@ -125,6 +125,46 @@ def _emit_cleanup(report: dict[str, Any], output_format: CleanupFormat) -> None:
     typer.echo(json.dumps(report, indent=2))
 
 
+def _cleanup_merged_dir(merged_dir: str | None) -> str | None:
+    """Resolve --merged-dir without exiting, so JSON mode can stay parseable."""
+    if merged_dir is None:
+        return None
+    try:
+        resolved = resolve_existing_path(merged_dir)
+    except FileNotFoundError:
+        return merged_dir
+    if resolved.is_dir():
+        return str(resolved)
+    return merged_dir
+
+
+def _fail_cleanup(exc: BaseException, *, quiet: bool) -> NoReturn:
+    """JSON mode emits a document; table mode uses the shared log-and-exit path."""
+    if quiet:
+        typer.echo(json.dumps({"error": str(exc)}))
+        raise typer.Exit(code=1)
+    exit_on_error(exc)
+
+
+def _run_cleanup(run_dir: str, options: CleanupOptions, *, dry_run: bool) -> dict[str, Any]:
+    # Resolve here so a missing path is the same error in both formats,
+    # but do not go through exit_on_error until after the quiet scope:
+    # that helper logs via RichHandler on stdout and would break JSON.
+    resolve_existing_path(run_dir, must_be_dir=True)
+    plan = plan_cleanup(run_dir, options)
+    if dry_run:
+        return plan
+    return execute_cleanup(plan)
+
+
+def _finish_cleanup(report: dict[str, Any], output_format: CleanupFormat) -> None:
+    if output_format is not CleanupFormat.json:
+        log_cleanup(report)
+    _emit_cleanup(report, output_format)
+    if report["failed"]:
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def cleanup_run(
     run_dir: str = typer.Argument(..., help="Run directory to prune (adapters/<run_name>)"),
@@ -145,41 +185,18 @@ def cleanup_run(
     quiet = output_format == CleanupFormat.json
     try:
         with _quiet_logger(quiet):
-            # Resolve here so a missing path is the same error in both formats,
-            # but do not go through exit_on_error until after the quiet scope:
-            # that helper logs via RichHandler on stdout and would break JSON.
-            resolve_existing_path(run_dir, must_be_dir=True)
-            if merged_dir is None:
-                safe_merged_dir = None
-            else:
-                try:
-                    resolved_merged = resolve_existing_path(merged_dir)
-                except FileNotFoundError:
-                    safe_merged_dir = merged_dir
-                else:
-                    safe_merged_dir = (
-                        merged_dir if not resolved_merged.is_dir() else str(resolved_merged)
-                    )
-            plan = plan_cleanup(
+            report = _run_cleanup(
                 run_dir,
                 CleanupOptions(
                     keep_latest=keep_latest,
                     allow_unsafe=allow_unsafe_serialization,
                     force=force,
-                    merged_dir=safe_merged_dir,
+                    merged_dir=_cleanup_merged_dir(merged_dir),
                 ),
+                dry_run=dry_run,
             )
-            report = plan if dry_run else execute_cleanup(plan)
     except CLI_PATH_ERRORS as e:
         # plan_cleanup re-resolves the run directory, so it can raise anything
         # resolve_existing_path raises — RuntimeError on a symlink loop included.
-        if quiet:
-            typer.echo(json.dumps({"error": str(e)}))
-            raise typer.Exit(code=1)
-        exit_on_error(e)
-
-    if not quiet:
-        log_cleanup(report)
-    _emit_cleanup(report, output_format)
-    if report["failed"]:
-        raise typer.Exit(code=1)
+        _fail_cleanup(e, quiet=quiet)
+    _finish_cleanup(report, output_format)

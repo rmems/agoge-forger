@@ -300,46 +300,92 @@ def _refresh_artifact_index(run_dir: Path, provenance: Any) -> tuple[bool, str |
     return True, None
 
 
+def _read_index_mapping(run_dir: Path) -> dict[str, Any] | None:
+    """Return the index object, or None when it is missing or not a mapping."""
+    index_path = run_dir / _ARTIFACT_INDEX_NAME
+    if not index_path.is_file():
+        return None
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _artifact_entries_from(
+    payload: dict[str, Any],
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Validate ``artifacts`` without carrying a bad list under sealed provenance."""
+    raw = payload.get("artifacts")
+    if raw is None:
+        return None, None
+    if not isinstance(raw, list):
+        return None, f"{_ARTIFACT_INDEX_NAME} artifacts is not a list"
+    if not all(isinstance(entry, dict) for entry in raw):
+        return None, f"{_ARTIFACT_INDEX_NAME} contains a non-object artifact entry"
+    return list(raw), None
+
+
 def _index_artifact_entries(
     run_dir: Path,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Load the old index's artifact list, or explain why it cannot be verified.
 
     Returns ``(entries, error)``. ``entries`` is None when there is no mapping
-    to verify against (missing index, non-object JSON, no ``artifacts`` key).
-    ``error`` is set when the index exists but its artifact list is the wrong
+    to verify against. ``error`` is set when the artifact list is the wrong
     shape, so a sealed provenance must not be carried forward blindly.
     """
-    index_path = run_dir / _ARTIFACT_INDEX_NAME
-    if not index_path.is_file():
+    payload = _read_index_mapping(run_dir)
+    if payload is None:
         return None, None
-    try:
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None, None
-    if not isinstance(payload, dict):
-        return None, None
-    raw = payload.get("artifacts")
-    if raw is None:
-        return None, None
-    if not isinstance(raw, list):
-        return None, f"{_ARTIFACT_INDEX_NAME} artifacts is not a list"
-    entries: list[dict[str, Any]] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            return None, f"{_ARTIFACT_INDEX_NAME} contains a non-object artifact entry"
-        entries.append(entry)
-    return entries, None
+    return _artifact_entries_from(payload)
+
+
+def _index_path_is_relative(name: str) -> bool:
+    if not name:
+        return False
+    path = Path(name)
+    if path.is_absolute():
+        return False
+    return ".." not in path.parts
 
 
 def _unsafe_indexed_path(run_dir: Path, name: str) -> str | None:
     """Reject index paths that would hash a file outside the run directory."""
-    if not name or Path(name).is_absolute() or ".." in Path(name).parts:
-        return f"refuses to follow artifact path {name!r} outside {run_dir}"
+    message = f"refuses to follow artifact path {name!r} outside {run_dir}"
+    if not _index_path_is_relative(name):
+        return message
     try:
         (run_dir / name).resolve().relative_to(run_dir.resolve())
     except (OSError, ValueError):
-        return f"refuses to follow artifact path {name!r} outside {run_dir}"
+        return message
+    return None
+
+
+def _is_checkpoint_entry(name: str) -> bool:
+    first = Path(name).parts[0] if Path(name).parts else ""
+    return bool(_CANDIDATE_RE.match(first))
+
+
+def _is_run_index_file(run_dir: Path, root: str, filename: str) -> bool:
+    return filename == _ARTIFACT_INDEX_NAME and Path(root) == run_dir
+
+
+def _relative_under_run(run_dir: Path, root: str, filename: str) -> str:
+    return Path(os.path.relpath(os.path.join(root, filename), run_dir)).as_posix()
+
+
+def _first_unindexed_file(
+    run_dir: Path, root: str, files: list[str], indexed: set[str]
+) -> str | None:
+    for filename in files:
+        if _is_run_index_file(run_dir, root, filename):
+            continue
+        relative = _relative_under_run(run_dir, root, filename)
+        if relative not in indexed:
+            return str(run_dir / relative)
     return None
 
 
@@ -347,13 +393,51 @@ def _unindexed_survivor(run_dir: Path, indexed: set[str]) -> str | None:
     """First non-checkpoint file on disk that the old index never recorded."""
     for root, dirs, files in os.walk(run_dir):
         dirs[:] = [name for name in dirs if not _CANDIDATE_RE.match(name)]
-        for filename in files:
-            if filename == _ARTIFACT_INDEX_NAME and Path(root) == run_dir:
-                continue
-            relative = Path(os.path.relpath(os.path.join(root, filename), run_dir)).as_posix()
-            if relative not in indexed:
-                return str(run_dir / relative)
+        extra = _first_unindexed_file(run_dir, root, files, indexed)
+        if extra is not None:
+            return extra
     return None
+
+
+def _entry_hash_error(target: Path, expected: object) -> str | None:
+    try:
+        digest = sha256_file(str(target))
+    except OSError as exc:
+        return f"could not verify {target}: {exc}"
+    if digest != expected:
+        return f"{target} changed since {_ARTIFACT_INDEX_NAME} was written"
+    return None
+
+
+def _note_non_checkpoint(name: str, indexed: set[str]) -> None:
+    if _is_checkpoint_entry(name):
+        return
+    indexed.add(Path(name).as_posix())
+
+
+def _present_or_missing(run_dir: Path, name: str, expected: object) -> str | None:
+    target = run_dir / name
+    if target.is_file():
+        return _entry_hash_error(target, expected)
+    if _is_checkpoint_entry(name):
+        return None
+    return f"{target} is missing but {_ARTIFACT_INDEX_NAME} records it"
+
+
+def _verify_one_entry(run_dir: Path, entry: dict[str, Any], indexed: set[str]) -> str | None:
+    name = str(entry.get("file", ""))
+    unsafe = _unsafe_indexed_path(run_dir, name)
+    if unsafe is not None:
+        return unsafe
+    _note_non_checkpoint(name, indexed)
+    return _present_or_missing(run_dir, name, entry.get("sha256"))
+
+
+def _extra_survivor_error(run_dir: Path, indexed: set[str]) -> str | None:
+    extra = _unindexed_survivor(run_dir, indexed)
+    if extra is None:
+        return None
+    return f"{extra} appeared after {_ARTIFACT_INDEX_NAME} was written"
 
 
 def _verify_surviving_entries(run_dir: Path, entries: list[dict[str, Any]]) -> str | None:
@@ -365,27 +449,10 @@ def _verify_surviving_entries(run_dir: Path, entries: list[dict[str, Any]]) -> s
     """
     indexed: set[str] = set()
     for entry in entries:
-        name = str(entry.get("file", ""))
-        unsafe = _unsafe_indexed_path(run_dir, name)
-        if unsafe is not None:
-            return unsafe
-        first = Path(name).parts[0] if Path(name).parts else ""
-        target = run_dir / name
-        if not _CANDIDATE_RE.match(first):
-            indexed.add(Path(name).as_posix())
-        if not target.is_file():
-            if _CANDIDATE_RE.match(first):
-                continue
-            return f"{target} is missing but {_ARTIFACT_INDEX_NAME} records it"
-        try:
-            if sha256_file(str(target)) != entry.get("sha256"):
-                return f"{target} changed since {_ARTIFACT_INDEX_NAME} was written"
-        except OSError as exc:
-            return f"could not verify {target}: {exc}"
-    extra = _unindexed_survivor(run_dir, indexed)
-    if extra is not None:
-        return f"{extra} appeared after {_ARTIFACT_INDEX_NAME} was written"
-    return None
+        error = _verify_one_entry(run_dir, entry, indexed)
+        if error is not None:
+            return error
+    return _extra_survivor_error(run_dir, indexed)
 
 
 def _sealed_provenance(run_dir: Path) -> Any:
@@ -444,18 +511,22 @@ def _reseal_index(
     """
     if not touched:
         return False, None
-    entries, shape_error = _index_artifact_entries(run_dir)
-    if provenance is not None:
-        if shape_error is not None:
-            return False, shape_error
-        if entries is None:
-            return False, (
-                f"{_ARTIFACT_INDEX_NAME} has sealed provenance but no verifiable artifacts list"
-            )
-        tampered = _verify_surviving_entries(run_dir, entries)
-        if tampered is not None:
-            return False, tampered
+    guard_error = _provenance_guard_error(run_dir, provenance)
+    if guard_error is not None:
+        return False, guard_error
     return _refresh_artifact_index(run_dir, provenance)
+
+
+def _provenance_guard_error(run_dir: Path, provenance: Any) -> str | None:
+    """Refuse to carry sealed provenance when the old index cannot be verified."""
+    if provenance is None:
+        return None
+    entries, shape_error = _index_artifact_entries(run_dir)
+    if shape_error is not None:
+        return shape_error
+    if entries is None:
+        return f"{_ARTIFACT_INDEX_NAME} has sealed provenance but no verifiable artifacts list"
+    return _verify_surviving_entries(run_dir, entries)
 
 
 def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
