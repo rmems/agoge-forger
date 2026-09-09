@@ -58,13 +58,28 @@ def estimate_training_risk(config, gpu_report):
             logger.warning("RISK: max_seq_length > 2048 on 16GB VRAM may cause OOM.")
 
 
-def _directory_size_bytes(path: str) -> int:
+def directory_size_bytes(path: str, *, follow_symlinks: bool = True) -> int:
+    """Sum file sizes under a directory tree.
+
+    A non-directory path measures 0 (``os.walk`` yields nothing). Symlinked
+    directories are never descended. Unreadable or vanished files are logged
+    and counted as zero rather than raising, so callers should treat the total
+    as an estimate.
+
+    With ``follow_symlinks=True`` (the default, used by disk preflight) a
+    symlink-to-file counts its target's size; a broken symlink counts 0.
+    Cleanup passes ``follow_symlinks=False`` so a link's own size is counted —
+    ``rmtree`` only unlinks it and does not free the target.
+    """
     total = 0
     for root, _, files in os.walk(path):
         for filename in files:
             file_path = os.path.join(root, filename)
             try:
-                total += os.path.getsize(file_path)
+                if follow_symlinks or not os.path.islink(file_path):
+                    total += os.path.getsize(file_path)
+                else:
+                    total += os.lstat(file_path).st_size
             except OSError:
                 logger.warning(f"Could not read file size for {file_path}")
     return total
@@ -94,7 +109,7 @@ def collect_disk_pressure_report(config, monitored_paths=None):
     for path in monitored_paths:
         entry = {"path": path, "exists": os.path.exists(path), "size_gb": 0.0}
         if entry["exists"]:
-            entry["size_gb"] = _directory_size_bytes(path) / BYTES_PER_GB
+            entry["size_gb"] = directory_size_bytes(path) / BYTES_PER_GB
         report["paths"].append(entry)
 
     return report

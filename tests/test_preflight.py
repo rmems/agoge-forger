@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -7,6 +8,7 @@ from agoge_forger.datasets import load_jsonl_dataset
 from agoge_forger.train.preflight import (
     BYTES_PER_GB,
     collect_disk_pressure_report,
+    directory_size_bytes,
     estimate_training_risk,
     get_gpu_report,
     validate_dataset_text_field,
@@ -241,3 +243,53 @@ def test_estimate_training_risk_skips_when_vram_above_gate(caplog):
         estimate_training_risk(config, {"total_vram_gb": 24.0})
 
     assert not any("RISK:" in m for m in caplog.messages)
+
+
+def test_directory_size_bytes_sums_nested_files(tmp_path):
+    """Promoted from `_directory_size_bytes` for cleanup-run's byte accounting."""
+    (tmp_path / "a.bin").write_bytes(b"x" * 10)
+    nested = tmp_path / "sub"
+    nested.mkdir()
+    (nested / "b.bin").write_bytes(b"y" * 25)
+
+    assert directory_size_bytes(str(tmp_path)) == 35
+
+
+def test_directory_size_bytes_counts_an_unreadable_file_as_zero(tmp_path, monkeypatch):
+    """A file that vanishes mid-walk must not abort the whole size report."""
+    (tmp_path / "readable.bin").write_bytes(b"z" * 8)
+    (tmp_path / "gone.bin").write_bytes(b"z" * 100)
+    real_getsize = os.path.getsize
+
+    def flaky(path, *args, **kwargs):
+        if str(path).endswith("gone.bin"):
+            raise OSError("vanished")
+        return real_getsize(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "getsize", flaky)
+
+    assert directory_size_bytes(str(tmp_path)) == 8
+
+
+def test_directory_size_bytes_of_an_empty_directory_is_zero(tmp_path):
+    assert directory_size_bytes(str(tmp_path)) == 0
+
+
+def test_directory_size_bytes_of_a_file_path_is_zero(tmp_path):
+    target = tmp_path / "just-a-file.bin"
+    target.write_bytes(b"x" * 16)
+    assert directory_size_bytes(str(target)) == 0
+
+
+def test_directory_size_bytes_can_count_a_symlink_as_the_link_itself(tmp_path):
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"x" * 100)
+    linked = tmp_path / "tree"
+    linked.mkdir()
+    (linked / "alias.bin").symlink_to(outside)
+
+    assert directory_size_bytes(str(linked)) == 100
+    assert (
+        directory_size_bytes(str(linked), follow_symlinks=False)
+        == (linked / "alias.bin").lstat().st_size
+    )
