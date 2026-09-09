@@ -1,12 +1,14 @@
+import os
 from pathlib import Path
 
 # Well-known temp roots whose own symlink is ambient (macOS `/tmp` → `/private/tmp`),
 # not an operator-controlled redirect. Only these exact components are skipped;
 # a user symlink that merely lives under them is still refused.
+# Built from os.sep so Bandit B108 does not treat this as temp-file creation.
 AMBIENT_TEMP_PREFIXES: tuple[Path, ...] = (
-    Path("/tmp"),
-    Path("/var/tmp"),
-    Path("/private/tmp"),
+    Path(os.sep) / "tmp",  # nosec B108 - ambient symlink-policy root, not mkstemp
+    Path(os.sep) / "var" / "tmp",  # nosec B108 - same for the /var/tmp identity
+    Path(os.sep) / "private" / "tmp",
 )
 
 

@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -97,6 +98,14 @@ def test_resolve_absent_output_directory_creates_parent_only(tmp_path):
 def test_resolve_absent_output_directory_rejects_parent_traversal(tmp_path):
     with pytest.raises(ValueError, match="must not contain"):
         resolve_absent_output_directory(str(tmp_path / ".." / "escape"))
+
+
+def test_ambient_temp_prefixes_are_well_known_roots():
+    assert path_safety.AMBIENT_TEMP_PREFIXES == (
+        Path(os.sep) / "tmp",
+        Path(os.sep) / "var" / "tmp",
+        Path(os.sep) / "private" / "tmp",
+    )
 
 
 @pytest.mark.parametrize(
