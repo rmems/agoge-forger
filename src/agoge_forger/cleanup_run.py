@@ -649,8 +649,8 @@ def log_cleanup(report: dict[str, Any]) -> None:
     _log_warnings(report)
 
 
-def _log_path(value: object) -> str:
-    return _escape_controls(str(value))
+def _log_path(value: str) -> str:
+    return _escape_controls(value)
 
 
 def _log_removals(report: dict[str, Any], prefix: str) -> None:
