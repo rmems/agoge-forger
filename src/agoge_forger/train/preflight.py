@@ -76,7 +76,7 @@ def directory_size_bytes(path: str, *, follow_symlinks: bool = True) -> int:
         for filename in files:
             file_path = os.path.join(root, filename)
             try:
-                if follow_symlinks:
+                if follow_symlinks or not os.path.islink(file_path):
                     total += os.path.getsize(file_path)
                 else:
                     total += os.lstat(file_path).st_size

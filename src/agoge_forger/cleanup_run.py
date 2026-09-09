@@ -470,9 +470,7 @@ def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
     provenance = _sealed_provenance(run_dir)
 
     removed, failed = _remove_checkpoints(plan["removed"])
-    rewritten, index_error = _reseal_index(
-        run_dir, provenance, touched=bool(removed or failed)
-    )
+    rewritten, index_error = _reseal_index(run_dir, provenance, touched=bool(removed or failed))
     if index_error is not None:
         # The checkpoints are gone but the index still lists them, so the run's
         # own metadata is now wrong. That is a failed cleanup, not a success.

@@ -289,4 +289,7 @@ def test_directory_size_bytes_can_count_a_symlink_as_the_link_itself(tmp_path):
     (linked / "alias.bin").symlink_to(outside)
 
     assert directory_size_bytes(str(linked)) == 100
-    assert directory_size_bytes(str(linked), follow_symlinks=False) == (linked / "alias.bin").lstat().st_size
+    assert (
+        directory_size_bytes(str(linked), follow_symlinks=False)
+        == (linked / "alias.bin").lstat().st_size
+    )
