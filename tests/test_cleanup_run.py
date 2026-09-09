@@ -28,6 +28,11 @@ def _run_with_checkpoints(tmp_path, steps=(50, 100, 150), final_adapter=True):
         _write_checkpoint(run_dir, step)
     if final_adapter:
         _write_final_adapter(run_dir)
+        # A run that actually finished carries a sealed index: trainer.py writes
+        # one at the end of every run, and export-final-model reads provenance
+        # off it unconditionally. Without it this is an interrupted run, which
+        # the guard is supposed to refuse.
+        write_artifact_index(str(run_dir), producer_provenance=_provenance())
     return run_dir
 
 
@@ -239,9 +244,12 @@ def test_artifact_index_is_rewritten_over_the_survivors(tmp_path):
 
 
 def test_run_without_an_index_is_cleaned_without_creating_one(tmp_path):
-    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,), final_adapter=False)
+    _write_final_adapter(run_dir)  # weights, but never sealed
 
-    report = execute_cleanup(plan_cleanup(str(run_dir)))
+    # No sealed provenance means export-final-model would refuse this run, so
+    # the guard does too; --force is the documented way past it.
+    report = execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(force=True)))
 
     assert report["artifact_index_rewritten"] is False
     assert not (run_dir / "artifact_index.json").exists()
@@ -302,7 +310,7 @@ def test_malformed_artifact_index_does_not_crash_cleanup(tmp_path):
     run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
     (run_dir / "artifact_index.json").write_text("[]")
 
-    report = execute_cleanup(plan_cleanup(str(run_dir)))
+    report = execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(force=True)))
 
     assert report["artifact_index_rewritten"] is True
     assert report["failed"] == []
@@ -316,7 +324,7 @@ def test_index_without_provenance_is_still_rebuilt(tmp_path):
     run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
     write_artifact_index(str(run_dir))  # no producer_provenance
 
-    report = execute_cleanup(plan_cleanup(str(run_dir)))
+    report = execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(force=True)))
 
     assert report["artifact_index_rewritten"] is True
     assert not any(name.startswith("checkpoint-") for name in _indexed_files(run_dir))
@@ -378,3 +386,16 @@ def _provenance():
 def _indexed_files(run_dir):
     payload = json.loads((run_dir / "artifact_index.json").read_text())
     return [entry["file"] for entry in payload["artifacts"]]
+
+
+def test_unsealed_adapter_does_not_satisfy_the_guard(tmp_path):
+    """Weights alone are not enough. `export-final-model` reads provenance off
+    the adapter unconditionally, so a run interrupted before artifact_index.json
+    cannot actually be exported -- deleting its checkpoints would strand it."""
+    run_dir = _run_with_checkpoints(tmp_path, final_adapter=False)
+    _write_final_adapter(run_dir)
+
+    with pytest.raises(ValueError, match="only recoverable artifact"):
+        plan_cleanup(str(run_dir))
+
+    assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-150", "checkpoint-50"]

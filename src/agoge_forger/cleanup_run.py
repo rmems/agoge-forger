@@ -26,7 +26,7 @@ from .artifacts.producer_provenance import producer_provenance_from_adapter
 from .artifacts.safetensors_io import sha256_file, write_artifact_index
 from .logging import logger
 from .path_safety import resolve_existing_path
-from .run_status import build_run_status
+from .run_status import _escape_controls, build_run_status
 from .train.checkpoints import CHECKPOINT_RE, checkpoint_step
 from .train.preflight import BYTES_PER_GB, directory_size_bytes
 
@@ -109,7 +109,16 @@ def _guard(report: dict[str, Any]) -> bool:
     guard for a run it has nothing to do with.
     """
     export = report["export"]
-    adapter_ready = bool(export["ready"] and export["source_kind"] == "final_adapter")
+    adapter_ready = bool(
+        export["ready"]
+        and export["source_kind"] == "final_adapter"
+        # `export.ready` validates the adapter config and weights but not the
+        # sealed index, while `export-final-model` unconditionally reads
+        # provenance off the adapter. Without this the guard can pass on a run
+        # the official export path would refuse -- deleting the checkpoints of a
+        # run interrupted after the weights but before artifact_index.json.
+        and report["final_adapter"]["has_provenance"]
+    )
     return bool(adapter_ready or report["merged_model"]["matches_run"])
 
 
@@ -122,6 +131,15 @@ def _require_recoverable(recoverable: bool, run_dir: Path, *, force: bool) -> No
         "the checkpoints are the only recoverable artifact. "
         "Re-run with --force to remove them anyway."
     )
+
+
+def _has_provenance(path: str | Path) -> bool:
+    """True when a sealed producer provenance can be read off `path`."""
+    try:
+        producer_provenance_from_adapter(path)
+    except (OSError, ValueError, TypeError):
+        return False
+    return True
 
 
 def _merged_matches_run(run_dir: Path, merged_path: str | None) -> bool:
@@ -215,6 +233,7 @@ def plan_cleanup(run_dir: str, options: CleanupOptions | None = None) -> dict[st
         run_dir, merged_dir=options.merged_dir, allow_unsafe=options.allow_unsafe
     )
 
+    report["final_adapter"]["has_provenance"] = _has_provenance(resolved_run_dir)
     report["merged_model"]["matches_run"] = _merged_matches_run(
         resolved_run_dir, report["merged_model"]["path"]
     )
@@ -290,10 +309,16 @@ def _surviving_files_unchanged(run_dir: Path) -> str | None:
         # verify against here.
         return None
     for entry in entries:
-        target = run_dir / str(entry.get("file", ""))
+        name = str(entry.get("file", ""))
+        target = run_dir / name
         if not target.is_file():
-            # Deleted checkpoints are exactly what this rewrite is for.
-            continue
+            if _CANDIDATE_RE.match(Path(name).parts[0] if Path(name).parts else ""):
+                # A checkpoint file this command removed: exactly what the
+                # rewrite is for.
+                continue
+            # Anything else vanished outside cleanup's control. Resealing would
+            # quietly drop it from the index while keeping the old attestation.
+            return f"{target} is missing but {_ARTIFACT_INDEX_NAME} records it"
         try:
             if sha256_file(str(target)) != entry.get("sha256"):
                 return f"{target} changed since {_ARTIFACT_INDEX_NAME} was written"
@@ -428,7 +453,10 @@ def _log_warnings(report: dict[str, Any]) -> None:
             "evaluation contract for this run after cleanup, not before.",
             _ARTIFACT_INDEX_NAME,
         )
-    if report["guard"]["forced"]:
+    # Only when nothing usable is actually left. `--force --keep-latest 1` bypasses
+    # the guard but still leaves a resumable checkpoint, and so does a run where
+    # every deletion failed.
+    if report["guard"]["forced"] and not report["kept"] and report["removed"]:
         logger.warning(
             "--force removed the only recoverable artifact under %s; this run can no "
             "longer be resumed or exported.",
@@ -440,8 +468,10 @@ def format_cleanup_table(report: dict[str, Any]) -> str:
     """Render a cleanup report as an aligned `key: value` block."""
     rows: list[tuple[str, str]] = [
         ("schema_version", str(report["schema_version"])),
-        ("run_name", str(report["run_name"])),
-        ("run_dir", str(report["run_dir"])),
+        # A run directory name can carry ANSI escapes; run-status sanitizes the
+        # same two fields for the same reason.
+        ("run_name", _escape_controls(str(report["run_name"]))),
+        ("run_dir", _escape_controls(str(report["run_dir"]))),
         ("dry_run", "yes" if report["dry_run"] else "no"),
         ("keep_latest", str(report["keep_latest"])),
         ("final_artifact", "yes" if report["guard"]["final_artifact"] else "no"),

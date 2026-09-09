@@ -6,7 +6,9 @@ import os
 import pytest
 from typer.testing import CliRunner
 
+from agoge_forger.artifacts.safetensors_io import write_artifact_index
 from agoge_forger.cli import app
+from tests.test_cleanup_run import _provenance
 from tests.test_run_status import _make_run_dir, _write_checkpoint, _write_final_adapter
 
 
@@ -21,6 +23,11 @@ def _run_with_checkpoints(tmp_path, steps=(50, 100), final_adapter=True):
         _write_checkpoint(run_dir, step)
     if final_adapter:
         _write_final_adapter(run_dir)
+        # A run that actually finished carries a sealed index: trainer.py writes
+        # one at the end of every run, and export-final-model reads provenance
+        # off it unconditionally. Without it this is an interrupted run, which
+        # the guard is supposed to refuse.
+        write_artifact_index(str(run_dir), producer_provenance=_provenance())
     return run_dir
 
 
