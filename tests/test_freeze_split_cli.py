@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 
 from agoge_forger.cli import app
 from agoge_forger.split_contract import canonical_json_bytes
+from tests.test_path_safety import _allowlist_ambient_tmp
 
 
 def _write_source(path: Path, count: int = 90) -> None:
@@ -141,6 +142,21 @@ def test_freeze_split_cli_refuses_symlink_above_existing_dir(tmp_path, caplog):
     assert linked.is_symlink()
     assert not (existing / "snapshot").exists()
     assert list(existing.iterdir()) == []
+
+
+def test_freeze_split_cli_allows_allowlisted_temp_prefix(tmp_path, monkeypatch):
+    ambient, real_tmp = _allowlist_ambient_tmp(tmp_path, monkeypatch)
+    source = tmp_path / "curated.jsonl"
+    output = ambient / "nested" / "snapshot"
+    _write_source(source)
+
+    result = _invoke_freeze_split(source, output)
+
+    published = real_tmp / "nested" / "snapshot"
+    assert result.exit_code == 0, result.output
+    assert ambient.is_symlink()
+    assert (published / "split_manifest.json").is_file()
+    assert (published / "split_report.md").is_file()
 
 
 def test_freeze_split_cli_does_not_clobber_existing_destination(tmp_path, caplog):

@@ -88,7 +88,8 @@ def freeze_split(
         manifest = materialize_split(safe_source, safe_output, spec)
     except CLI_PATH_ERRORS as e:
         exit_on_error(e)
-    _log_freeze_split(manifest, str(safe_output))
+    else:
+        _log_freeze_split(manifest, str(safe_output))
 
 
 def _freeze_split_spec(options: _FreezeSplitOptions) -> SplitMaterializationSpec:

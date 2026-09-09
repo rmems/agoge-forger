@@ -1,10 +1,23 @@
+from pathlib import Path
+
 import pytest
 
+from agoge_forger import path_safety
 from agoge_forger.path_safety import (
     resolve_absent_output_directory,
     resolve_existing_path,
     resolve_output_directory,
 )
+
+
+def _allowlist_ambient_tmp(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+    """Simulate macOS `/tmp` → `/private/tmp` with a pytest-owned prefix pair."""
+    real_tmp = tmp_path / "private-tmp"
+    ambient = tmp_path / "tmp"
+    real_tmp.mkdir()
+    ambient.symlink_to(real_tmp, target_is_directory=True)
+    monkeypatch.setattr(path_safety, "AMBIENT_TEMP_PREFIXES", (ambient, real_tmp))
+    return ambient, real_tmp
 
 
 def test_resolve_existing_path_rejects_parent_traversal(tmp_path):
@@ -101,6 +114,50 @@ def test_resolve_absent_output_directory_rejects_symlink_above_existing_dir(tmp_
     assert linked.is_symlink()
     assert not (existing / "snapshot").exists()
     assert list(existing.iterdir()) == []
+
+
+def test_resolve_absent_output_directory_allows_allowlisted_temp_prefix(tmp_path, monkeypatch):
+    ambient, real_tmp = _allowlist_ambient_tmp(tmp_path, monkeypatch)
+    output = ambient / "nested" / "snapshot"
+
+    resolved = resolve_absent_output_directory(str(output))
+
+    assert ambient.is_symlink()
+    assert resolved == (real_tmp / "nested" / "snapshot").resolve()
+    assert resolved.parent.is_dir()
+    assert not resolved.exists()
+
+
+def test_resolve_absent_output_directory_allowlisted_prefix_still_refuses_leaf(
+    tmp_path, monkeypatch
+):
+    ambient, _real_tmp = _allowlist_ambient_tmp(tmp_path, monkeypatch)
+    elsewhere = tmp_path / "elsewhere" / "hijacked"
+    output = ambient / "snapshot"
+    output.symlink_to(elsewhere, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked path"):
+        resolve_absent_output_directory(str(output))
+
+    assert output.is_symlink()
+    assert not elsewhere.exists()
+
+
+def test_resolve_absent_output_directory_allowlisted_prefix_still_refuses_parent(
+    tmp_path, monkeypatch
+):
+    ambient, real_tmp = _allowlist_ambient_tmp(tmp_path, monkeypatch)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    linked = ambient / "linked-parent"
+    linked.symlink_to(elsewhere, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked path"):
+        resolve_absent_output_directory(str(linked / "snapshot"))
+
+    assert linked.is_symlink()
+    assert not (elsewhere / "snapshot").exists()
+    assert not (real_tmp / "linked-parent" / "snapshot").exists()
 
 
 def test_resolve_existing_path_allows_legitimate_absolute_paths(tmp_path):
