@@ -14,6 +14,23 @@ def _check_no_parent_traversal(candidate: Path) -> None:
         raise ValueError(f"Path must not contain '..': {candidate}")
 
 
+def _refuse_symlink_output_components(candidate: Path) -> None:
+    """Refuse a destination whose leaf or an output-boundary ancestor is a symlink.
+
+    ``Path.resolve()`` follows links, so a dangling leaf or a redirected parent
+    would publish an immutable snapshot somewhere other than the operator-
+    specified path. Walk from the leaf to the first existing ancestor and reject
+    any symlink. Stopping at that ancestor keeps a well-known system prefix
+    (a ``/tmp`` link) from blocking ordinary destinations.
+    """
+    probe = candidate if candidate.is_absolute() else Path.cwd() / candidate
+    for component in (probe, *probe.parents):
+        if component.is_symlink():
+            raise ValueError(f"Refusing to publish through a symlinked path: {component}")
+        if component.exists():
+            return
+
+
 def resolve_existing_path(
     path: str, *, must_be_file: bool = False, must_be_dir: bool = False
 ) -> Path:
@@ -49,12 +66,14 @@ def resolve_absent_output_directory(path: str) -> Path:
 
     Frozen-split publication requires the destination not to exist. Callers that
     need a created directory should keep using ``resolve_output_directory``.
+    Symlinked leaves or parents are refused so publication cannot be redirected.
     """
     if not path or not path.strip():
         raise ValueError("Output directory must not be empty")
 
     candidate = Path(path).expanduser()
     _check_no_parent_traversal(candidate)
+    _refuse_symlink_output_components(candidate)
     resolved = candidate.resolve()
     resolved.parent.mkdir(parents=True, exist_ok=True)
     return resolved

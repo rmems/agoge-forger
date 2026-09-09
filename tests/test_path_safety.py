@@ -42,6 +42,46 @@ def test_resolve_absent_output_directory_rejects_parent_traversal(tmp_path):
         resolve_absent_output_directory(str(tmp_path / ".." / "escape"))
 
 
+def test_resolve_absent_output_directory_rejects_dangling_leaf_symlink(tmp_path):
+    elsewhere = tmp_path / "elsewhere" / "hijacked"
+    output = tmp_path / "snapshot"
+    output.symlink_to(elsewhere, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked path"):
+        resolve_absent_output_directory(str(output))
+
+    assert output.is_symlink()
+    assert not elsewhere.exists()
+    assert not (tmp_path / "elsewhere").exists()
+
+
+def test_resolve_absent_output_directory_rejects_existing_leaf_symlink(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    output = tmp_path / "snapshot"
+    output.symlink_to(elsewhere, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked path"):
+        resolve_absent_output_directory(str(output))
+
+    assert output.is_symlink()
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_resolve_absent_output_directory_rejects_symlinked_parent(tmp_path):
+    real_parent = tmp_path / "real-parent"
+    linked_parent = tmp_path / "linked-parent"
+    real_parent.mkdir()
+    linked_parent.symlink_to(real_parent, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked path"):
+        resolve_absent_output_directory(str(linked_parent / "snapshot"))
+
+    assert linked_parent.is_symlink()
+    assert not (real_parent / "snapshot").exists()
+    assert list(real_parent.iterdir()) == []
+
+
 def test_resolve_existing_path_allows_legitimate_absolute_paths(tmp_path):
     """Absolute paths that don't traverse '..' are accepted.
 
