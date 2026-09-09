@@ -485,6 +485,41 @@ def test_extra_file_in_planned_removal_does_not_block(tmp_path):
     assert _checkpoint_names(run_dir) == ["checkpoint-100"]
 
 
+def test_nested_dir_sharing_a_removed_name_is_still_checked(tmp_path):
+    """skip_dirs names are top-level candidates; a nested twin must be walked."""
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50,))
+    nested = run_dir / "archive" / "checkpoint-50"
+    nested.mkdir(parents=True)
+    (nested / "planted.bin").write_bytes(b"after seal")
+
+    report = execute_cleanup(plan_cleanup(str(run_dir)))
+
+    assert report["artifact_index_rewritten"] is False
+    assert "appeared after" in report["failed"][0]["error"]
+    assert _checkpoint_names(run_dir) == ["checkpoint-50"]
+
+
+def test_failed_rmtree_rechecks_stranded_files_before_reseal(tmp_path, monkeypatch):
+    """A planted file in a doomed tree is only ignoreable if that tree actually goes."""
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50, 100))
+    busy = run_dir / "checkpoint-50"
+    (busy / "planted.bin").write_bytes(b"after seal")
+    real_rmtree = shutil.rmtree
+
+    def flaky(path, *args, **kwargs):
+        if Path(path) == busy:
+            raise OSError("busy")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("agoge_forger.cleanup_run.shutil.rmtree", flaky)
+
+    report = execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=1)))
+
+    assert report["artifact_index_rewritten"] is False
+    assert any("appeared after" in entry["error"] for entry in report["failed"])
+    assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-50"]
+
+
 def test_modified_surviving_file_blocks_the_reseal(tmp_path):
     """Resealing would stamp the original provenance onto altered content, so a
     later contract check could no longer detect the change."""

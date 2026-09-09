@@ -398,6 +398,19 @@ def _is_planned_removal(name: str, skip_dirs: frozenset[str]) -> bool:
     return first in skip_dirs
 
 
+def _prune_top_level_removals(
+    root: str, dirs: list[str], run_dir: Path, skip_dirs: frozenset[str]
+) -> None:
+    """Drop planned removals only at the run root, where candidates live.
+
+    A nested directory that happens to share a doomed name (``archive/checkpoint-50``)
+    is not a cleanup candidate; ``write_artifact_index`` will still hash it.
+    """
+    if Path(root) != run_dir:
+        return
+    dirs[:] = [name for name in dirs if name not in skip_dirs]
+
+
 def _unindexed_survivor(run_dir: Path, indexed: set[str], skip_dirs: frozenset[str]) -> str | None:
     """First survivor the old index never recorded.
 
@@ -407,7 +420,7 @@ def _unindexed_survivor(run_dir: Path, indexed: set[str], skip_dirs: frozenset[s
     them and would otherwise stamp the old provenance onto a post-seal add.
     """
     for root, dirs, files in os.walk(run_dir):
-        dirs[:] = [name for name in dirs if name not in skip_dirs]
+        _prune_top_level_removals(root, dirs, run_dir, skip_dirs)
         extra = _first_unindexed_file(run_dir, root, files, indexed)
         if extra is not None:
             return extra
@@ -543,6 +556,25 @@ def _reseal_index(
     return _refresh_artifact_index(run_dir, provenance)
 
 
+def _reseal_after_delete(
+    run_dir: Path,
+    provenance: Any,
+    removed: list[dict[str, Any]],
+    failed: list[dict[str, str]],
+) -> tuple[bool, str | None]:
+    """Reseal only when leftover trees still match the old index.
+
+    A failed ``rmtree`` leaves files the pre-delete guard never verified
+    (they were in a planned removal). Re-check those leftovers, skipping
+    only the trees that actually went away, before carrying provenance.
+    """
+    if failed:
+        leftover = _provenance_guard_error(run_dir, provenance, _removed_dir_names(removed))
+        if leftover is not None:
+            return False, leftover
+    return _reseal_index(run_dir, provenance, touched=bool(removed or failed))
+
+
 def _provenance_guard_error(
     run_dir: Path, provenance: Any, skip_dirs: frozenset[str]
 ) -> str | None:
@@ -589,7 +621,7 @@ def execute_cleanup(plan: dict[str, Any]) -> dict[str, Any]:
         return _aborted_cleanup(plan, guard_error)
 
     removed, failed = _remove_checkpoints(plan["removed"])
-    rewritten, index_error = _reseal_index(run_dir, provenance, touched=bool(removed or failed))
+    rewritten, index_error = _reseal_after_delete(run_dir, provenance, removed, failed)
     if index_error is not None:
         # The checkpoints are gone but the index still lists them, so the run's
         # own metadata is now wrong. That is a failed cleanup, not a success.
