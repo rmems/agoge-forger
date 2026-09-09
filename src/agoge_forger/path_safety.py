@@ -15,20 +15,18 @@ def _check_no_parent_traversal(candidate: Path) -> None:
 
 
 def _refuse_symlink_output_components(candidate: Path) -> None:
-    """Refuse a destination whose leaf or an output-boundary ancestor is a symlink.
+    """Refuse a destination whose leaf or any ancestor is a symlink.
 
     ``Path.resolve()`` follows links, so a dangling leaf or a redirected parent
     would publish an immutable snapshot somewhere other than the operator-
-    specified path. Walk from the leaf to the first existing ancestor and reject
-    any symlink. Stopping at that ancestor keeps a well-known system prefix
-    (a ``/tmp`` link) from blocking ordinary destinations.
+    specified path. Every component is checked, matching cleanup-run: stopping at
+    the first existing ancestor would miss a symlink above an already-created
+    directory (``link/existing/snapshot``).
     """
     probe = candidate if candidate.is_absolute() else Path.cwd() / candidate
     for component in (probe, *probe.parents):
         if component.is_symlink():
             raise ValueError(f"Refusing to publish through a symlinked path: {component}")
-        if component.exists():
-            return
 
 
 def resolve_existing_path(

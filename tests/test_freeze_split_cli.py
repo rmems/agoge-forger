@@ -123,6 +123,26 @@ def test_freeze_split_cli_refuses_symlinked_output_parent(tmp_path, caplog):
     assert list(real_parent.iterdir()) == []
 
 
+def test_freeze_split_cli_refuses_symlink_above_existing_dir(tmp_path, caplog):
+    source = tmp_path / "curated.jsonl"
+    real = tmp_path / "real"
+    existing = real / "existing"
+    linked = tmp_path / "linked"
+    output = linked / "existing" / "snapshot"
+    _write_source(source)
+    real.mkdir()
+    existing.mkdir()
+    linked.symlink_to(real, target_is_directory=True)
+
+    with caplog.at_level("ERROR", logger="agoge"):
+        result = _invoke_freeze_split(source, output)
+
+    _assert_cli_error(result, caplog)
+    assert linked.is_symlink()
+    assert not (existing / "snapshot").exists()
+    assert list(existing.iterdir()) == []
+
+
 def test_freeze_split_cli_does_not_clobber_existing_destination(tmp_path, caplog):
     source = tmp_path / "curated.jsonl"
     output = tmp_path / "snapshot"

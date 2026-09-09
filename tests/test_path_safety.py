@@ -82,6 +82,27 @@ def test_resolve_absent_output_directory_rejects_symlinked_parent(tmp_path):
     assert list(real_parent.iterdir()) == []
 
 
+def test_resolve_absent_output_directory_rejects_symlink_above_existing_dir(tmp_path):
+    """An existing real directory under a symlink must still be refused.
+
+    Stopping at the first existing ancestor would treat link/existing as safe
+    and let Path.resolve() publish under the symlink target.
+    """
+    real = tmp_path / "real"
+    existing = real / "existing"
+    linked = tmp_path / "linked"
+    real.mkdir()
+    existing.mkdir()
+    linked.symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked path"):
+        resolve_absent_output_directory(str(linked / "existing" / "snapshot"))
+
+    assert linked.is_symlink()
+    assert not (existing / "snapshot").exists()
+    assert list(existing.iterdir()) == []
+
+
 def test_resolve_existing_path_allows_legitimate_absolute_paths(tmp_path):
     """Absolute paths that don't traverse '..' are accepted.
 
