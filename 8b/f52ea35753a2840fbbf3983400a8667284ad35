@@ -1,0 +1,30 @@
+configs/minicpm5_code_repair.yaml.example
+  s_637722da58c92c::t_e9ea1849b78eb4 1-2
+src/agoge_forger/train/completion.py
+  s_637722da58c92c::t_583bf82dac33a5 5,9-16,22,25-27,31-33,57-59,61,64-67,71-99,104-108,111,129-131,133,136,142,144-160,164
+  s_637722da58c92c::t_57a8ba57fce628 17-21,50-53,62-63,68-70,112-113,115,117-128,137,139-140
+  s_637722da58c92c::t_d2809734421560 34,39-42,114,116,138,169,177,181,187-200
+  s_637722da58c92c::t_e01f50a4589e24 100-103,109-110
+  s_637722da58c92c::t_24fe173d2adfd7 165-166
+tests/test_trainer_trl_api.py
+  s_637722da58c92c::t_81649590a0ca1b 221
+  s_637722da58c92c::t_20da3eedf4e7e6 212,226-227,235-237,319,326,331
+docs/completion-only-training.md
+  s_637722da58c92c::t_e9ea1849b78eb4 5-9,33-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8bf52ea35753a2840fbbf3983400a8667284ad35",
+  "prompts": {},
+  "sessions": {
+    "s_637722da58c92c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a088b4-b4e1-7663-adcf-65ef44374529",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
