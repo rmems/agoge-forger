@@ -209,7 +209,7 @@ def test_completion_batch_and_cpu_step(config, model, tokenizer, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "text,offset,limit,reason",
+    "case",
     [
         ("hello world", True, 20, "completion_start_char"),
         ("hello world", 1.5, 20, "completion_start_char"),
@@ -218,13 +218,13 @@ def test_completion_batch_and_cpu_step(config, model, tokenizer, tmp_path):
         ("hello world", None, 20, "completion_start_char"),
         ("hello world", 2, 20, "boundary"),
         ("hello world", 6, 2, "max_seq_length"),
+        ("hello world", 6, None, "max_seq_length"),
         ("hello", 0, 20, "causal"),
         ("hello   ", 5, 20, "completion"),
     ],
 )
-def test_completion_refuses_unusable_rows(
-    config, model, tokenizer, tmp_path, text, offset, limit, reason
-):
+def test_completion_refuses_unusable_rows(config, model, tokenizer, tmp_path, case):
+    text, offset, limit, reason = case
     args = completion_args(config, tmp_path)
     args.max_length = limit
     rows = Dataset.from_list([{"text": text, "completion_start_char": offset}])
@@ -232,10 +232,9 @@ def test_completion_refuses_unusable_rows(
         _build_sft_trainer(model, rows, tokenizer, args)
 
 
-@pytest.mark.parametrize(
-    "text,offset", [("é world é world agoge", 16), ("hello ### world ### agoge", 20)]
-)
-def test_unicode_boundary_uses_declared_offset(config, model, tokenizer, tmp_path, text, offset):
+@pytest.mark.parametrize("case", [("é world é world agoge", 16), ("hello ### world ### agoge", 20)])
+def test_unicode_boundary_uses_declared_offset(config, model, tokenizer, tmp_path, case):
+    text, offset = case
     args = completion_args(config, tmp_path)
     rows = Dataset.from_list([{"text": text, "completion_start_char": offset}])
     trainer = _build_sft_trainer(model, rows, tokenizer, args)
@@ -317,18 +316,19 @@ def test_shared_pad_eos_keeps_terminal_target(config, model, tokenizer, tmp_path
 
 
 @pytest.mark.parametrize(
-    "text,limit,ids,labels",
+    "case",
     [
         ("hello world[UNK]", 3, [2, 3, 0], [-100, 3, 0]),
         ("hello world[UNK][UNK]", 4, [2, 3, 0, 0], [-100, 3, 0, 0]),
     ],
 )
 def test_source_eos_suppresses_only_added_eos_at_length_limit(
-    config, model, tokenizer, tmp_path, text, limit, ids, labels
+    config, model, tokenizer, tmp_path, case
 ):
     """Keep exact source EOS tokens, without a redundant postprocessor EOS."""
     from tokenizers.processors import TemplateProcessing
 
+    text, limit, ids, labels = case
     tokenizer.backend_tokenizer.post_processor = TemplateProcessing(
         single="$A [UNK]", special_tokens=[("[UNK]", 0)]
     )

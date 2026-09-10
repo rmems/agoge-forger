@@ -2,21 +2,44 @@
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 
-def completion_tokens(row, tokenizer, max_length):
-    """Tokenize exact text without truncation; refuse ambiguous supervision."""
+@dataclass(frozen=True)
+class _Token:
+    id: int
+    left: int
+    right: int
+    added: bool
+
+
+def _token_metadata(token, offset, special):
+    left, right = offset
+    return _Token(token, left, right, bool(special) and (left, right) == (0, 0))
+
+
+def _completion_boundary(row):
     text = row.get("text")
     start = row.get("completion_start_char")
-    if not isinstance(text, str) or type(start) is not int or not 0 <= start < len(text):
+    if not isinstance(text, str) or type(start) is not int:
+        raise ValueError("completion_start_char must be an integer offset into nonempty text")
+    if not 0 <= start < len(text):
         raise ValueError("completion_start_char must be an integer offset into nonempty text")
     if not text[start:].strip():
         raise ValueError("completion must be nonempty")
+    return text, start
+
+
+def _validate_tokenizer(tokenizer):
     if not getattr(tokenizer, "is_fast", False):
         raise ValueError("completion masking requires reliable fast-tokenizer offsets")
     if tokenizer.eos_token_id is None:
         raise ValueError("completion masking requires an EOS token")
+
+
+def _tokenize_with_offsets(text, tokenizer):
+    _validate_tokenizer(tokenizer)
     encoded = tokenizer(
         text,
         truncation=False,
@@ -24,60 +47,143 @@ def completion_tokens(row, tokenizer, max_length):
         return_offsets_mapping=True,
         return_special_tokens_mask=True,
     )
+    return _decode_token_metadata(encoded)
+
+
+def _decode_token_metadata(encoded):
     ids = list(encoded["input_ids"])
     offsets = encoded.get("offset_mapping")
     specials = encoded.get("special_tokens_mask")
-    if offsets is None or specials is None or len(offsets) != len(ids):
+    if offsets is None or specials is None:
         raise ValueError("tokenizer lacks reliable offsets")
-    # Preserve every source token; discard only a postprocessor-added EOS when
-    # the preceding token already represents literal terminal EOS in the text.
-    if (
-        len(ids) >= 2
-        and ids[-1] == ids[-2] == tokenizer.eos_token_id
-        and specials[-1]
-        and tuple(offsets[-1]) == (0, 0)
-        and text[offsets[-2][0] : offsets[-2][1]] == tokenizer.eos_token
-    ):
-        ids = ids[:-1]
-        offsets = offsets[:-1]
-        specials = specials[:-1]
+    if len(offsets) != len(ids):
+        raise ValueError("tokenizer lacks reliable offsets")
+    return [
+        _token_metadata(token, offset, special)
+        for token, offset, special in zip(ids, offsets, specials, strict=True)
+    ]
+
+
+def _source_eos(token, text, tokenizer):
+    return (
+        token.id == tokenizer.eos_token_id and text[token.left : token.right] == tokenizer.eos_token
+    )
+
+
+def _remove_redundant_eos(tokens, text, tokenizer):
+    """Remove only an added EOS immediately following a literal source EOS."""
+    if len(tokens) < 2:
+        return tokens
+    last = tokens[-1]
+    if not last.added or last.id != tokenizer.eos_token_id:
+        return tokens
+    if _source_eos(tokens[-2], text, tokenizer):
+        return tokens[:-1]
+    return tokens
+
+
+def _added_token_supervision(token, index, count, tokenizer):
+    if index == 0 and token.id == tokenizer.bos_token_id:
+        return 0, False
+    if index == count - 1 and token.id == tokenizer.eos_token_id:
+        return 1, True
+    raise ValueError("unsupported special token without reliable offsets")
+
+
+def _validate_source_offset(token, text_length, previous_start):
+    if not 0 <= token.left < token.right <= text_length:
+        raise ValueError("tokenizer lacks reliable character offsets")
+    if token.left < previous_start:
+        raise ValueError("tokenizer lacks reliable character offsets")
+
+
+def _is_prompt_special(token, tokenizer, is_eos):
+    return not is_eos and token.id in {tokenizer.bos_token_id, tokenizer.pad_token_id}
+
+
+def _source_token_supervision(token, text, start, tokenizer):
+    if token.left < start < token.right:
+        raise ValueError("token crosses completion boundary")
+    active = int(token.left >= start)
+    is_eos = _source_eos(token, text, tokenizer)
+    if active and _is_prompt_special(token, tokenizer, is_eos):
+        raise ValueError("completion contains BOS or padding special token")
+    return active, is_eos
+
+
+def _token_supervision(token, position, source, previous_start):
+    index, count = position
+    text, start, tokenizer = source
+    if token.added:
+        active, eos = _added_token_supervision(token, index, count, tokenizer)
+        return active, eos, previous_start
+    _validate_source_offset(token, len(text), previous_start)
+    active, eos = _source_token_supervision(token, text, start, tokenizer)
+    return active, eos, token.left
+
+
+def _effective_content_target(token, index, active, eos):
+    if token.added or eos:
+        return False
+    return index > 0 and bool(active)
+
+
+def _completion_mask(tokens, text, start, tokenizer):
     mask = []
-    content_positions = []
+    effective_content = False
     previous_start = 0
     terminal_eos = False
-    for i, (token, (left, right), special) in enumerate(zip(ids, offsets, specials, strict=True)):
-        if special and (left, right) == (0, 0):
-            if i == 0 and token == tokenizer.bos_token_id:
-                mask.append(0)
-                continue
-            if i == len(ids) - 1 and token == tokenizer.eos_token_id:
-                mask.append(1)
-                terminal_eos = True
-                continue
-            raise ValueError("unsupported special token without reliable offsets")
-        if not 0 <= left < right <= len(text) or left < previous_start:
-            raise ValueError("tokenizer lacks reliable character offsets")
-        previous_start = left
-        if left < start < right:
-            raise ValueError("token crosses completion boundary")
-        active = int(left >= start)
-        is_eos = token == tokenizer.eos_token_id and text[left:right] == tokenizer.eos_token
-        is_control = token in {tokenizer.bos_token_id, tokenizer.pad_token_id}
-        if active and is_control and not is_eos:
-            raise ValueError("completion contains BOS or padding special token")
+    for i, token in enumerate(tokens):
+        active, terminal_eos, previous_start = _token_supervision(
+            token, (i, len(tokens)), (text, start, tokenizer), previous_start
+        )
+        effective_content |= _effective_content_target(token, i, active, terminal_eos)
         mask.append(active)
-        if active and not is_eos:
-            content_positions.append(i)
-        if i == len(ids) - 1 and is_eos:
-            terminal_eos = True
-    if not any(i > 0 for i in content_positions):
+    if not effective_content:
         raise ValueError("completion has no content targets after causal shifting")
+    return mask, terminal_eos
+
+
+def _validate_budget(token_count, max_length):
+    if max_length is None:
+        raise ValueError("completion_only_loss requires a finite max_seq_length budget")
+    if token_count > max_length:
+        raise ValueError(f"row has {token_count} tokens, exceeding max_seq_length={max_length}")
+
+
+def completion_tokens(row, tokenizer, max_length):
+    """Tokenize exact text without truncation; refuse ambiguous supervision."""
+    text, start = _completion_boundary(row)
+    tokens = _tokenize_with_offsets(text, tokenizer)
+    tokens = _remove_redundant_eos(tokens, text, tokenizer)
+    mask, terminal_eos = _completion_mask(tokens, text, start, tokenizer)
+    ids = [token.id for token in tokens]
     if not terminal_eos:
         ids.append(tokenizer.eos_token_id)
         mask.append(1)
-    if max_length is None or len(ids) > max_length:
-        raise ValueError(f"row has {len(ids)} tokens, exceeding max_seq_length={max_length}")
-    return {"input_ids": ids, "completion_mask": mask}
+    _validate_budget(len(ids), max_length)
+    labels = [token if active else -100 for token, active in zip(ids, mask, strict=True)]
+    return {"input_ids": ids, "completion_mask": mask, "labels": labels}
+
+
+def _preprocessing_evidence(prepared, max_length):
+    digest = hashlib.sha256()
+    supervised = 0
+    longest = 0
+    for row in prepared:
+        digest.update(json.dumps(row, sort_keys=True, ensure_ascii=False).encode("utf-8") + b"\n")
+        supervised += sum(row["completion_mask"][1:])
+        longest = max(longest, len(row["input_ids"]))
+    return {
+        "completion_only_loss": True,
+        "boundary_unit": "unicode_code_point",
+        "truncation": False,
+        "max_seq_length": max_length,
+        "rows": len(prepared),
+        "max_tokens": longest,
+        "shifted_supervised_tokens": supervised,
+        "prepared_sha256": digest.hexdigest(),
+    }
 
 
 def prepare_completion_dataset(dataset, tokenizer, training_args):
@@ -91,23 +197,7 @@ def prepare_completion_dataset(dataset, tokenizer, training_args):
         lambda row: completion_tokens(row, tokenizer, training_args.max_length),
         load_from_cache_file=False,
     )
-    digest = hashlib.sha256()
-    supervised = 0
-    longest = 0
-    for row in prepared:
-        digest.update(json.dumps(row, sort_keys=True, ensure_ascii=False).encode("utf-8") + b"\n")
-        supervised += sum(row["completion_mask"][1:])
-        longest = max(longest, len(row["input_ids"]))
-    evidence = {
-        "completion_only_loss": True,
-        "boundary_unit": "unicode_code_point",
-        "truncation": False,
-        "max_seq_length": training_args.max_length,
-        "rows": len(prepared),
-        "max_tokens": longest,
-        "shifted_supervised_tokens": supervised,
-        "prepared_sha256": digest.hexdigest(),
-    }
+    evidence = _preprocessing_evidence(prepared, training_args.max_length)
     output = Path(training_args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     (output / "completion_preprocessing.json").write_text(json.dumps(evidence, indent=2) + "\n")

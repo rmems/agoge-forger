@@ -2,9 +2,11 @@
 
 Set the flat YAML key `completion_only_loss: true` and `dataset_text_field: text`.
 The default remains false, preserving full-sequence training. The example
-`configs/minicpm5_code_repair.yaml` pins the MiniCPM5 base revision and sets the
-pilot limit to 2,048 tokens; point its dataset path at the frozen export's
-`splits/train.jsonl`. This example does not authorize or launch training.
+`configs/minicpm5_code_repair.yaml.example` pins the MiniCPM5 base revision and
+sets the pilot limit to 2,048 tokens. It is a template with a placeholder path:
+copy it to a YAML config and set the path to an existing frozen export's
+`splits/train.jsonl`. Runnable configs must reference real datasets; the loader
+continues to refuse missing paths. This example does not authorize or launch training.
 
 Every row must carry exact pre-rendered `text` and `completion_start_char`, a
 strict integer Unicode code-point offset into that text. The completion must be
@@ -28,8 +30,11 @@ Caller-provided `labels`, `assistant_masks`, and `seq_lengths` are reserved and
 refused to prevent overriding verified supervision. Input token IDs and completion
 masks are regenerated from the exact text and declared boundary.
 
-The trainer receives pretokenized IDs and completion masks with explicit
-`SFTConfig.completion_only_loss=True`. Before trainer construction,
+The trainer receives pretokenized IDs, internally derived labels (`-100` for
+masked tokens), and a backwards-compatible completion mask with explicit
+`SFTConfig.completion_only_loss=True`. Explicit labels also support TRL versions
+that build labels during dataset preparation instead of in the collator.
+Before trainer construction,
 `completion_preprocessing.json` records the boundary unit, no-truncation policy,
 row and supervised-target counts, maximum token length, and SHA-256 over the
 prepared rows (including metadata). The ordinary run manifest retains the

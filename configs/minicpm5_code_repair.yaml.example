@@ -1,4 +1,5 @@
-# Set dataset_path to the frozen export's splits/train.jsonl before use.
+# Template only: copy to a YAML config and set dataset_path to a real frozen
+# export's splits/train.jsonl before use. The placeholder does not exist yet.
 model_id: "openbmb/MiniCPM5-1B-Base"
 revision: "156170697656c48f69915b33a2fb44110242187c"
 trust_remote_code: false
