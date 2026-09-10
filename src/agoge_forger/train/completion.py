@@ -186,6 +186,12 @@ def _preprocessing_evidence(prepared, max_length):
     }
 
 
+def _write_preprocessing_evidence(output_dir, evidence):
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "completion_preprocessing.json").write_text(json.dumps(evidence, indent=2) + "\n")
+
+
 def prepare_completion_dataset(dataset, tokenizer, training_args):
     """Preserve metadata, validate every row, and persist preprocessing evidence."""
     if training_args.dataset_text_field != "text":
@@ -198,7 +204,5 @@ def prepare_completion_dataset(dataset, tokenizer, training_args):
         load_from_cache_file=False,
     )
     evidence = _preprocessing_evidence(prepared, training_args.max_length)
-    output = Path(training_args.output_dir)
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "completion_preprocessing.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    _write_preprocessing_evidence(training_args.output_dir, evidence)
     return prepared

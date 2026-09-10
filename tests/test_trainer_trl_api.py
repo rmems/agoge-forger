@@ -66,14 +66,12 @@ def config():
 
 @pytest.fixture
 def tokenizer():
-    backend = Tokenizer(WordLevel(VOCAB, unk_token="[UNK]"))
+    special_tokens = {"unk_token": "[UNK]", "pad_token": "[PAD]", "eos_token": "[UNK]"}
+    backend = Tokenizer(WordLevel(VOCAB, unk_token=special_tokens["unk_token"]))
     backend.pre_tokenizer = Whitespace()
-    return PreTrainedTokenizerFast(
-        tokenizer_object=backend,
-        unk_token="[UNK]",
-        pad_token="[PAD]",
-        eos_token="[UNK]",
-    )
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend)
+    tokenizer.add_special_tokens(special_tokens)
+    return tokenizer
 
 
 @pytest.fixture
@@ -219,6 +217,8 @@ def test_completion_batch_and_cpu_step(config, model, tokenizer, tmp_path):
         ("hello world", 2, 20, "boundary"),
         ("hello world", 6, 2, "max_seq_length"),
         ("hello world", 6, None, "max_seq_length"),
+        # Its sole content token is at index 0: after shifting, only EOS would
+        # receive loss. Predicting EOS is not supervision of completion content.
         ("hello", 0, 20, "causal"),
         ("hello   ", 5, 20, "completion"),
     ],
@@ -275,7 +275,7 @@ def test_completion_bos_and_evidence(config, model, tokenizer, tmp_path):
 
     from tokenizers.processors import TemplateProcessing
 
-    tokenizer.bos_token = "[PAD]"
+    tokenizer.add_special_tokens({"bos_token": tokenizer.pad_token})
     tokenizer.backend_tokenizer.post_processor = TemplateProcessing(
         single="[PAD] $A [UNK]", special_tokens=[("[PAD]", 1), ("[UNK]", 0)]
     )
