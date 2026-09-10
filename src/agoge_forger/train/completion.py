@@ -122,10 +122,16 @@ def _token_supervision(token, position, source, previous_start):
     return active, eos, token.left
 
 
+def _validate_causal_context(index, active):
+    if index == 0 and active:
+        raise ValueError("completion content at index 0 has no causal context")
+
+
 def _effective_content_target(token, index, active, eos):
     if token.added or eos:
         return False
-    return index > 0 and bool(active)
+    _validate_causal_context(index, active)
+    return bool(active)
 
 
 def _completion_mask(tokens, text, start, tokenizer):

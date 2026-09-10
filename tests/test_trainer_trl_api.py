@@ -220,6 +220,10 @@ def test_completion_batch_and_cpu_step(config, model, tokenizer, tmp_path):
         # Its sole content token is at index 0: after shifting, only EOS would
         # receive loss. Predicting EOS is not supervision of completion content.
         ("hello", 0, 20, "causal"),
+        # Later content targets do not recover the first content label lost
+        # by causal shifting when the tokenizer adds no BOS.
+        ("hello world", 0, 20, "causal"),
+        ("  hello world", 2, 20, "causal"),
         ("hello   ", 5, 20, "completion"),
     ],
 )
@@ -270,23 +274,25 @@ def test_completion_field_must_be_text(config, tmp_path):
         _build_training_args(config, str(tmp_path))
 
 
-def test_completion_bos_and_evidence(config, model, tokenizer, tmp_path):
+@pytest.mark.parametrize("case", [(6, [-100, -100, 3, 0], 2), (0, [-100, 2, 3, 0], 3)])
+def test_completion_bos_and_evidence(config, model, tokenizer, tmp_path, case):
     import json
 
     from tokenizers.processors import TemplateProcessing
 
+    offset, labels, supervised_tokens = case
     tokenizer.add_special_tokens({"bos_token": tokenizer.pad_token})
     tokenizer.backend_tokenizer.post_processor = TemplateProcessing(
         single="[PAD] $A [UNK]", special_tokens=[("[PAD]", 1), ("[UNK]", 0)]
     )
     args = completion_args(config, tmp_path)
-    rows = Dataset.from_list([{"text": "hello world", "completion_start_char": 6}])
+    rows = Dataset.from_list([{"text": "hello world", "completion_start_char": offset}])
     trainer = _build_sft_trainer(model, rows, tokenizer, args)
     batch = next(iter(trainer.get_train_dataloader()))
     assert batch["input_ids"].tolist() == [[1, 2, 3, 0]]
-    assert batch["labels"].tolist() == [[-100, -100, 3, 0]]
+    assert batch["labels"].tolist() == [labels]
     evidence = json.loads((tmp_path / "completion_preprocessing.json").read_text())
-    assert evidence["shifted_supervised_tokens"] == 2
+    assert evidence["shifted_supervised_tokens"] == supervised_tokens
     assert evidence["max_tokens"] == 4
     assert evidence["truncation"] is False
 
