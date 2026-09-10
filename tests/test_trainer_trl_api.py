@@ -34,8 +34,9 @@ VOCAB = {"[UNK]": 0, "[PAD]": 1, "hello": 2, "world": 3, "agoge": 4}
 
 
 @pytest.fixture(autouse=True)
-def _quiet_dataset_progress_bars():
+def _quiet_dataset_progress_bars(monkeypatch):
     """TRL maps over the dataset at construction; keep pytest output readable."""
+    monkeypatch.setenv("ACCELERATE_USE_CPU", "true")
     disable_progress_bars()
     yield
     enable_progress_bars()
@@ -157,3 +158,159 @@ def test_trainer_exposes_tokenizer_for_the_adapter_save_path(
 
     assert trainer.processing_class is not None
     assert callable(trainer.processing_class.save_pretrained)
+
+
+def completion_args(config, tmp_path):
+    from dataclasses import replace
+
+    config.dataset_text_field = "text"
+    config.training.completion_only_loss = True
+    config.training.gradient_checkpointing = False
+    config.training.gradient_accumulation_steps = 1
+    args = replace(_build_training_args(config, str(tmp_path)), use_cpu=True)
+    args.max_steps = 1
+    args.report_to = []
+    args.save_strategy = "no"
+    return args
+
+
+def test_completion_batch_and_cpu_step(config, model, tokenizer, tmp_path):
+    """Catch prompt leakage, completion truncation, duplicate EOS, and masked padding."""
+    import math
+
+    args = completion_args(config, tmp_path)
+    rows = Dataset.from_list(
+        [
+            {
+                "text": "hello world agoge",
+                "completion_start_char": 12,
+                "canonical_id": "a",
+                "lineage_id": "l",
+                "group_id": "g",
+            },
+            {
+                "text": "hello world[UNK]",
+                "completion_start_char": 6,
+                "canonical_id": "b",
+                "lineage_id": "m",
+                "group_id": "h",
+            },
+        ]
+    )
+    trainer = _build_sft_trainer(model, rows, tokenizer, args)
+    assert trainer.args.completion_only_loss is True
+    assert trainer.train_dataset[0]["canonical_id"] == "a"
+    batch = next(iter(trainer.get_train_dataloader()))
+    assert batch["input_ids"].device.type == "cpu"
+    assert next(trainer.model.parameters()).device.type == "cpu"
+    pairs = sorted(zip(batch["input_ids"].tolist(), batch["labels"].tolist()))
+    assert pairs == [([2, 3, 0, 1], [-100, 3, 0, -100]), ([2, 3, 4, 0], [-100, -100, 4, 0])]
+    assert math.isfinite(trainer.train().training_loss)
+
+
+@pytest.mark.parametrize(
+    "text,offset,limit,reason",
+    [
+        ("hello world", True, 20, "completion_start_char"),
+        ("hello world", 1.5, 20, "completion_start_char"),
+        ("hello world", -1, 20, "completion_start_char"),
+        ("hello world", 11, 20, "completion_start_char"),
+        ("hello world", None, 20, "completion_start_char"),
+        ("hello world", 2, 20, "boundary"),
+        ("hello world", 6, 2, "max_seq_length"),
+        ("hello", 0, 20, "causal"),
+        ("hello   ", 5, 20, "completion"),
+    ],
+)
+def test_completion_refuses_unusable_rows(
+    config, model, tokenizer, tmp_path, text, offset, limit, reason
+):
+    args = completion_args(config, tmp_path)
+    args.max_length = limit
+    rows = Dataset.from_list([{"text": text, "completion_start_char": offset}])
+    with pytest.raises(ValueError, match=reason):
+        _build_sft_trainer(model, rows, tokenizer, args)
+
+
+@pytest.mark.parametrize(
+    "text,offset", [("é world é world agoge", 16), ("hello ### world ### agoge", 20)]
+)
+def test_unicode_boundary_uses_declared_offset(config, model, tokenizer, tmp_path, text, offset):
+    args = completion_args(config, tmp_path)
+    rows = Dataset.from_list([{"text": text, "completion_start_char": offset}])
+    trainer = _build_sft_trainer(model, rows, tokenizer, args)
+    batch = next(iter(trainer.get_train_dataloader()))
+    assert batch["labels"].tolist() == [[-100, -100, -100, -100, 4, 0]]
+
+
+def test_completion_requires_offsets(config, model, tokenizer, tmp_path):
+    args = completion_args(config, tmp_path)
+    rows = Dataset.from_list([{"text": "hello world", "completion_start_char": 6}])
+    with pytest.raises(ValueError, match="offset"):
+        _build_sft_trainer(model, rows, None, args)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_flat_yaml_completion_mode(tmp_path, enabled):
+    from agoge_forger.config import load_config
+
+    source = tmp_path / "rows.jsonl"
+    source.write_text('{"text":"hello world","completion_start_char":6}\n')
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "model_id: local\ndataset_path: rows.jsonl\nbf16: false\n"
+        + ("completion_only_loss: true\n" if enabled else "")
+    )
+    cfg = load_config(str(config_path))
+    assert _build_training_args(cfg, str(tmp_path)).completion_only_loss is enabled
+
+
+def test_completion_field_must_be_text(config, tmp_path):
+    config.training.completion_only_loss = True
+    with pytest.raises(ValueError, match="dataset_text_field"):
+        _build_training_args(config, str(tmp_path))
+
+
+def test_completion_bos_and_evidence(config, model, tokenizer, tmp_path):
+    import json
+
+    from tokenizers.processors import TemplateProcessing
+
+    tokenizer.bos_token = "[PAD]"
+    tokenizer.backend_tokenizer.post_processor = TemplateProcessing(
+        single="[PAD] $A [UNK]", special_tokens=[("[PAD]", 1), ("[UNK]", 0)]
+    )
+    args = completion_args(config, tmp_path)
+    rows = Dataset.from_list([{"text": "hello world", "completion_start_char": 6}])
+    trainer = _build_sft_trainer(model, rows, tokenizer, args)
+    batch = next(iter(trainer.get_train_dataloader()))
+    assert batch["input_ids"].tolist() == [[1, 2, 3, 0]]
+    assert batch["labels"].tolist() == [[-100, -100, 3, 0]]
+    evidence = json.loads((tmp_path / "completion_preprocessing.json").read_text())
+    assert evidence["shifted_supervised_tokens"] == 2
+    assert evidence["max_tokens"] == 4
+    assert evidence["truncation"] is False
+
+
+@pytest.mark.parametrize("column", ["labels", "assistant_masks", "seq_lengths"])
+def test_completion_refuses_preexisting_loss_controls(config, model, tokenizer, tmp_path, column):
+    args = completion_args(config, tmp_path)
+    rows = Dataset.from_list(
+        [{"text": "hello world", "completion_start_char": 6, column: [-100, -100, -100]}]
+    )
+    with pytest.raises(ValueError, match="reserved"):
+        _build_sft_trainer(model, rows, tokenizer, args)
+
+
+def test_shared_pad_eos_keeps_terminal_target(config, model, tokenizer, tmp_path):
+    tokenizer.pad_token = tokenizer.eos_token
+    args = completion_args(config, tmp_path)
+    rows = Dataset.from_list(
+        [
+            {"text": "hello world[UNK]", "completion_start_char": 6},
+            {"text": "hello world agoge", "completion_start_char": 6},
+        ]
+    )
+    trainer = _build_sft_trainer(model, rows, tokenizer, args)
+    batch = next(iter(trainer.get_train_dataloader()))
+    assert sorted(batch["labels"].tolist()) == [[-100, 3, 0, -100], [-100, 3, 4, 0]]

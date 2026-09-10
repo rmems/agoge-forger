@@ -14,6 +14,7 @@ from ..logging import logger
 from ..manifests import write_run_manifest
 from ..models.load import load_base_model
 from .checkpoints import resolve_resume_checkpoint
+from .completion import prepare_completion_dataset
 from .preflight import (
     BYTES_PER_GB,
     check_cuda_available,
@@ -42,6 +43,8 @@ def _build_training_args(config, out_dir):
     final adapter save in `_finalize_training_run` and the unsafe-bin
     assertion, so nothing about the safetensors policy is lost here.
     """
+    if config.training.completion_only_loss and config.dataset_text_field != "text":
+        raise ValueError("completion_only_loss requires dataset_text_field=text")
     return SFTConfig(
         output_dir=out_dir,
         per_device_train_batch_size=config.training.batch_size,
@@ -57,6 +60,7 @@ def _build_training_args(config, out_dir):
         gradient_checkpointing=config.training.gradient_checkpointing,
         max_length=config.training.max_seq_length,
         dataset_text_field=config.dataset_text_field,
+        completion_only_loss=config.training.completion_only_loss,
     )
 
 
@@ -68,6 +72,9 @@ def _build_sft_trainer(model, dataset, tokenizer, training_args):
     `TypeError` at construction time. `tests/test_trainer_trl_api.py` pins this
     call against the installed TRL so the next rename fails CI.
     """
+    if training_args.completion_only_loss:
+        dataset = prepare_completion_dataset(dataset, tokenizer, training_args)
+        training_args.dataset_kwargs = {"skip_prepare_dataset": True}
     return SFTTrainer(
         model=model,
         train_dataset=dataset,
