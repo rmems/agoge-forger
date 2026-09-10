@@ -29,6 +29,18 @@ def completion_tokens(row, tokenizer, max_length):
     specials = encoded.get("special_tokens_mask")
     if offsets is None or specials is None or len(offsets) != len(ids):
         raise ValueError("tokenizer lacks reliable offsets")
+    # Preserve every source token; discard only a postprocessor-added EOS when
+    # the preceding token already represents literal terminal EOS in the text.
+    if (
+        len(ids) >= 2
+        and ids[-1] == ids[-2] == tokenizer.eos_token_id
+        and specials[-1]
+        and tuple(offsets[-1]) == (0, 0)
+        and text[offsets[-2][0] : offsets[-2][1]] == tokenizer.eos_token
+    ):
+        ids = ids[:-1]
+        offsets = offsets[:-1]
+        specials = specials[:-1]
     mask = []
     content_positions = []
     previous_start = 0

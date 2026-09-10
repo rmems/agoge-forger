@@ -314,3 +314,29 @@ def test_shared_pad_eos_keeps_terminal_target(config, model, tokenizer, tmp_path
     trainer = _build_sft_trainer(model, rows, tokenizer, args)
     batch = next(iter(trainer.get_train_dataloader()))
     assert sorted(batch["labels"].tolist()) == [[-100, 3, 0, -100], [-100, 3, 4, 0]]
+
+
+@pytest.mark.parametrize(
+    "text,limit,ids,labels",
+    [
+        ("hello world[UNK]", 3, [2, 3, 0], [-100, 3, 0]),
+        ("hello world[UNK][UNK]", 4, [2, 3, 0, 0], [-100, 3, 0, 0]),
+    ],
+)
+def test_source_eos_suppresses_only_added_eos_at_length_limit(
+    config, model, tokenizer, tmp_path, text, limit, ids, labels
+):
+    """Keep exact source EOS tokens, without a redundant postprocessor EOS."""
+    from tokenizers.processors import TemplateProcessing
+
+    tokenizer.backend_tokenizer.post_processor = TemplateProcessing(
+        single="$A [UNK]", special_tokens=[("[UNK]", 0)]
+    )
+    args = completion_args(config, tmp_path)
+    args.max_length = limit
+    rows = Dataset.from_list([{"text": text, "completion_start_char": 6}])
+    trainer = _build_sft_trainer(model, rows, tokenizer, args)
+    batch = next(iter(trainer.get_train_dataloader()))
+    assert trainer.train_dataset[0]["text"] == text
+    assert batch["input_ids"].tolist() == [ids]
+    assert batch["labels"].tolist() == [labels]
