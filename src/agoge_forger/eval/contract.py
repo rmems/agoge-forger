@@ -26,6 +26,7 @@ ArtifactIndex = _artifact_schema.ArtifactIndex
 ArtifactIndexEntry = _artifact_schema.ArtifactIndexEntry
 ArtifactIndexReference = _artifact_schema.ArtifactIndexReference
 ArtifactKind = _artifact_schema.ArtifactKind
+ArtifactProducerProvenance = _artifact_schema.ArtifactProducerProvenance
 ArtifactValidationContext = _artifact_schema.ArtifactValidationContext
 FrozenEvaluationModel = _artifact_schema.FrozenEvaluationModel
 IndexedArtifacts = _artifact_schema.IndexedArtifacts

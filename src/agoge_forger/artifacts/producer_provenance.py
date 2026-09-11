@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..config import ExperimentConfig
-from ..eval import ArtifactProducerProvenance
+from ..eval.contract import ArtifactProducerProvenance
 from ..split_contract import bind_frozen_split, sha256_file
 from ..split_schema import IMMUTABLE_REVISION_PATTERN
 
