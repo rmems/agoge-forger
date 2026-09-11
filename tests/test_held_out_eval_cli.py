@@ -61,6 +61,19 @@ def test_eval_generate_import_survives_fresh_interpreter():
     _import_in_fresh_interpreter("from agoge_forger.eval.generate import load_arm_model")
 
 
+def test_safetensors_io_source_does_not_import_eval():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "agoge_forger"
+        / "artifacts"
+        / "safetensors_io.py"
+    )
+    text = source.read_text(encoding="utf-8")
+    assert "from ..eval" not in text
+    assert "agoge_forger.eval" not in text
+
+
 def test_safetensors_io_does_not_import_eval_package():
     """safetensors_io must not import agoge_forger.eval at module load.
 

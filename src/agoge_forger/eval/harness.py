@@ -9,7 +9,7 @@ from typing import Any
 
 from ..split_contract import SerializerBinding, bind_frozen_split, iter_frozen_records
 from ..train.completion import _completion_boundary
-from .bundle import publish_eval_bundle
+from .bundle import ArmBundle, EvalBundle, publish_eval_bundle
 from .compare import compare_arms
 from .contract import (
     COMPARABLE_ARM_FIELDS,
@@ -81,14 +81,12 @@ def run_held_out_eval(
     )
     return publish_eval_bundle(
         destination,
-        contract=contract,
-        base_generations=base_generations,
-        sft_generations=sft_generations,
-        base_metrics=base_metrics,
-        sft_metrics=sft_metrics,
-        comparison=comparison,
-        base_scores=base_scores,
-        sft_scores=sft_scores,
+        EvalBundle(
+            contract=contract,
+            comparison=comparison,
+            base=ArmBundle(base_generations, base_metrics, base_scores),
+            sft=ArmBundle(sft_generations, sft_metrics, sft_scores),
+        ),
     )
 
 

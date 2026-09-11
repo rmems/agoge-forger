@@ -6,13 +6,10 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .._atomic_file import publish_bytes_replace
 from ..logging import logger
-
-if TYPE_CHECKING:
-    from ..eval._artifact_schema import ArtifactProducerProvenance
 
 try:
     from safetensors import safe_open
@@ -95,7 +92,7 @@ def sha256_file(path: str) -> str:
 
 def write_artifact_index(
     output_dir: str,
-    producer_provenance: ArtifactProducerProvenance | Mapping[str, object] | None = None,
+    producer_provenance: object | None = None,
 ) -> str:
     index_path = os.path.join(output_dir, "artifact_index.json")
     artifacts = []
@@ -119,17 +116,16 @@ def write_artifact_index(
     return index_path
 
 
-def _producer_provenance_payload(
-    producer_provenance: ArtifactProducerProvenance | Mapping[str, object] | None,
-) -> dict[str, object] | None:
+def _producer_provenance_payload(producer_provenance: object | None) -> dict[str, object] | None:
     if producer_provenance is None:
         return None
-    # Imported lazily so this module can load without pulling agoge_forger.eval
-    # (eval.generate imports assert_no_unsafe_weight_bins from here).
-    from ..eval._artifact_schema import ArtifactProducerProvenance as ProvenanceModel
-
-    if isinstance(producer_provenance, ProvenanceModel):
-        validated = producer_provenance
+    dumped = getattr(producer_provenance, "model_dump", None)
+    if callable(dumped):
+        payload = dumped(mode="json")
+    elif isinstance(producer_provenance, Mapping):
+        payload = dict(producer_provenance)
     else:
-        validated = ProvenanceModel.model_validate(producer_provenance)
-    return validated.model_dump(mode="json")
+        raise TypeError("producer_provenance must be a mapping or a dumpable model")
+    if not isinstance(payload, dict):
+        raise TypeError("producer_provenance payload must be a mapping")
+    return payload

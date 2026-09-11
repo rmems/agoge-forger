@@ -43,19 +43,26 @@ def scripted_generator(pattern: str = "cycle"):
 
 def _scripted_record(role: str, task, index: int, pattern: str) -> GenerationRecord:
     if task.status != "ready":
-        return GenerationRecord(
-            task_id=task.task_id,
-            prompt=task.prompt,
-            expected_completion=task.expected_completion,
-            status="invalid" if task.status == "invalid" else "unsupported",
-            reason=task.reason,
-        )
+        return _scripted_not_ready(task)
     expected = task.expected_completion or ""
-    lane = index % 5
-    if pattern == "all-correct" or lane == 0:
-        completion = expected
-        status = "ok"
-    elif lane == 4:
+    if pattern == "all-correct":
+        return _scripted_ok(task, expected)
+    return _scripted_cycle(role, task, index % 5, expected)
+
+
+def _scripted_not_ready(task) -> GenerationRecord:
+    status = "invalid" if task.status == "invalid" else "unsupported"
+    return GenerationRecord(
+        task_id=task.task_id,
+        prompt=task.prompt,
+        expected_completion=task.expected_completion,
+        status=status,
+        reason=task.reason,
+    )
+
+
+def _scripted_cycle(role: str, task, lane: int, expected: str) -> GenerationRecord:
+    if lane == 4:
         return GenerationRecord(
             task_id=task.task_id,
             prompt=task.prompt,
@@ -64,15 +71,20 @@ def _scripted_record(role: str, task, index: int, pattern: str) -> GenerationRec
             reason="scripted unsupported",
             prompt_token_count=task.prompt_token_count,
         )
-    elif lane == 1:
-        completion = expected if role == "causal_sft" else "WRONG"
-        status = "ok"
-    elif lane == 2:
-        completion = expected if role == "causal_base" else "WRONG"
-        status = "ok"
-    else:
-        completion = "WRONG"
-        status = "ok"
+    return _scripted_ok(task, _scripted_completion(role, lane, expected))
+
+
+def _scripted_completion(role: str, lane: int, expected: str) -> str:
+    if lane == 0:
+        return expected
+    if lane == 1 and role == "causal_sft":
+        return expected
+    if lane == 2 and role == "causal_base":
+        return expected
+    return "WRONG"
+
+
+def _scripted_ok(task, completion: str) -> GenerationRecord:
     return GenerationRecord(
         task_id=task.task_id,
         prompt=task.prompt,
@@ -80,5 +92,5 @@ def _scripted_record(role: str, task, index: int, pattern: str) -> GenerationRec
         raw_text=f"{task.prompt}{completion}",
         completion=completion,
         prompt_token_count=task.prompt_token_count,
-        status=status,
+        status="ok",
     )

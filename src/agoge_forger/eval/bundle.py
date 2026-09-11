@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from .._atomic_directory import rename_noreplace, require_rename_noreplace_support
@@ -26,18 +27,22 @@ BUNDLE_FILES = (
 )
 
 
-def publish_eval_bundle(
-    output_dir: Path,
-    *,
-    contract: PairedEvaluationContract,
-    base_generations: tuple[GenerationRecord, ...],
-    sft_generations: tuple[GenerationRecord, ...],
-    base_metrics: ArmMetrics,
-    sft_metrics: ArmMetrics,
-    comparison: ComparisonSummary,
-    base_scores: tuple[ExampleScore, ...],
-    sft_scores: tuple[ExampleScore, ...],
-) -> Path:
+@dataclass(frozen=True)
+class ArmBundle:
+    generations: tuple[GenerationRecord, ...]
+    metrics: ArmMetrics
+    scores: tuple[ExampleScore, ...]
+
+
+@dataclass(frozen=True)
+class EvalBundle:
+    contract: PairedEvaluationContract
+    comparison: ComparisonSummary
+    base: ArmBundle
+    sft: ArmBundle
+
+
+def publish_eval_bundle(output_dir: Path, bundle: EvalBundle) -> Path:
     destination = output_dir.expanduser()
     if os.path.lexists(destination):
         raise FileExistsError(
@@ -48,17 +53,7 @@ def publish_eval_bundle(
     with tempfile.TemporaryDirectory(prefix=".agoge-eval-staging-", dir=staging_parent) as staging:
         staged = Path(staging) / "bundle"
         staged.mkdir()
-        _write_bundle(
-            staged,
-            contract=contract,
-            base_generations=base_generations,
-            sft_generations=sft_generations,
-            base_metrics=base_metrics,
-            sft_metrics=sft_metrics,
-            comparison=comparison,
-            base_scores=base_scores,
-            sft_scores=sft_scores,
-        )
+        _write_bundle(staged, bundle)
         destination.parent.mkdir(parents=True, exist_ok=True)
         rename_noreplace(staged, destination)
     return destination
@@ -107,44 +102,33 @@ def render_report(
     return "\n".join(lines)
 
 
-def _write_bundle(
-    staged: Path,
-    *,
-    contract: PairedEvaluationContract,
-    base_generations: tuple[GenerationRecord, ...],
-    sft_generations: tuple[GenerationRecord, ...],
-    base_metrics: ArmMetrics,
-    sft_metrics: ArmMetrics,
-    comparison: ComparisonSummary,
-    base_scores: tuple[ExampleScore, ...],
-    sft_scores: tuple[ExampleScore, ...],
-) -> None:
+def _write_bundle(staged: Path, bundle: EvalBundle) -> None:
     (staged / "base").mkdir()
     (staged / "sft").mkdir()
     _exclusive_write(
-        staged / "contract.json", canonical_json_bytes(contract.model_dump(mode="json")) + b"\n"
+        staged / "contract.json",
+        canonical_json_bytes(bundle.contract.model_dump(mode="json")) + b"\n",
     )
-    _write_jsonl(staged / "base" / "generations.jsonl", base_generations)
+    _write_jsonl(staged / "base" / "generations.jsonl", bundle.base.generations)
     _exclusive_write(
         staged / "base" / "metrics.json",
-        canonical_json_bytes(base_metrics.model_dump(mode="json")) + b"\n",
+        canonical_json_bytes(bundle.base.metrics.model_dump(mode="json")) + b"\n",
     )
-    _write_jsonl(staged / "sft" / "generations.jsonl", sft_generations)
+    _write_jsonl(staged / "sft" / "generations.jsonl", bundle.sft.generations)
     _exclusive_write(
         staged / "sft" / "metrics.json",
-        canonical_json_bytes(sft_metrics.model_dump(mode="json")) + b"\n",
+        canonical_json_bytes(bundle.sft.metrics.model_dump(mode="json")) + b"\n",
     )
     _exclusive_write(
         staged / "comparison.json",
-        canonical_json_bytes(_comparison_payload(comparison)) + b"\n",
+        canonical_json_bytes(_comparison_payload(bundle.comparison)) + b"\n",
     )
-    _write_jsonl(
-        staged / "regressions.jsonl",
-        _regression_rows(comparison, base_scores, sft_scores, base_generations, sft_generations),
-    )
+    _write_jsonl(staged / "regressions.jsonl", _regression_rows(bundle))
     _exclusive_write(
         staged / "report.md",
-        render_report(contract, base_metrics, sft_metrics, comparison).encode("utf-8"),
+        render_report(
+            bundle.contract, bundle.base.metrics, bundle.sft.metrics, bundle.comparison
+        ).encode("utf-8"),
     )
 
 
@@ -155,19 +139,13 @@ def _comparison_payload(comparison: ComparisonSummary) -> dict[str, object]:
     return payload
 
 
-def _regression_rows(
-    comparison: ComparisonSummary,
-    base_scores: tuple[ExampleScore, ...],
-    sft_scores: tuple[ExampleScore, ...],
-    base_generations: tuple[GenerationRecord, ...],
-    sft_generations: tuple[GenerationRecord, ...],
-) -> tuple[dict[str, object], ...]:
-    base_by_id = {score.task_id: score for score in base_scores}
-    sft_by_id = {score.task_id: score for score in sft_scores}
-    base_gen = {record.task_id: record for record in base_generations}
-    sft_gen = {record.task_id: record for record in sft_generations}
+def _regression_rows(bundle: EvalBundle) -> tuple[dict[str, object], ...]:
+    base_by_id = {score.task_id: score for score in bundle.base.scores}
+    sft_by_id = {score.task_id: score for score in bundle.sft.scores}
+    base_gen = {record.task_id: record for record in bundle.base.generations}
+    sft_gen = {record.task_id: record for record in bundle.sft.generations}
     rows: list[dict[str, object]] = []
-    for item in comparison.outcomes:
+    for item in bundle.comparison.outcomes:
         if item.outcome != "regressed":
             continue
         rows.append(

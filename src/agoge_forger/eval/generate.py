@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import torch
@@ -18,31 +19,14 @@ from .score import GenerationRecord
 PreparedStatus = Literal["ready", "invalid", "unsupported"]
 
 
+@dataclass(slots=True)
 class PreparedTask:
-    __slots__ = (
-        "expected_completion",
-        "prompt",
-        "prompt_token_count",
-        "reason",
-        "status",
-        "task_id",
-    )
-
-    def __init__(
-        self,
-        task_id: str,
-        prompt: str | None,
-        expected_completion: str | None,
-        status: PreparedStatus,
-        reason: str | None = None,
-        prompt_token_count: int | None = None,
-    ) -> None:
-        self.task_id = task_id
-        self.prompt = prompt
-        self.expected_completion = expected_completion
-        self.status = status
-        self.reason = reason
-        self.prompt_token_count = prompt_token_count
+    task_id: str
+    prompt: str | None
+    expected_completion: str | None
+    status: PreparedStatus
+    reason: str | None = None
+    prompt_token_count: int | None = None
 
 
 def prompt_token_count(tokenizer: Any, prompt: str) -> int:
@@ -108,13 +92,12 @@ def generate_completions(
     set_seed(decoding.seed)
     model.eval()
     kwargs = generation_kwargs(decoding, tokenizer)
-    device = next(model.parameters()).device
     records: list[GenerationRecord] = []
     for task in tasks:
         if task.status != "ready" or task.prompt is None:
             records.append(_non_ok_record(task))
             continue
-        records.append(_generate_one(model, tokenizer, task, kwargs, device))
+        records.append(_generate_one(model, tokenizer, task, kwargs))
     return tuple(records)
 
 
@@ -173,10 +156,10 @@ def _generate_one(
     tokenizer: Any,
     task: PreparedTask,
     kwargs: dict[str, Any],
-    device: torch.device,
 ) -> GenerationRecord:
     if task.prompt is None:
         raise ValueError(f"ready task {task.task_id} is missing a prompt")
+    device = next(model.parameters()).device
     inputs = tokenizer(task.prompt, return_tensors="pt", truncation=False)
     if hasattr(inputs, "to"):
         inputs = inputs.to(device)
