@@ -114,7 +114,8 @@ def attach_pinned_tokenizer_revision(tokenizer: TokenizerLike, revision: str) ->
     _require_immutable_revision(revision, _TOKENIZER_REVISION_LABEL)
     current = getattr(tokenizer, "_commit_hash", None)
     if current in {None, ""}:
-        setattr(tokenizer, "_commit_hash", revision)
+        implementation: Any = tokenizer
+        implementation._commit_hash = revision
         return tokenizer
     if current != revision:
         raise ValueError(
