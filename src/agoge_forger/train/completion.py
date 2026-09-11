@@ -22,7 +22,8 @@ def _token_metadata(token, offset, special):
 def _completion_boundary(row):
     text = row.get("text")
     start = row.get("completion_start_char")
-    if not isinstance(text, str) or type(start) is not int:
+    # Exact int rejects bool and subclasses at the frozen-data boundary.
+    if not isinstance(text, str) or type(start) is not int:  # pylint: disable=unidiomatic-typecheck
         raise ValueError("completion_start_char must be an integer offset into nonempty text")
     if not 0 <= start < len(text):
         raise ValueError("completion_start_char must be an integer offset into nonempty text")
