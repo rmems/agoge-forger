@@ -131,6 +131,7 @@ def load_arm_model(
 def _load_pretrained(
     repository: str, revision: str | None, trust_remote_code: bool, device_map: str
 ) -> tuple[Any, Any]:
+    assert_no_unsafe_weight_bins(repository, recursive=True)
     return load_base_model(
         repository,
         trust_remote_code=trust_remote_code,
