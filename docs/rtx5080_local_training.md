@@ -2,6 +2,15 @@
 
 The RTX 5080 has 16GB of VRAM. This is a very capable card, but it has strict limits for modern 7B-8B parameter LLMs.
 
+For anything below the training loop itself — kernel-level or engine-CUDA
+behavior on this card (FlashAttention, CUDA graphs, quantization, Green
+Context host scheduling) — see
+[`rmems/blackwell-kernel-lab`](https://github.com/rmems/blackwell-kernel-lab),
+this host's kernel source of truth, starting with
+[`docs/FORGE_CONSUME.md`](https://github.com/rmems/blackwell-kernel-lab/blob/main/docs/FORGE_CONSUME.md).
+This project does not duplicate that VRAM/kernel math; the preflight checks
+below cover training-time fit only.
+
 ## Preflight Checks
 Agoge-Forger runs preflight checks to warn about likely Out-Of-Memory (OOM) scenarios on cards reporting **≤16.5 GiB** total VRAM (binary GiB, same unit as disk preflight — a true 16 GiB RTX 5080 reports ~16.0, not ~17.18 decimal GB).
 
