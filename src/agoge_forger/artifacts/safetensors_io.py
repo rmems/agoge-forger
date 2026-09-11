@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .._atomic_file import publish_bytes_replace
-from ..eval import ArtifactProducerProvenance
+from ..eval._artifact_schema import ArtifactProducerProvenance
 from ..logging import logger
 
 try:

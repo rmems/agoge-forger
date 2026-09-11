@@ -26,6 +26,8 @@ def require_adapter_tensor_schema(
         actual,
         expected,
         label="PEFT adapter tensor schema does not match adapter_config.json and base model",
+        # Empty PEFT init materializes LoRA in F32; trained adapters are often BF16/F16.
+        compare_dtypes=False,
     )
 
 

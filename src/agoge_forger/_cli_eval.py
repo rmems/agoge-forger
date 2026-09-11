@@ -7,7 +7,7 @@ import typer
 from transformers import AutoTokenizer
 
 from ._cli_app import CLI_PATH_ERRORS, app, exit_on_error
-from ._token_provenance import TokenizerBinding
+from ._token_provenance import TokenizerBinding, attach_pinned_tokenizer_revision
 from .eval.contract import (
     ArtifactIndexReference,
     DecodingContract,
@@ -70,6 +70,7 @@ def _evaluation_arms(
         trust_remote_code=trust_remote_code,
         revision=tokenizer_revision,
     )
+    attach_pinned_tokenizer_revision(tokenizer, tokenizer_revision)
     tokenizer_binding = TokenizerBinding(implementation=tokenizer)
     serializer = SerializerBinding(implementation=code_repair_prompt)
     decoding = DecodingContract(

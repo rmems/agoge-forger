@@ -57,12 +57,15 @@ def require_matching_tensor_schema(
     expected: dict[str, TensorSchemaEntry],
     *,
     label: str,
+    compare_dtypes: bool = True,
 ) -> None:
     missing = sorted(expected.keys() - actual.keys())
     unexpected = sorted(actual.keys() - expected.keys())
     shared = expected.keys() & actual.keys()
     wrong_shapes = sorted(key for key in shared if expected[key].shape != actual[key].shape)
-    wrong_dtypes = sorted(key for key in shared if expected[key].dtype != actual[key].dtype)
+    wrong_dtypes: list[str] = []
+    if compare_dtypes:
+        wrong_dtypes = sorted(key for key in shared if expected[key].dtype != actual[key].dtype)
     if any((missing, unexpected, wrong_shapes, wrong_dtypes)):
         raise ValueError(
             f"{label}: missing={missing[:5]}, unexpected={unexpected[:5]}, "
