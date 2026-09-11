@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import typer
 
-from ._cli_app import app
+from ._cli_app import CLI_PATH_ERRORS, app, exit_on_error
 from .datasets import dataset_stats as _dataset_stats
 from .logging import logger
 from .path_safety import resolve_absent_output_directory, resolve_existing_path
@@ -66,26 +66,30 @@ def freeze_split(
     group_id_field: str = typer.Option("group_id"),
 ):
     """Materialize an immutable three-way SFT split from a pinned local source."""
-    safe_source = resolve_existing_path(source, must_be_file=True)
-    safe_output = resolve_absent_output_directory(output_dir)
-    spec = _freeze_split_spec(
-        _FreezeSplitOptions(
-            source_repository=source_repository,
-            source_revision=source_revision,
-            dataset_version=dataset_version,
-            source_path=source_path,
-            seed=seed,
-            salt=salt,
-            train_weight=train_weight,
-            validation_weight=validation_weight,
-            held_out_weight=held_out_weight,
-            canonical_id_field=canonical_id_field,
-            lineage_id_field=lineage_id_field,
-            group_id_field=group_id_field,
+    try:
+        safe_source = resolve_existing_path(source, must_be_file=True)
+        safe_output = resolve_absent_output_directory(output_dir)
+        spec = _freeze_split_spec(
+            _FreezeSplitOptions(
+                source_repository=source_repository,
+                source_revision=source_revision,
+                dataset_version=dataset_version,
+                source_path=source_path,
+                seed=seed,
+                salt=salt,
+                train_weight=train_weight,
+                validation_weight=validation_weight,
+                held_out_weight=held_out_weight,
+                canonical_id_field=canonical_id_field,
+                lineage_id_field=lineage_id_field,
+                group_id_field=group_id_field,
+            )
         )
-    )
-    manifest = materialize_split(safe_source, safe_output, spec)
-    _log_freeze_split(manifest, str(safe_output))
+        manifest = materialize_split(safe_source, safe_output, spec)
+    except CLI_PATH_ERRORS as e:
+        exit_on_error(e)
+    else:
+        _log_freeze_split(manifest, str(safe_output))
 
 
 def _freeze_split_spec(options: _FreezeSplitOptions) -> SplitMaterializationSpec:
