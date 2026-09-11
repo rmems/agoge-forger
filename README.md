@@ -130,6 +130,28 @@ How it protects you:
 
 **Run cleanup before publishing an evaluation contract, not after.** The artifact index written at the end of training hashes every file in the run directory, checkpoints included, and the evaluation contract requires the index to match the files actually present. So when a checkpoint was actually removed, an existing `artifact_index.json` is rewritten over the survivors — which changes its `sha256` and invalidates any contract already pinning it. A run where nothing was deleted leaves the index byte-identical. `artifact_index_rewritten` in the report says whether that happened. A run with no index is cleaned without inventing one. An index that already exists is rebuilt whether or not it carried sealed provenance, so it never keeps listing files cleanup just deleted. A rewrite that fails is reported under `failed` with a non-zero exit rather than passing silently.
 
+## Held-out base-vs-SFT canary
+
+After a frozen split and an SFT adapter or merged artifact exist, compare base and SFT on the same held-out membership:
+
+```bash
+SPLIT_MANIFEST=/path/to/split_manifest.json
+SFT_ARTIFACT=adapters/code-repair-canary
+OUTPUT_DIR=eval/code-repair-canary
+BASE_MODEL_ID=ibm-granite/granite-4.1-3b-base
+BASE_REVISION=dacb9cb9157bec98e99b09f285c92a4d58405c96
+
+uv run agoge held-out-eval \
+  --split-manifest "$SPLIT_MANIFEST" \
+  --sft-artifact "$SFT_ARTIFACT" \
+  --output-dir "$OUTPUT_DIR" \
+  --base-model-id "$BASE_MODEL_ID" \
+  --base-revision "$BASE_REVISION" \
+  --context-window 4096
+```
+
+See [Frozen split and evaluation contracts](docs/frozen_split_and_eval_contracts.md) for the bundle layout and local GPU steps. `smoke-eval` remains a toy hardcoded-prompt check and is not this harness.
+
 ## Validation
 
 ```bash

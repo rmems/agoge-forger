@@ -31,6 +31,7 @@ _TOKENIZER_RUNTIME_FIELDS = (
 )
 _PURE_BUILTINS = frozenset({"bool", "float", "int", "len", "list", "str"})
 _TOKENIZER_IMPLEMENTATION_LABEL = "tokenizer implementation"
+_TOKENIZER_REVISION_LABEL = "tokenizer revision"
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,25 @@ class SerializerBinding:
         return self.implementation(row)
 
 
+def attach_pinned_tokenizer_revision(tokenizer: TokenizerLike, revision: str) -> TokenizerLike:
+    """Stamp a caller-pinned immutable revision when Transformers omits ``_commit_hash``.
+
+    Transformers 5 ``TokenizersBackend`` no longer exposes revision metadata after
+    ``from_pretrained(revision=...)``, which would otherwise fail held-out eval.
+    """
+    _require_immutable_revision(revision, _TOKENIZER_REVISION_LABEL)
+    current = getattr(tokenizer, "_commit_hash", None)
+    if current in {None, ""}:
+        implementation: Any = tokenizer
+        implementation._commit_hash = revision
+        return tokenizer
+    if current != revision:
+        raise ValueError(
+            f"tokenizer _commit_hash {current!r} does not match pinned revision {revision!r}"
+        )
+    return tokenizer
+
+
 def derive_tokenizer_provenance(tokenizer: TokenizerLike) -> tuple[str, str]:
     tokenizer_id = _require_identifier(getattr(tokenizer, "name_or_path", None), "name_or_path")
     init_kwargs = _tokenizer_init_kwargs(tokenizer)
@@ -111,11 +131,11 @@ def derive_tokenizer_provenance(tokenizer: TokenizerLike) -> tuple[str, str]:
     if resolved is None:
         resolved = _unique_revision(
             (getattr(tokenizer, "revision", None), init_kwargs.get("revision")),
-            "tokenizer revision",
+            _TOKENIZER_REVISION_LABEL,
         )
     if resolved is None:
         raise ValueError("tokenizer does not expose an immutable resolved revision")
-    _require_immutable_revision(resolved, "tokenizer revision")
+    _require_immutable_revision(resolved, _TOKENIZER_REVISION_LABEL)
     return tokenizer_id, resolved
 
 
@@ -597,9 +617,21 @@ def _fingerprint_set(value: set[Any] | frozenset[Any]) -> dict[str, Any]:
 
 
 def _fingerprint_mapping(value: Mapping[Any, Any]) -> dict[str, Any]:
-    if any(not isinstance(key, str) for key in value):
-        raise ValueError("callable fingerprint mappings require string keys")
-    return {key: _fingerprint_value(item) for key, item in value.items()}
+    items = [
+        (_fingerprint_mapping_key(key), _fingerprint_value(item)) for key, item in value.items()
+    ]
+    keys = [key for key, _ in items]
+    if len(keys) != len(set(keys)):
+        raise ValueError("callable fingerprint mapping keys collided after canonicalization")
+    return dict(items)
+
+
+def _fingerprint_mapping_key(key: Any) -> str:
+    if isinstance(key, str):
+        return key
+    if isinstance(key, int) and not isinstance(key, bool):
+        return f"int:{key}"
+    raise ValueError("callable fingerprint mappings require string or int keys")
 
 
 def _require_callable(value: object, label: str) -> None:

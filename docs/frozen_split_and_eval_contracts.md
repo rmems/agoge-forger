@@ -171,7 +171,55 @@ evaluation-eligible frozen runs are likewise not wired through config in this
 PR. Legacy `dataset_path` training keeps its existing explicit
 unsafe-serialization opt-in.
 
-This foundation does not load a model, run inference, choose a checkpoint,
-score generations, create claim-bearing results, or wire frozen splits into
-the trainer. Those capabilities remain downstream work after the data
-contract is integrated.
+The executable canary is `agoge held-out-eval` / `run_held_out_eval`. It consumes
+the frozen held-out membership, generates with Transformers from the base arm
+then the SFT adapter or merged artifact, scores with deterministic
+`exact-match-v1`, and publishes:
+
+```text
+eval/<run_name>/
+  contract.json
+  base/generations.jsonl
+  base/metrics.json
+  sft/generations.jsonl
+  sft/metrics.json
+  comparison.json
+  regressions.jsonl
+  report.md
+```
+
+Paired arms cannot drift in task IDs, serializer, decoding, or scoring version.
+Heuristic or model-judge signals are not mixed into the objective verdict.
+
+## Local GPU canary (not run in CI)
+
+CI covers contract guards, scoring, comparison outcomes, and a stubbed
+generation loop. End-to-end Transformers generation against a real SFT artifact
+needs a local GPU and a trained adapter whose `producer_provenance` matches the
+frozen train split.
+
+```bash
+SPLIT_MANIFEST=~/agoge-data/splits/split_manifest.json
+SFT_ARTIFACT=~/agoge-data/scratch/smoke/adapters/code-repair-canary
+OUTPUT_DIR=eval/code-repair-canary
+BASE_MODEL_ID=ibm-granite/granite-4.1-3b-base
+BASE_REVISION=dacb9cb9157bec98e99b09f285c92a4d58405c96
+
+uv run agoge held-out-eval \
+  --split-manifest "$SPLIT_MANIFEST" \
+  --sft-artifact "$SFT_ARTIFACT" \
+  --output-dir "$OUTPUT_DIR" \
+  --base-model-id "$BASE_MODEL_ID" \
+  --base-revision "$BASE_REVISION" \
+  --context-window 4096 \
+  --max-new-tokens 128 \
+  --seed 17 \
+  --truncation-policy mark_unsupported
+```
+
+Use the same frozen `split_manifest.json` that trained the adapter. Do not
+re-split after seeing results. `report.md` concludes improved, regressed,
+mixed, null, or inconclusive. Close #100 only after a bounded local canary
+produces valid scored paired outcomes (`n_scored > 0` on both arms) and the
+bundle is inspected. A run whose tasks are all invalid or unsupported is not
+sufficient.

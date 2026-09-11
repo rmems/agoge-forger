@@ -77,6 +77,7 @@ def frozen_manifest(tmp_path: Path):
             "lineage_id": f"lineage-{index // 2:03d}",
             "group_id": f"family-{index // 3:03d}",
             "text": f"Task {index}: return deterministic answer {index * 13}.",
+            "completion_start_char": len(f"Task {index}: "),
         }
         for index in range(90)
     ]

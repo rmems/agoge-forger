@@ -26,6 +26,7 @@ ArtifactIndex = _artifact_schema.ArtifactIndex
 ArtifactIndexEntry = _artifact_schema.ArtifactIndexEntry
 ArtifactIndexReference = _artifact_schema.ArtifactIndexReference
 ArtifactKind = _artifact_schema.ArtifactKind
+ArtifactProducerProvenance = _artifact_schema.ArtifactProducerProvenance
 ArtifactValidationContext = _artifact_schema.ArtifactValidationContext
 FrozenEvaluationModel = _artifact_schema.FrozenEvaluationModel
 IndexedArtifacts = _artifact_schema.IndexedArtifacts
@@ -197,14 +198,14 @@ def _validate_held_out_reference(
         raise ValueError("evaluation contract task-set digest differs from held-out membership")
 
 
-def build_evaluation_contract(
+def compose_evaluation_contract(
     *,
     manifest_path: str | Path,
     contract_path: str | Path,
     base: EvaluationArm,
     sft: EvaluationArm,
 ) -> PairedEvaluationContract:
-    """Build and exclusively write a paired contract without evaluating models."""
+    """Build a paired contract bound to frozen held-out membership without writing it."""
 
     manifest_file = Path(manifest_path).expanduser().resolve(strict=True)
     destination = Path(contract_path).expanduser()
@@ -216,7 +217,7 @@ def build_evaluation_contract(
     task_digest = logical_task_set_sha256(task_ids)
     manifest_digest = sha256_bytes(manifest_snapshot)
     normalized_sft = _normalize_sft_artifact(validated_sft, destination, manifest, manifest_digest)
-    contract = PairedEvaluationContract(
+    return PairedEvaluationContract(
         split_manifest_path=_portable_relative_path(manifest_file, destination.parent.resolve()),
         split_manifest_sha256=manifest_digest,
         held_out_split_sha256=manifest.splits["held_out"].sha256,
@@ -224,6 +225,24 @@ def build_evaluation_contract(
         logical_task_set_sha256=task_digest,
         base=validated_base,
         sft=normalized_sft,
+    )
+
+
+def build_evaluation_contract(
+    *,
+    manifest_path: str | Path,
+    contract_path: str | Path,
+    base: EvaluationArm,
+    sft: EvaluationArm,
+) -> PairedEvaluationContract:
+    """Build and exclusively write a paired contract without evaluating models."""
+
+    destination = Path(contract_path).expanduser()
+    contract = compose_evaluation_contract(
+        manifest_path=manifest_path,
+        contract_path=destination,
+        base=base,
+        sft=sft,
     )
     payload = canonical_json_bytes(contract.model_dump(mode="json")) + b"\n"
     destination.parent.mkdir(parents=True, exist_ok=True)
