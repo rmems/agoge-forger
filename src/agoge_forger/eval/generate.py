@@ -118,22 +118,27 @@ def load_arm_model(
     device_map: str = "auto",
 ) -> tuple[Any, Any]:
     if arm.role == "causal_base":
-        return _causal_base(arm, trust_remote_code, device_map)
+        return _load_pretrained(
+            arm.model_repository, arm.model_revision, trust_remote_code, device_map
+        )
     if artifact_root is None:
         raise ValueError("causal_sft arm requires an artifact directory")
     if arm.artifact is not None and arm.artifact.kind == "peft_adapter":
         return _peft_adapter(arm, artifact_root, trust_remote_code, device_map)
-    return _merged_local(artifact_root, trust_remote_code, device_map)
+    return _load_pretrained(artifact_root, None, trust_remote_code, device_map)
 
 
-def _causal_base(arm: EvaluationArm, trust_remote_code: bool, device_map: str) -> tuple[Any, Any]:
+def _load_pretrained(
+    repository: str, revision: str | None, trust_remote_code: bool, device_map: str
+) -> tuple[Any, Any]:
     return load_base_model(
-        arm.model_repository,
+        repository,
         trust_remote_code=trust_remote_code,
         quant_config=None,
         bf16=True,
-        revision=arm.model_revision,
+        revision=revision,
         device_map=device_map,
+        local_files_only=revision is None,
     )
 
 
@@ -141,20 +146,10 @@ def _peft_adapter(
     arm: EvaluationArm, artifact_root: str, trust_remote_code: bool, device_map: str
 ) -> tuple[Any, Any]:
     assert_no_unsafe_weight_bins(artifact_root, recursive=True)
-    model, tokenizer = _causal_base(arm, trust_remote_code, device_map)
-    return PeftModel.from_pretrained(model, artifact_root), tokenizer
-
-
-def _merged_local(artifact_root: str, trust_remote_code: bool, device_map: str) -> tuple[Any, Any]:
-    return load_base_model(
-        artifact_root,
-        trust_remote_code=trust_remote_code,
-        quant_config=None,
-        bf16=True,
-        revision=None,
-        local_files_only=True,
-        device_map=device_map,
+    model, tokenizer = _load_pretrained(
+        arm.model_repository, arm.model_revision, trust_remote_code, device_map
     )
+    return PeftModel.from_pretrained(model, artifact_root), tokenizer
 
 
 def require_tokenizer_matches(tokenizer: Any, arm: EvaluationArm) -> TokenizerBinding:
