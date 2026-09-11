@@ -14,6 +14,8 @@ from ._tensor_schema import (
     torch_tensor_schema_entry,
 )
 
+_FLOATING_ADAPTER_DTYPES = frozenset({"F16", "BF16", "F32"})
+
 
 def require_adapter_tensor_schema(
     indexed: IndexedArtifacts,
@@ -22,6 +24,7 @@ def require_adapter_tensor_schema(
 ) -> None:
     actual = read_verified_tensor_schema(indexed, {_ADAPTER_WEIGHTS_PATH})
     expected = expected_adapter_tensor_schema(adapter_config, context)
+    _require_floating_adapter_dtypes(actual)
     require_matching_tensor_schema(
         actual,
         expected,
@@ -29,6 +32,14 @@ def require_adapter_tensor_schema(
         # Empty PEFT init materializes LoRA in F32; trained adapters are often BF16/F16.
         compare_dtypes=False,
     )
+
+
+def _require_floating_adapter_dtypes(actual: dict[str, TensorSchemaEntry]) -> None:
+    invalid_dtypes = sorted(
+        name for name, entry in actual.items() if entry.dtype not in _FLOATING_ADAPTER_DTYPES
+    )
+    if invalid_dtypes:
+        raise ValueError(f"PEFT adapter tensors require floating dtypes: {invalid_dtypes[:5]}")
 
 
 def expected_adapter_tensor_schema(

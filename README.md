@@ -135,12 +135,18 @@ How it protects you:
 After a frozen split and an SFT adapter or merged artifact exist, compare base and SFT on the same held-out membership:
 
 ```bash
+SPLIT_MANIFEST=/path/to/split_manifest.json
+SFT_ARTIFACT=adapters/code-repair-canary
+OUTPUT_DIR=eval/code-repair-canary
+BASE_MODEL_ID=ibm-granite/granite-4.1-3b-base
+BASE_REVISION=dacb9cb9157bec98e99b09f285c92a4d58405c96
+
 uv run agoge held-out-eval \
-  --split-manifest /path/to/split_manifest.json \
-  --sft-artifact adapters/<run_name> \
-  --output-dir eval/<run_name> \
-  --base-model-id <pinned-base> \
-  --base-revision <immutable-commit> \
+  --split-manifest "$SPLIT_MANIFEST" \
+  --sft-artifact "$SFT_ARTIFACT" \
+  --output-dir "$OUTPUT_DIR" \
+  --base-model-id "$BASE_MODEL_ID" \
+  --base-revision "$BASE_REVISION" \
   --context-window 4096
 ```
 

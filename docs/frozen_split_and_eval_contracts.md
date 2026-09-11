@@ -199,12 +199,18 @@ needs a local GPU and a trained adapter whose `producer_provenance` matches the
 frozen train split.
 
 ```bash
+SPLIT_MANIFEST=~/agoge-data/splits/split_manifest.json
+SFT_ARTIFACT=~/agoge-data/scratch/smoke/adapters/code-repair-canary
+OUTPUT_DIR=eval/code-repair-canary
+BASE_MODEL_ID=ibm-granite/granite-4.1-3b-base
+BASE_REVISION=dacb9cb9157bec98e99b09f285c92a4d58405c96
+
 uv run agoge held-out-eval \
-  --split-manifest ~/agoge-data/splits/split_manifest.json \
-  --sft-artifact ~/agoge-data/scratch/smoke/adapters/<run> \
-  --output-dir eval/code-repair-canary \
-  --base-model-id ibm-granite/granite-4.1-3b-base \
-  --base-revision <immutable-40-hex-commit> \
+  --split-manifest "$SPLIT_MANIFEST" \
+  --sft-artifact "$SFT_ARTIFACT" \
+  --output-dir "$OUTPUT_DIR" \
+  --base-model-id "$BASE_MODEL_ID" \
+  --base-revision "$BASE_REVISION" \
   --context-window 4096 \
   --max-new-tokens 128 \
   --seed 17 \
@@ -213,5 +219,7 @@ uv run agoge held-out-eval \
 
 Use the same frozen `split_manifest.json` that trained the adapter. Do not
 re-split after seeing results. `report.md` concludes improved, regressed,
-mixed, null, or inconclusive. Close #100 only after this local canary has been
-run and the bundle inspected.
+mixed, null, or inconclusive. Close #100 only after a bounded local canary
+produces valid scored paired outcomes (`n_scored > 0` on both arms) and the
+bundle is inspected. A run whose tasks are all invalid or unsupported is not
+sufficient.

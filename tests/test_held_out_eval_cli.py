@@ -11,6 +11,7 @@ from agoge_forger._token_provenance import (
     derive_tokenizer_provenance,
 )
 from agoge_forger.cli import app
+from agoge_forger.eval._adapter_schema import _require_floating_adapter_dtypes
 from agoge_forger.eval._tensor_schema import TensorSchemaEntry, require_matching_tensor_schema
 from tests.held_out_eval_cases import canary_evaluation_case
 
@@ -40,6 +41,12 @@ def test_adapter_schema_allows_empty_init_lora_dtype_mismatch():
     require_matching_tensor_schema(actual, expected, label="adapter", compare_dtypes=False)
     with pytest.raises(ValueError, match="wrong_dtypes"):
         require_matching_tensor_schema(actual, expected, label="adapter")
+
+
+def test_adapter_schema_rejects_non_floating_dtypes():
+    _require_floating_adapter_dtypes({"w": TensorSchemaEntry((16, 2560), "BF16")})
+    with pytest.raises(ValueError, match="floating dtypes"):
+        _require_floating_adapter_dtypes({"w": TensorSchemaEntry((16, 2560), "I64")})
 
 
 def _import_in_fresh_interpreter(script: str) -> None:
