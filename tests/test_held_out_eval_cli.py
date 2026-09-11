@@ -96,8 +96,8 @@ def test_held_out_eval_cli_wires_library_path(tmp_path, monkeypatch):
     manifest_path, _manifest, base, sft = canary_evaluation_case(tmp_path)
     seen: dict[str, object] = {}
 
-    def fake_arms(**kwargs):
-        seen["arms"] = kwargs
+    def fake_arms(inputs):
+        seen["arms"] = inputs
         return base, sft, object()
 
     def fake_run(**kwargs):

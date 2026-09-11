@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..split_contract import SerializerBinding, bind_frozen_split, iter_frozen_records
-from ..train.completion import _completion_boundary
+from ..train.completion import completion_boundary
 from .bundle import ArmBundle, EvalBundle, publish_eval_bundle
 from .compare import compare_arms
 from .contract import (
@@ -119,7 +119,7 @@ def prepare_tasks(
     for row in records:
         task_id = str(row["canonical_id"])
         try:
-            _completion_boundary(row)
+            completion_boundary(row)
             prompt = serializer(row)
         except (KeyError, TypeError, ValueError) as exc:
             tasks.append(

@@ -19,7 +19,7 @@ def _token_metadata(token, offset, special):
     return _Token(token, left, right, bool(special) and (left, right) == (0, 0))
 
 
-def _completion_boundary(row):
+def completion_boundary(row):
     text = row.get("text")
     start = row.get("completion_start_char")
     # Exact int rejects bool and subclasses at the frozen-data boundary.
@@ -160,7 +160,7 @@ def _validate_budget(token_count, max_length):
 
 def completion_tokens(row, tokenizer, max_length):
     """Tokenize exact text without truncation; refuse ambiguous supervision."""
-    text, start = _completion_boundary(row)
+    text, start = completion_boundary(row)
     tokens = _tokenize_with_offsets(text, tokenizer)
     tokens = _remove_redundant_eos(tokens, text, tokenizer)
     mask, terminal_eos = _completion_mask(tokens, text, start, tokenizer)

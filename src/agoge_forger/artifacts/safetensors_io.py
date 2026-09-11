@@ -6,7 +6,7 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from .._atomic_file import publish_bytes_replace
 from ..logging import logger
@@ -116,14 +116,18 @@ def write_artifact_index(
     return index_path
 
 
+@runtime_checkable
+class _JsonDumpable(Protocol):
+    def model_dump(self, *, mode: str) -> object: ...
+
+
 def _producer_provenance_payload(producer_provenance: object | None) -> dict[str, object] | None:
     if producer_provenance is None:
         return None
-    dumped = getattr(producer_provenance, "model_dump", None)
-    if callable(dumped):
-        payload = dumped(mode="json")
-    elif isinstance(producer_provenance, Mapping):
-        payload = dict(producer_provenance)
+    if isinstance(producer_provenance, Mapping):
+        payload: object = dict(producer_provenance)
+    elif isinstance(producer_provenance, _JsonDumpable):
+        payload = producer_provenance.model_dump(mode="json")
     else:
         raise TypeError("producer_provenance must be a mapping or a dumpable model")
     if not isinstance(payload, dict):
