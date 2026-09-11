@@ -1,0 +1,21 @@
+src/agoge_forger/eval/contract.py
+  s_3ec461cb2deb0a::t_438e0226386745 29
+src/agoge_forger/artifacts/producer_provenance.py
+  s_3ec461cb2deb0a::t_ea0274ca82f261 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b743a9eb3a88ecf9a866b0c5b099e22c262b794b",
+  "prompts": {},
+  "sessions": {
+    "s_3ec461cb2deb0a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ede2ae28-9bad-44a7-b609-7cbd08c89b6c",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
