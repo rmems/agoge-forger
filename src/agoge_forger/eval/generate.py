@@ -10,6 +10,7 @@ from peft import PeftModel
 from transformers import set_seed
 
 from .._token_provenance import TokenizerBinding
+from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..models.load import load_base_model
 from .contract import DecodingContract, EvaluationArm
 from .score import GenerationRecord
@@ -136,10 +137,6 @@ def load_arm_model(
     if artifact_root is None:
         raise ValueError("causal_sft arm requires an artifact directory")
     if arm.artifact is not None and arm.artifact.kind == "peft_adapter":
-        # Circular: artifacts.safetensors_io imports agoge_forger.eval, which
-        # loads harness -> generate. Keep this import local to break CLI startup.
-        from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
-
         assert_no_unsafe_weight_bins(artifact_root, recursive=True)
         model, tokenizer = load_base_model(
             arm.model_repository,

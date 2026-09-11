@@ -1,4 +1,4 @@
-import subprocess
+import subprocess  # nosec B404 - isolated interpreter import-cycle regression
 import sys
 from pathlib import Path
 
@@ -42,15 +42,41 @@ def test_adapter_schema_allows_empty_init_lora_dtype_mismatch():
         require_matching_tensor_schema(actual, expected, label="adapter")
 
 
-def test_cli_import_survives_fresh_interpreter():
+def _import_in_fresh_interpreter(script: str) -> None:
     result = subprocess.run(  # nosec B603 - fixed interpreter and import-only script
-        [sys.executable, "-c", "from agoge_forger.cli import app"],
+        [sys.executable, "-c", script],
         check=False,
         capture_output=True,
         text=True,
         timeout=120,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_cli_import_survives_fresh_interpreter():
+    _import_in_fresh_interpreter("from agoge_forger.cli import app")
+
+
+def test_eval_generate_import_survives_fresh_interpreter():
+    _import_in_fresh_interpreter("from agoge_forger.eval.generate import load_arm_model")
+
+
+def test_safetensors_io_does_not_import_eval_package():
+    """safetensors_io must not import agoge_forger.eval at module load.
+
+    eval.generate imports assert_no_unsafe_weight_bins from this module. If
+    safetensors_io also imports agoge_forger.eval, CLI startup raises ImportError.
+    """
+    _import_in_fresh_interpreter(
+        "import sys\n"
+        "from agoge_forger.artifacts import safetensors_io\n"
+        "assert 'agoge_forger.eval' not in sys.modules, sorted(sys.modules)\n"
+        "from agoge_forger.eval.generate import load_arm_model\n"
+        "from agoge_forger.cli import app\n"
+        "assert callable(safetensors_io.assert_no_unsafe_weight_bins)\n"
+        "assert callable(load_arm_model)\n"
+        "assert app is not None\n"
+    )
 
 
 def test_held_out_eval_cli_wires_library_path(tmp_path, monkeypatch):

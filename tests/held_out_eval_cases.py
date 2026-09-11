@@ -52,7 +52,7 @@ def _scripted_record(role: str, task, index: int, pattern: str) -> GenerationRec
         )
     expected = task.expected_completion or ""
     lane = index % 5
-    if pattern == "all-correct":
+    if pattern == "all-correct" or lane == 0:
         completion = expected
         status = "ok"
     elif lane == 4:
@@ -64,9 +64,6 @@ def _scripted_record(role: str, task, index: int, pattern: str) -> GenerationRec
             reason="scripted unsupported",
             prompt_token_count=task.prompt_token_count,
         )
-    elif lane == 0:
-        completion = expected
-        status = "ok"
     elif lane == 1:
         completion = expected if role == "causal_sft" else "WRONG"
         status = "ok"

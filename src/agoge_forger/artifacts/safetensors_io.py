@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 import glob
 import hashlib
 import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .._atomic_file import publish_bytes_replace
-from ..eval._artifact_schema import ArtifactProducerProvenance
 from ..logging import logger
+
+if TYPE_CHECKING:
+    from ..eval._artifact_schema import ArtifactProducerProvenance
 
 try:
     from safetensors import safe_open
@@ -120,8 +124,12 @@ def _producer_provenance_payload(
 ) -> dict[str, object] | None:
     if producer_provenance is None:
         return None
-    if isinstance(producer_provenance, ArtifactProducerProvenance):
+    # Imported lazily so this module can load without pulling agoge_forger.eval
+    # (eval.generate imports assert_no_unsafe_weight_bins from here).
+    from ..eval._artifact_schema import ArtifactProducerProvenance as ProvenanceModel
+
+    if isinstance(producer_provenance, ProvenanceModel):
         validated = producer_provenance
     else:
-        validated = ArtifactProducerProvenance.model_validate(producer_provenance)
+        validated = ProvenanceModel.model_validate(producer_provenance)
     return validated.model_dump(mode="json")

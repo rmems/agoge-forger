@@ -31,6 +31,7 @@ _TOKENIZER_RUNTIME_FIELDS = (
 )
 _PURE_BUILTINS = frozenset({"bool", "float", "int", "len", "list", "str"})
 _TOKENIZER_IMPLEMENTATION_LABEL = "tokenizer implementation"
+_TOKENIZER_REVISION_LABEL = "tokenizer revision"
 
 
 @dataclass(frozen=True)
@@ -110,10 +111,10 @@ def attach_pinned_tokenizer_revision(tokenizer: TokenizerLike, revision: str) ->
     Transformers 5 ``TokenizersBackend`` no longer exposes revision metadata after
     ``from_pretrained(revision=...)``, which would otherwise fail held-out eval.
     """
-    _require_immutable_revision(revision, "tokenizer revision")
+    _require_immutable_revision(revision, _TOKENIZER_REVISION_LABEL)
     current = getattr(tokenizer, "_commit_hash", None)
     if current in {None, ""}:
-        tokenizer._commit_hash = revision
+        setattr(tokenizer, "_commit_hash", revision)
         return tokenizer
     if current != revision:
         raise ValueError(
@@ -129,11 +130,11 @@ def derive_tokenizer_provenance(tokenizer: TokenizerLike) -> tuple[str, str]:
     if resolved is None:
         resolved = _unique_revision(
             (getattr(tokenizer, "revision", None), init_kwargs.get("revision")),
-            "tokenizer revision",
+            _TOKENIZER_REVISION_LABEL,
         )
     if resolved is None:
         raise ValueError("tokenizer does not expose an immutable resolved revision")
-    _require_immutable_revision(resolved, "tokenizer revision")
+    _require_immutable_revision(resolved, _TOKENIZER_REVISION_LABEL)
     return tokenizer_id, resolved
 
 

@@ -1,3 +1,5 @@
+import pytest
+
 from agoge_forger.eval.compare import compare_arms, compare_example
 from agoge_forger.eval.score import ExampleScore
 
@@ -24,7 +26,7 @@ def test_compare_arms_conclusions():
     improved = compare_arms((_score("a", "incorrect"),), (_score("a", "correct"),))
     assert improved.conclusion == "improved"
     assert improved.n_improved == 1
-    assert improved.delta_accuracy == 1.0
+    assert improved.delta_accuracy == pytest.approx(1.0)
 
     regressed = compare_arms((_score("a", "correct"),), (_score("a", "incorrect"),))
     assert regressed.conclusion == "regressed"

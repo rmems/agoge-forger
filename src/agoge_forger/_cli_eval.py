@@ -65,7 +65,7 @@ def _evaluation_arms(
 ) -> tuple[EvaluationArm, EvaluationArm, Any]:
     manifest = validate_split_manifest_snapshot(manifest_path, manifest_path.read_bytes())
     task_digest = logical_task_set_sha256(held_out_task_ids(manifest))
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 - revision is pinned below.
         tokenizer_id,
         trust_remote_code=trust_remote_code,
         revision=tokenizer_revision,

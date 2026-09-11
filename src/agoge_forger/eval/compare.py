@@ -93,12 +93,12 @@ def compare_arms(
         n_tied=n_tied,
         n_invalid=n_invalid,
         delta_accuracy=delta_accuracy,
-        conclusion=_conclusion(n_improved, n_regressed, n_tied, n_invalid),
+        conclusion=_conclusion(n_improved, n_regressed, n_tied),
         outcomes=outcomes,
     )
 
 
-def _conclusion(n_improved: int, n_regressed: int, n_tied: int, n_invalid: int) -> EvalConclusion:
+def _conclusion(n_improved: int, n_regressed: int, n_tied: int) -> EvalConclusion:
     comparable = n_improved + n_regressed + n_tied
     if comparable == 0:
         return "inconclusive"

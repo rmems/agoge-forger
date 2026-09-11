@@ -1,3 +1,5 @@
+import pytest
+
 from agoge_forger.eval.score import (
     OBJECTIVE_SCORING_VERSION,
     GenerationRecord,
@@ -52,4 +54,4 @@ def test_score_arm_metrics_exclude_invalid_from_accuracy():
     assert metrics.n_incorrect == 1
     assert metrics.n_invalid == 1
     assert metrics.n_scored == 2
-    assert metrics.accuracy == 0.5
+    assert metrics.accuracy == pytest.approx(0.5)
