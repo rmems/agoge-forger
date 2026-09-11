@@ -1,0 +1,22 @@
+# Template only: copy to a YAML config and replace BOTH required placeholders:
+# dataset_path with a real frozen export's splits/train.jsonl, and target_modules
+# with verified LoRA targets for the pinned revision. See docs/completion-only-training.md.
+model_id: "openbmb/MiniCPM5-1B-Base"
+revision: "156170697656c48f69915b33a2fb44110242187c"
+trust_remote_code: false
+dataset_path: "../datasets/code_repair/splits/train.jsonl"
+dataset_text_field: "text"
+output_dir: "adapters"
+run_name: "minicpm5_code_repair"
+completion_only_loss: true
+max_seq_length: 2048
+load_in_4bit: true
+batch_size: 1
+gradient_accumulation_steps: 8
+gradient_checkpointing: true
+learning_rate: 0.0001
+num_train_epochs: 1
+bf16: true
+seed: 42
+target_modules: []  # Required: fill from inspected targets; empty is refused.
+target_modules_mode: "discover_required"

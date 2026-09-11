@@ -25,6 +25,7 @@ def normalize_revision(value: object) -> str | None:
 
 
 class TrainingConfig(BaseModel):
+    completion_only_loss: bool = False
     max_seq_length: int = 2048
     batch_size: int = 1
     gradient_accumulation_steps: int = 8
@@ -123,6 +124,7 @@ def load_config(yaml_path: str) -> ExperimentConfig:
             bnb_4bit_use_double_quant=data.get("bnb_4bit_use_double_quant", True),
         ),
         training=TrainingConfig(
+            completion_only_loss=data.get("completion_only_loss", False),
             max_seq_length=data.get("max_seq_length", 2048),
             batch_size=data.get("batch_size", 1),
             gradient_accumulation_steps=data.get("gradient_accumulation_steps", 8),
