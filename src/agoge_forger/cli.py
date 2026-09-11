@@ -19,6 +19,7 @@ from ._cli_app import app
 from . import _cli_env  # noqa: F401
 from . import _cli_train  # noqa: F401
 from . import _cli_export  # noqa: F401
+from . import _cli_eval  # noqa: F401
 from . import _cli_runs  # noqa: F401
 from . import _cli_data  # noqa: F401
 from . import _cli_serving  # noqa: F401
