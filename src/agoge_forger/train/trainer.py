@@ -74,7 +74,10 @@ def _build_sft_trainer(model, dataset, tokenizer, training_args):
     """
     if training_args.completion_only_loss:
         dataset = prepare_completion_dataset(dataset, tokenizer, training_args)
-        training_args.dataset_kwargs = {"skip_prepare_dataset": True}
+        training_args.dataset_kwargs = {
+            **(training_args.dataset_kwargs or {}),
+            "skip_prepare_dataset": True,
+        }
     return SFTTrainer(
         model=model,
         train_dataset=dataset,
