@@ -7,11 +7,20 @@ from pydantic import ValidationError
 from agoge_forger.eval.bundle import BUNDLE_FILES
 from agoge_forger.eval.contract import compose_evaluation_contract
 from agoge_forger.eval.generate import PreparedTask, apply_context_window, generation_kwargs
-from agoge_forger.eval.harness import run_held_out_eval
+from agoge_forger.eval.harness import HeldOutEvalRuntime, run_held_out_eval
 from agoge_forger.eval.score import OBJECTIVE_SCORING_VERSION
 from tests.held_out_eval_cases import canary_evaluation_case, scripted_generator
 
 pytestmark = pytest.mark.usefixtures("cached_test_base_config")
+
+
+def _run(manifest_path, output, base, sft, **runtime):
+    return run_held_out_eval(
+        manifest_path=manifest_path,
+        output_dir=output,
+        arms=(base, sft),
+        runtime=HeldOutEvalRuntime(**runtime),
+    )
 
 
 def _bundle_paths(output: Path) -> list[Path]:
@@ -21,13 +30,7 @@ def _bundle_paths(output: Path) -> list[Path]:
 def test_held_out_harness_writes_auditable_bundle(tmp_path):
     manifest_path, _manifest, base, sft = canary_evaluation_case(tmp_path)
     output = tmp_path / "eval" / "canary"
-    published = run_held_out_eval(
-        manifest_path=manifest_path,
-        output_dir=output,
-        base=base,
-        sft=sft,
-        generator=scripted_generator(),
-    )
+    published = _run(manifest_path, output, base, sft, generator=scripted_generator())
     assert published == output
     for path in _bundle_paths(output):
         assert path.is_file(), path
@@ -49,21 +52,9 @@ def test_held_out_harness_writes_auditable_bundle(tmp_path):
 def test_held_out_harness_refuses_overwrite(tmp_path):
     manifest_path, _manifest, base, sft = canary_evaluation_case(tmp_path)
     output = tmp_path / "eval" / "canary"
-    run_held_out_eval(
-        manifest_path=manifest_path,
-        output_dir=output,
-        base=base,
-        sft=sft,
-        generator=scripted_generator("all-correct"),
-    )
+    _run(manifest_path, output, base, sft, generator=scripted_generator("all-correct"))
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
-        run_held_out_eval(
-            manifest_path=manifest_path,
-            output_dir=output,
-            base=base,
-            sft=sft,
-            generator=scripted_generator("all-correct"),
-        )
+        _run(manifest_path, output, base, sft, generator=scripted_generator("all-correct"))
 
 
 def test_held_out_harness_rejects_scoring_version_drift(tmp_path):
@@ -72,11 +63,11 @@ def test_held_out_harness_rejects_scoring_version_drift(tmp_path):
         "scoring_version": "heuristic-judge-v1",
     }
     with pytest.raises(ValueError, match="scoring_version must be exact-match-v1"):
-        run_held_out_eval(
-            manifest_path=manifest_path,
-            output_dir=tmp_path / "eval" / "canary",
-            base=base.model_copy(update=drifted),
-            sft=sft.model_copy(update=drifted),
+        _run(
+            manifest_path,
+            tmp_path / "eval" / "canary",
+            base.model_copy(update=drifted),
+            sft.model_copy(update=drifted),
             generator=scripted_generator("all-correct"),
         )
 
@@ -96,13 +87,7 @@ def test_compose_still_fails_closed_on_decoding_drift(tmp_path):
 def test_scripted_all_correct_is_null_delta(tmp_path):
     manifest_path, _manifest, base, sft = canary_evaluation_case(tmp_path)
     output = tmp_path / "eval" / "null"
-    run_held_out_eval(
-        manifest_path=manifest_path,
-        output_dir=output,
-        base=base,
-        sft=sft,
-        generator=scripted_generator("all-correct"),
-    )
+    _run(manifest_path, output, base, sft, generator=scripted_generator("all-correct"))
     comparison = json.loads((output / "comparison.json").read_bytes())
     assert comparison["conclusion"] == "null"
     assert comparison["n_improved"] == 0
@@ -122,11 +107,11 @@ def test_mark_unsupported_does_not_truncate(tmp_path):
         update={"context_window": 1, "truncation_policy": "mark_unsupported"}
     )
     output = tmp_path / "eval" / "unsupported"
-    run_held_out_eval(
-        manifest_path=manifest_path,
-        output_dir=output,
-        base=narrow,
-        sft=sft_narrow,
+    _run(
+        manifest_path,
+        output,
+        narrow,
+        sft_narrow,
         generator=scripted_generator("all-correct"),
         tokenizer=_CountingTokenizer(),
     )

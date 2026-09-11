@@ -130,6 +130,6 @@ def test_held_out_eval_cli_wires_library_path(tmp_path, monkeypatch):
         ],
     )
     assert result.exit_code == 0, result.stdout
-    assert seen["run"]["base"] == base
-    assert seen["run"]["sft"] == sft
-    assert seen["run"]["trust_remote_code"] is False
+    assert seen["run"]["arms"] == (base, sft)
+    runtime = seen["run"]["runtime"]
+    assert runtime.trust_remote_code is False

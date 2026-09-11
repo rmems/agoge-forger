@@ -15,7 +15,7 @@ from .eval.contract import (
     held_out_task_ids,
     logical_task_set_sha256,
 )
-from .eval.harness import run_held_out_eval
+from .eval.harness import HeldOutEvalRuntime, run_held_out_eval
 from .eval.score import OBJECTIVE_SCORING_VERSION
 from .eval.serializers import code_repair_prompt
 from .logging import logger
@@ -160,11 +160,12 @@ def held_out_eval(
         published = run_held_out_eval(
             manifest_path=manifest_path,
             output_dir=destination,
-            base=base,
-            sft=sft,
-            tokenizer=tokenizer,
-            trust_remote_code=trust_remote_code,
-            device_map=device_map,
+            arms=(base, sft),
+            runtime=HeldOutEvalRuntime(
+                tokenizer=tokenizer,
+                trust_remote_code=trust_remote_code,
+                device_map=device_map,
+            ),
         )
     except (*CLI_PATH_ERRORS, TypeError) as exc:
         exit_on_error(exc)

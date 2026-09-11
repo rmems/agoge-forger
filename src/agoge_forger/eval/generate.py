@@ -31,7 +31,10 @@ class PreparedTask:
 
 def prompt_token_count(tokenizer: Any, prompt: str) -> int:
     encoded = tokenizer(prompt, add_special_tokens=True, truncation=False)
-    ids = encoded["input_ids"]
+    return _token_id_length(encoded["input_ids"])
+
+
+def _token_id_length(ids: Any) -> int:
     if hasattr(ids, "tolist"):
         ids = ids.tolist()
     if ids and isinstance(ids[0], list):
@@ -65,6 +68,12 @@ def apply_context_window(
     task.prompt_token_count = count
     if count <= context_window:
         return task
+    return _overflow_prepared_task(task, count, context_window, truncation_policy)
+
+
+def _overflow_prepared_task(
+    task: PreparedTask, count: int, context_window: int, truncation_policy: str
+) -> PreparedTask:
     if truncation_policy == "mark_unsupported":
         return PreparedTask(
             task.task_id,
@@ -109,28 +118,34 @@ def load_arm_model(
     device_map: str = "auto",
 ) -> tuple[Any, Any]:
     if arm.role == "causal_base":
-        return load_base_model(
-            arm.model_repository,
-            trust_remote_code=trust_remote_code,
-            quant_config=None,
-            bf16=True,
-            revision=arm.model_revision,
-            device_map=device_map,
-        )
+        return _causal_base(arm, trust_remote_code, device_map)
     if artifact_root is None:
         raise ValueError("causal_sft arm requires an artifact directory")
     if arm.artifact is not None and arm.artifact.kind == "peft_adapter":
-        assert_no_unsafe_weight_bins(artifact_root, recursive=True)
-        model, tokenizer = load_base_model(
-            arm.model_repository,
-            trust_remote_code=trust_remote_code,
-            quant_config=None,
-            bf16=True,
-            revision=arm.model_revision,
-            device_map=device_map,
-        )
-        model = PeftModel.from_pretrained(model, artifact_root)
-        return model, tokenizer
+        return _peft_adapter(arm, artifact_root, trust_remote_code, device_map)
+    return _merged_local(artifact_root, trust_remote_code, device_map)
+
+
+def _causal_base(arm: EvaluationArm, trust_remote_code: bool, device_map: str) -> tuple[Any, Any]:
+    return load_base_model(
+        arm.model_repository,
+        trust_remote_code=trust_remote_code,
+        quant_config=None,
+        bf16=True,
+        revision=arm.model_revision,
+        device_map=device_map,
+    )
+
+
+def _peft_adapter(
+    arm: EvaluationArm, artifact_root: str, trust_remote_code: bool, device_map: str
+) -> tuple[Any, Any]:
+    assert_no_unsafe_weight_bins(artifact_root, recursive=True)
+    model, tokenizer = _causal_base(arm, trust_remote_code, device_map)
+    return PeftModel.from_pretrained(model, artifact_root), tokenizer
+
+
+def _merged_local(artifact_root: str, trust_remote_code: bool, device_map: str) -> tuple[Any, Any]:
     return load_base_model(
         artifact_root,
         trust_remote_code=trust_remote_code,
@@ -160,14 +175,9 @@ def _generate_one(
     if task.prompt is None:
         raise ValueError(f"ready task {task.task_id} is missing a prompt")
     device = next(model.parameters()).device
-    inputs = tokenizer(task.prompt, return_tensors="pt", truncation=False)
-    if hasattr(inputs, "to"):
-        inputs = inputs.to(device)
-    else:
-        inputs = {
-            key: value.to(device) if hasattr(value, "to") else value
-            for key, value in inputs.items()
-        }
+    inputs = _inputs_on_device(
+        tokenizer(task.prompt, return_tensors="pt", truncation=False), device
+    )
     prompt_ids = inputs["input_ids"]
     prompt_len = prompt_ids.shape[-1]
     with torch.no_grad():
@@ -202,3 +212,11 @@ def _non_ok_record(task: PreparedTask) -> GenerationRecord:
         status=status,
         reason=task.reason,
     )
+
+
+def _inputs_on_device(inputs: Any, device: Any) -> Any:
+    if hasattr(inputs, "to"):
+        return inputs.to(device)
+    return {
+        key: value.to(device) if hasattr(value, "to") else value for key, value in inputs.items()
+    }

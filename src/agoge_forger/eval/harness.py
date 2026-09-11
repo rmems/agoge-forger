@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -30,19 +31,25 @@ from .serializers import code_repair_prompt
 ArmGenerator = Callable[[EvaluationArm, Sequence[PreparedTask]], tuple[GenerationRecord, ...]]
 
 
+@dataclass(frozen=True)
+class HeldOutEvalRuntime:
+    generator: ArmGenerator | None = None
+    tokenizer: Any | None = None
+    trust_remote_code: bool = False
+    device_map: str = "auto"
+
+
 def run_held_out_eval(
     *,
     manifest_path: str | Path,
     output_dir: str | Path,
-    base: EvaluationArm,
-    sft: EvaluationArm,
-    generator: ArmGenerator | None = None,
-    tokenizer: Any | None = None,
-    trust_remote_code: bool = False,
-    device_map: str = "auto",
+    arms: tuple[EvaluationArm, EvaluationArm],
+    runtime: HeldOutEvalRuntime | None = None,
 ) -> Path:
     """Evaluate one pinned base and one SFT artifact on frozen held-out membership."""
 
+    options = runtime or HeldOutEvalRuntime()
+    base, sft = arms
     destination = Path(output_dir).expanduser()
     contract = compose_evaluation_contract(
         manifest_path=manifest_path,
@@ -51,25 +58,43 @@ def run_held_out_eval(
         sft=sft,
     )
     _require_canary_contract(contract)
+    tasks = _prepare_held_out(manifest_path, contract, options.tokenizer)
+    generate = options.generator or _transformers_generator(
+        destination,
+        trust_remote_code=options.trust_remote_code,
+        device_map=options.device_map,
+        tokenizer=options.tokenizer,
+    )
+    base_generations = generate(contract.base, tasks)
+    sft_generations = generate(contract.sft, tasks)
+    _require_generation_identity(contract.logical_task_ids, base_generations, sft_generations)
+    return publish_eval_bundle(
+        destination, _bundle_for_arms(contract, base_generations, sft_generations)
+    )
+
+
+def _prepare_held_out(
+    manifest_path: str | Path,
+    contract: PairedEvaluationContract,
+    tokenizer: Any | None,
+) -> tuple[PreparedTask, ...]:
     serializer = SerializerBinding(
         implementation=code_repair_prompt,
         expected_serializer_id=contract.base.serializer_id,
         expected_serializer_version=contract.base.serializer_version,
         expected_serializer_sha256=contract.base.serializer_sha256,
     )
-    records = _load_held_out_records(manifest_path, contract)
-    tasks = prepare_tasks(records, serializer)
-    if tokenizer is not None:
-        tasks = apply_truncation(tasks, tokenizer, contract.base)
-    generate = generator or _transformers_generator(
-        destination,
-        trust_remote_code=trust_remote_code,
-        device_map=device_map,
-        tokenizer=tokenizer,
-    )
-    base_generations = generate(contract.base, tasks)
-    sft_generations = generate(contract.sft, tasks)
-    _require_generation_identity(contract.logical_task_ids, base_generations, sft_generations)
+    tasks = prepare_tasks(_load_held_out_records(manifest_path, contract), serializer)
+    if tokenizer is None:
+        return tasks
+    return apply_truncation(tasks, tokenizer, contract.base)
+
+
+def _bundle_for_arms(
+    contract: PairedEvaluationContract,
+    base_generations: tuple[GenerationRecord, ...],
+    sft_generations: tuple[GenerationRecord, ...],
+) -> EvalBundle:
     base_scores, base_metrics = score_arm(
         "causal_base", base_generations, scoring_version=contract.base.scoring_version
     )
@@ -79,14 +104,11 @@ def run_held_out_eval(
     comparison = compare_arms(
         base_scores, sft_scores, scoring_version=contract.base.scoring_version
     )
-    return publish_eval_bundle(
-        destination,
-        EvalBundle(
-            contract=contract,
-            comparison=comparison,
-            base=ArmBundle(base_generations, base_metrics, base_scores),
-            sft=ArmBundle(sft_generations, sft_metrics, sft_scores),
-        ),
+    return EvalBundle(
+        contract=contract,
+        comparison=comparison,
+        base=ArmBundle(base_generations, base_metrics, base_scores),
+        sft=ArmBundle(sft_generations, sft_metrics, sft_scores),
     )
 
 
