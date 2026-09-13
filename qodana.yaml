@@ -3,14 +3,18 @@
 ####################################################################################################################
 # yaml-language-server: $schema=https://json.schemastore.org/qodana-1.0.json
 
+# Free Community linter. No Qodana Cloud token or endpoint is required.
+# License audit (CheckDependencyLicenses) is Ultimate Plus only, so it is
+# omitted. qodana.recommended is still valid for Community and is the CI-oriented
+# profile JetBrains documents for pipelines.
 version: "1.0"
-linter: qodana-python
+linter: qodana-python-community
 profile:
   name: qodana.recommended
 # Qodana runs bootstrap from /data/project. Discard tracked legacy IDE module
 # state only from the ephemeral scan checkout so it cannot override pyproject
-# metadata. uv omits pip from project environments, but Qodana's package and
-# license discovery requires it, so install the interpreter's bundled wheel.
+# metadata. uv omits pip from project environments, but Qodana's package
+# discovery requires it, so install the interpreter's bundled wheel.
 bootstrap: >-
   rm -rf -- /data/project/.idea &&
   UV_CACHE_DIR=/data/cache/uv
@@ -21,5 +25,3 @@ bootstrap: >-
 # The pull-request-only zero-new-issues threshold lives in the workflow.
 # Applying it globally here would make main fail on the existing debt before a
 # reviewed baseline is committed.
-include:
-  - name: CheckDependencyLicenses
