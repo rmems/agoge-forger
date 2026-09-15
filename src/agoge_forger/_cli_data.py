@@ -7,6 +7,7 @@ import typer
 from ._cli_app import CLI_PATH_ERRORS, app, exit_on_error
 from .datasets import dataset_stats as _dataset_stats
 from .logging import logger
+from .mixture_contract import MixtureManifest, compose_mixture, load_mixture_spec
 from .path_safety import resolve_absent_output_directory, resolve_existing_path
 from .split_contract import (
     SPLIT_NAMES,
@@ -127,3 +128,32 @@ def _log_freeze_split(manifest: SplitManifest, output_dir: str) -> None:
     logger.info("wrote %s/split_report.md", output_dir)
     counts = ", ".join(f"{name}={manifest.splits[name].record_count}" for name in SPLIT_NAMES)
     logger.info("counts: %s", counts)
+
+
+@app.command("compose-mixture")
+def compose_mixture_command(
+    spec: str = typer.Option(..., help="Pinned mixture composition spec JSON"),
+    output_dir: str = typer.Option(..., help="New immutable mixture snapshot directory"),
+):
+    """Compose frozen splits under an exact accepted-token budget."""
+    try:
+        spec_path = resolve_existing_path(spec, must_be_file=True)
+        safe_output = resolve_absent_output_directory(output_dir)
+        composition = load_mixture_spec(spec_path)
+        manifest = compose_mixture(composition, safe_output, spec_dir=spec_path.parent)
+    except CLI_PATH_ERRORS as e:
+        exit_on_error(e)
+    else:
+        _log_compose_mixture(manifest, str(safe_output))
+
+
+def _log_compose_mixture(manifest: MixtureManifest, output_dir: str) -> None:
+    logger.info("arm: %s", manifest.policy.experiment_arm)
+    logger.info("wrote %s/mixture_manifest.json", output_dir)
+    logger.info("wrote %s/mixture.jsonl", output_dir)
+    logger.info("wrote %s/mixture_report.md", output_dir)
+    counts = ", ".join(
+        f"{source.source_id}={source.example_count}/{source.accepted_tokens}t"
+        for source in manifest.sources
+    )
+    logger.info("sources: %s", counts)
