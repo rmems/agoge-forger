@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 from collections.abc import Mapping, Sequence
@@ -11,7 +12,7 @@ from .._run_status_safetensors import safetensors_usable
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..config import normalize_revision
 from ..logging import logger
-from ..path_safety import contains_mount, resolve_existing_path
+from ..path_safety import resolve_existing_path
 
 CHECKPOINT_RE = re.compile(r"^checkpoint-(\d+)$")
 ADAPTER_WEIGHT_FILES = ("adapter_model.safetensors",)
@@ -23,6 +24,31 @@ EXPORT_STAGING_PREFIX = ".agoge-export-staging-"
 _STAGING_PREFIXES = (CHECKPOINT_STAGING_PREFIX, EXPORT_STAGING_PREFIX)
 
 PathLike = str | Path
+
+
+def contains_mount(root: Path) -> bool:
+    """True when ``root`` or anything beneath it is a mount point."""
+    if _is_mount(root):
+        return True
+    return _nested_mount(root)
+
+
+def _is_mount(path: Path | str) -> bool:
+    return os.path.ismount(path)
+
+
+def _nested_mount(root: Path) -> bool:
+    try:
+        for parent, dirs, _ in os.walk(root):
+            if _dir_has_mount(parent, dirs):
+                return True
+    except OSError:
+        return True
+    return False
+
+
+def _dir_has_mount(parent: str, dirs: list[str]) -> bool:
+    return any(_is_mount(os.path.join(parent, name)) for name in dirs)
 
 
 def checkpoint_step(path: Path) -> int:

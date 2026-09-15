@@ -321,7 +321,7 @@ def test_quarantine_tree_refuses_mount_points(
     source.mkdir(parents=True)
     (source / "keep-me.txt").write_text("mounted\n")
     monkeypatch.setattr(
-        "agoge_forger.path_safety.os.path.ismount",
+        "agoge_forger.train.checkpoints.os.path.ismount",
         lambda path: Path(path) == source,
     )
 

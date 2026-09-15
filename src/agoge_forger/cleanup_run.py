@@ -25,9 +25,9 @@ from typing import Any
 from .artifacts.producer_provenance import producer_provenance_from_adapter
 from .artifacts.safetensors_io import sha256_file, write_artifact_index
 from .logging import logger
-from .path_safety import contains_mount, resolve_existing_path
+from .path_safety import resolve_existing_path
 from .run_status import _escape_controls, build_run_status
-from .train.checkpoints import CHECKPOINT_RE, checkpoint_step
+from .train.checkpoints import CHECKPOINT_RE, checkpoint_step, contains_mount
 from .train.preflight import BYTES_PER_GB, directory_size_bytes
 
 CLEANUP_SCHEMA_VERSION = 1
