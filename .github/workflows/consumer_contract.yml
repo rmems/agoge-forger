@@ -9,6 +9,8 @@ on:
       - "src/agoge_forger/consumer_contract.py"
       - "src/agoge_forger/_cli_consumer.py"
       - "src/agoge_forger/cli.py"
+      - "src/agoge_forger/path_safety.py"
+      - "src/agoge_forger/_atomic_file.py"
       - "tests/fixtures/consumer/**"
       - "tests/test_consumer_contract.py"
       - ".github/workflows/consumer_contract.yml"
@@ -44,6 +46,9 @@ jobs:
           .venv/bin/agoge consumer-contract \
             --input tests/fixtures/consumer/messages_and_instruction.jsonl \
             --out-dir reports/consumer-contract
+
+      - name: Reject leakage and malformed JSONL
+        run: .venv/bin/pytest tests/test_consumer_contract.py -q
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

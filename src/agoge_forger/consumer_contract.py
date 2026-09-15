@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ._atomic_file import publish_bytes_replace
 from .datasets import normalize_row
 from .path_safety import resolve_existing_path, resolve_output_directory
-from .split_schema import sha256_file
 
 SIDECAR_SCHEMA = "agoge.consumer-sidecar.v1"
 PARSER_NAME = "agoge_forger.datasets.normalize_row"
@@ -28,9 +28,14 @@ class ConsumerContractError(ValueError):
 
 
 def _cuda_is_available() -> bool:
-    cuda = getattr(sys.modules.get("torch"), "cuda", None)
-    is_available = getattr(cuda, "is_available", None)
-    return callable(is_available) and bool(is_available())
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return False
+    cuda = getattr(torch, "cuda", None)
+    checker = getattr(cuda, "is_available", None)
+    if not callable(checker):
+        return False
+    return bool(checker())
 
 
 def refuse_gpu() -> None:
@@ -100,20 +105,20 @@ def _format_name(record: dict[str, Any]) -> str:
     return "unknown"
 
 
-def _load_jsonl_object(path: Path, line_number: int, line: str) -> dict[str, Any] | str:
+def _load_jsonl_object(source_name: str, line_number: int, line: str) -> dict[str, Any] | str:
     try:
         record = json.loads(line)
     except json.JSONDecodeError as exc:
-        return f"{path.name}:{line_number} Invalid JSON: {exc}"
+        return f"{source_name}:{line_number} Invalid JSON: {exc}"
     if not isinstance(record, dict):
-        return f"{path.name}:{line_number} JSONL row must be an object"
+        return f"{source_name}:{line_number} JSONL row must be an object"
     return record
 
 
 def _consume_record(
-    path: Path, line_number: int, record: dict[str, Any]
+    source_name: str, line_number: int, record: dict[str, Any]
 ) -> tuple[dict[str, Any] | None, list[str]]:
-    prefix = f"{path.name}:{line_number}"
+    prefix = f"{source_name}:{line_number}"
     errors = [f"{prefix} {message}" for message in future_event_errors(record)]
     payload = {key: value for key, value in record.items() if key != "_prometheus"}
     try:
@@ -132,24 +137,38 @@ def _consume_record(
 
 
 def consume_file(path: Path) -> dict[str, Any]:
+    payload = path.read_bytes()
+    source_sha256 = hashlib.sha256(payload).hexdigest()
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return {
+            "schema_version": SIDECAR_SCHEMA,
+            "source_path": path.name,
+            "source_sha256": source_sha256,
+            "parser": PARSER_NAME,
+            "row_count": 0,
+            "rows": [],
+            "errors": [f"{path.name} is not valid UTF-8: {exc}"],
+            "ok": False,
+        }
     rows: list[dict[str, Any]] = []
     errors: list[str] = []
-    with path.open(encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
-            loaded = _load_jsonl_object(path, line_number, line)
-            if isinstance(loaded, str):
-                errors.append(loaded)
-                continue
-            row, row_errors = _consume_record(path, line_number, loaded)
-            errors.extend(row_errors)
-            if row is not None:
-                rows.append(row)
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        loaded = _load_jsonl_object(path.name, line_number, line)
+        if isinstance(loaded, str):
+            errors.append(loaded)
+            continue
+        row, row_errors = _consume_record(path.name, line_number, loaded)
+        errors.extend(row_errors)
+        if row is not None:
+            rows.append(row)
     return {
         "schema_version": SIDECAR_SCHEMA,
         "source_path": path.name,
-        "source_sha256": sha256_file(path),
+        "source_sha256": source_sha256,
         "parser": PARSER_NAME,
         "row_count": len(rows),
         "rows": rows,
@@ -161,7 +180,8 @@ def consume_file(path: Path) -> dict[str, Any]:
 def write_sidecar(sidecar: dict[str, Any], out_dir: Path, stem: str) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{stem}.sidecar.json"
-    out_path.write_text(json.dumps(sidecar, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    payload = json.dumps(sidecar, indent=2, ensure_ascii=False) + "\n"
+    publish_bytes_replace(out_path, payload.encode("utf-8"))
     return out_path
 
 
