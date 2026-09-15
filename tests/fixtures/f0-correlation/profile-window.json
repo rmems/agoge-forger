@@ -1,0 +1,37 @@
+{
+  "schema_version": "bkl.f0_correlation.v1",
+  "record_kind": "agoge_profile_window",
+  "agoge_run_id": "run_minicpm5_fixture_001",
+  "host": {"hostname": "ShipOfTheseus"},
+  "gpu": {
+    "pci_bus_id": "0000:01:00.0",
+    "uuid": "GPU-fixture-0001",
+    "name": "NVIDIA GeForce RTX 5080",
+    "compute_capability": "12.0"
+  },
+  "timestamp_utc": "2026-09-14T18:00:02Z",
+  "monotonic_ns": 3000000000,
+  "collector": {"id": "agoge-forger", "version": "fixture"},
+  "cadence_ms": null,
+  "profile_window_id": "run_minicpm5_fixture_001:train:1-1",
+  "phase": "train",
+  "start_step": 1,
+  "end_step": 1,
+  "monotonic_ns_start": 2000000000,
+  "monotonic_ns_end": 3000000000,
+  "backend": "torch",
+  "kernel_duration": {"status": "ok", "p50": 12.0, "p95": 40.0, "sum": 80.0, "count": 4, "unit": "us"},
+  "sync": {"status": "ok", "count": 1, "duration_us": {"p50": 3.0, "p95": 3.0, "sum": 3.0, "unit": "us"}},
+  "transfers": {
+    "status": "ok",
+    "h2d_us": {"p50": 5.0, "p95": 5.0, "sum": 5.0, "unit": "us"},
+    "d2h_us": {"p50": 4.0, "p95": 4.0, "sum": 4.0, "unit": "us"}
+  },
+  "overhead": {
+    "status": "unavailable",
+    "reason": "fixture has a single optimizer step",
+    "profiled_step_mean_s": 0.4,
+    "unprofiled_step_mean_s": null,
+    "ratio": null
+  }
+}

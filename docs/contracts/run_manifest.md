@@ -63,6 +63,7 @@ runs/<run_name>/manifest.json
 | `metrics.max_vram_gb` | float | No   | Peak VRAM usage in binary GiB (`1024**3`; training only)  |
 | `metrics.gpu_report`  | object | No   | GPU hardware report (training only)                     |
 | `metrics.artifact_index` | str | No | Path to `artifact_index.json` (training only)           |
+| `metrics.telemetry` | object | No | Optional F0 correlation paths (`agoge_run_id`, marker JSONL, profile window) |
 | `environment`     | object | No       | Present for training manifests; omitted for inference smoke tests |
 | `environment.python_version` | str | No | Python version string (training manifests)         |
 | `environment.torch_version` | str | No | PyTorch version string (training manifests)       |

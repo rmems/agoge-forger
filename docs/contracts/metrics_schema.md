@@ -32,6 +32,7 @@ Metrics are currently embedded within `manifest.json` under the `metrics` key. T
 | `gpu_report.allocated_vram_gb` | float | Allocated VRAM in **binary GiB**   |
 | `gpu_report.bf16_supported` | bool  | Whether BF16 is supported             |
 | `artifact_index`          | str    | Path to artifact_index.json             |
+| `telemetry`               | object | Optional F0 marker/profile-window paths; see `docs/contracts/f0_correlation_markers.md` |
 
 ## Planned CSV/Parquet Format
 

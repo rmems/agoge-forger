@@ -40,6 +40,8 @@ uv run agoge inspect-lora-targets --model-id openbmb/MiniCPM5-1B-Base
 
 Every training run records a reproducibility manifest, GPU telemetry, and artifact digests. Safetensors is the default artifact format; path validation rejects traversal before model, dataset, adapter, checkpoint, and output paths are used.
 
+Optional **bounded CUDA profile windows** are off unless you pass `--profile-window` or `AGOGE_PROFILE_WINDOW`. See [Bounded CUDA profiling windows](docs/cuda_profiling_windows.md) and [F0 correlation markers](docs/contracts/f0_correlation_markers.md). The profiler is not a requirement for ordinary Agoge runs.
+
 ## vLLM compatibility smoke
 
 ```bash
@@ -162,6 +164,19 @@ uv run pytest tests/
 ```
 
 The root Docker image is a CPU/smoke image. It installs from the locked dependency graph, runs as a non-root user, and never bakes in `HF_TOKEN`.
+
+## Optional CUDA profile windows
+
+Ordinary `train-qlora` does not start a profiler. To capture one bounded
+forward/backward/optimizer window and emit joinable markers:
+
+```bash
+AGOGE_RUN_ID=run_minicpm5_profile_001 \
+AGOGE_PROFILE_WINDOW=train:1-1 \
+uv run agoge train-qlora --config configs/minicpm5_canary.yaml
+```
+
+See [Bounded CUDA profiling windows](docs/cuda_profiling_windows.md).
 
 ## License
 
