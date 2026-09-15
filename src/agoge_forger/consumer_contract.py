@@ -1,0 +1,155 @@
+"""Agoge consumer contract for Prometheus-derived JSONL.
+
+Loads ``messages`` and instruction/input/output rows through the current
+dataset parser, writes a provenance sidecar, and rejects future-event
+leakage. The path is CPU-only: no model download and no GPU.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from .datasets import normalize_row
+from .path_safety import resolve_existing_path, resolve_output_directory
+from .split_schema import sha256_file
+
+SIDECAR_SCHEMA = "agoge.consumer-sidecar.v1"
+PARSER_NAME = "agoge_forger.datasets.normalize_row"
+
+
+class ConsumerContractError(ValueError):
+    """A consumer-contract input or runtime precondition failed."""
+
+
+def refuse_gpu() -> None:
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible not in (None, "", "-1"):
+        raise ConsumerContractError("consumer-contract must run with no GPU (CUDA_VISIBLE_DEVICES)")
+    if "torch" in sys.modules:
+        cuda = getattr(sys.modules["torch"], "cuda", None)
+        if (
+            cuda is not None
+            and callable(getattr(cuda, "is_available", None))
+            and cuda.is_available()
+        ):
+            raise ConsumerContractError("consumer-contract imported torch with CUDA available")
+
+
+def _parse_timestamp(value: str) -> datetime:
+    iso = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    parsed = datetime.fromisoformat(iso)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def future_event_errors(record: dict[str, Any]) -> list[str]:
+    timestamps: list[str] = []
+    meta = record.get("_prometheus")
+    if isinstance(meta, dict):
+        raw = meta.get("event_timestamps") or []
+        if isinstance(raw, list):
+            timestamps.extend(item for item in raw if isinstance(item, str))
+    events = record.get("events")
+    if isinstance(events, list):
+        for event in events:
+            if isinstance(event, dict) and isinstance(event.get("timestamp"), str):
+                timestamps.append(event["timestamp"])
+    errors: list[str] = []
+    last: datetime | None = None
+    for stamp in timestamps:
+        try:
+            current = _parse_timestamp(stamp)
+        except (ValueError, TypeError, OverflowError):
+            errors.append(f"unparseable event timestamp {stamp}")
+            continue
+        if last is not None and current < last:
+            errors.append(f"future-event leakage / events not ordered ({stamp})")
+        last = current
+    return errors
+
+
+def _format_name(record: dict[str, Any]) -> str:
+    if "messages" in record:
+        return "messages"
+    if "instruction" in record:
+        return "instruction"
+    if "text" in record:
+        return "text"
+    return "unknown"
+
+
+def consume_file(path: Path) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                errors.append(f"{path.name}:{line_number} JSONL row must be an object")
+                continue
+            errors.extend(
+                f"{path.name}:{line_number} {message}" for message in future_event_errors(record)
+            )
+            payload = {key: value for key, value in record.items() if key != "_prometheus"}
+            try:
+                normalized = normalize_row(payload, None, index=line_number)
+            except ValueError as exc:
+                errors.append(f"{path.name}:{line_number} {exc}")
+                continue
+            text = normalized.get("text") if isinstance(normalized, dict) else None
+            if not isinstance(text, str):
+                errors.append(f"{path.name}:{line_number} parser did not return a text row")
+                continue
+            rows.append(
+                {
+                    "line": line_number,
+                    "format": _format_name(payload),
+                    "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                }
+            )
+    return {
+        "schema_version": SIDECAR_SCHEMA,
+        "source_path": path.name,
+        "source_sha256": sha256_file(path),
+        "parser": PARSER_NAME,
+        "row_count": len(rows),
+        "rows": rows,
+        "errors": errors,
+        "ok": not errors,
+    }
+
+
+def write_sidecar(sidecar: dict[str, Any], out_dir: Path, stem: str) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{stem}.sidecar.json"
+    out_path.write_text(json.dumps(sidecar, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return out_path
+
+
+def run_consumer_contract(inputs: list[str], out_dir: str) -> list[dict[str, Any]]:
+    refuse_gpu()
+    safe_out = resolve_output_directory(out_dir)
+    if not inputs:
+        raise ConsumerContractError("consumer-contract requires at least one JSONL input")
+    sidecars: list[dict[str, Any]] = []
+    failed = False
+    for raw_path in inputs:
+        path = resolve_existing_path(raw_path, must_be_file=True)
+        sidecar = consume_file(path)
+        write_sidecar(sidecar, safe_out, path.stem)
+        sidecars.append(sidecar)
+        if not sidecar["ok"]:
+            failed = True
+    if failed:
+        messages = [error for sidecar in sidecars for error in sidecar["errors"]]
+        raise ConsumerContractError("; ".join(messages))
+    return sidecars
