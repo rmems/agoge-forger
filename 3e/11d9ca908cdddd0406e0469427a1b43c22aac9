@@ -1,0 +1,44 @@
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g1-eval/sft/generations.jsonl
+  s_198c868d219752::t_da4adecc0970a9 1-16
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/comparison.json
+  s_198c868d219752::t_e4cd2de1ce4708 1
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g1-eval/report.md
+  s_198c868d219752::t_da4adecc0970a9 1-20
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g0-eval/g0-base/metrics.json
+  s_198c868d219752::t_add3d6c2d8cc3e 1
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/reproduction.md
+  s_198c868d219752::t_fe81c7c4cdeeff 63,65,68-69,72,74-78,80
+  s_198c868d219752::t_0a98efd7d8d97c 47-48
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g1-eval/sft/metrics.json
+  s_198c868d219752::t_da4adecc0970a9 1
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/training-results.json
+  s_198c868d219752::t_98387d0ac03d2d 1-16
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/train.yaml
+  s_198c868d219752::t_158ff6b2d2fc23 8
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g1-eval/base/generations.jsonl
+  s_198c868d219752::t_da4adecc0970a9 1-16
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/report.md
+  s_198c868d219752::t_ec863222901c93 1-31
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g1-eval/comparison.json
+  s_198c868d219752::t_da4adecc0970a9 1
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g1-eval/base/metrics.json
+  s_198c868d219752::t_da4adecc0970a9 1
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g0-eval/g0-base/generations.jsonl
+  s_198c868d219752::t_add3d6c2d8cc3e 1-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3e11d9ca908cdddd0406e0469427a1b43c22aac9",
+  "prompts": {},
+  "sessions": {
+    "s_198c868d219752": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5bf69feb-f83c-4490-a860-35fdc5e73836",
+        "model": "composer-2.5"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
