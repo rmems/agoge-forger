@@ -50,9 +50,12 @@ class VerifiedAdapterSource:
 def verified_adapter_source(
     root: Path,
     model_repository: str,
-    model_revision: str | None,
+    model_revision: str,
+    *,
+    split_manifest_sha256: str,
+    train_split_sha256: str,
 ) -> Iterator[VerifiedAdapterSource]:
-    """Yield a descriptor-pinned, fully verified adapter snapshot for merging."""
+    """Yield a descriptor-pinned adapter snapshot bound to caller-supplied identity."""
 
     index_path = root / "artifact_index.json"
     expected_digest = _descriptor_index_digest(root)
@@ -60,13 +63,12 @@ def verified_adapter_source(
         provenance = index.producer_provenance
         if provenance is None:
             raise ValueError("peft_adapter artifact index requires producer_provenance")
-        effective_revision = model_revision or provenance.revision
         context = ArtifactValidationContext(
             kind="peft_adapter",
             model_repository=model_repository,
-            model_revision=effective_revision,
-            split_manifest_sha256=provenance.training_split_manifest_sha256,
-            train_split_sha256=provenance.training_split_sha256,
+            model_revision=model_revision,
+            split_manifest_sha256=split_manifest_sha256,
+            train_split_sha256=train_split_sha256,
         )
         _require_safe_weight_paths(snapshot)
         _require_valid_safetensors(snapshot)
