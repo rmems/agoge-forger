@@ -332,6 +332,32 @@ def test_quarantine_tree_refuses_mount_points(
     assert not (source / QUARANTINE_REASON_FILENAME).exists()
 
 
+def test_quarantine_incomplete_skips_mounted_checkpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    mounted = run_dir / "checkpoint-3"
+    mounted.mkdir()
+    canary = mounted / "keep-me.txt"
+    canary.write_text("mounted\n")
+    (mounted / "adapter_model.safetensors").write_bytes(b"partial")
+    broken = run_dir / "checkpoint-4"
+    broken.mkdir()
+    (broken / "adapter_model.safetensors").write_bytes(b"partial")
+    monkeypatch.setattr(
+        "agoge_forger.path_safety.os.path.ismount",
+        lambda path: Path(path) == mounted,
+    )
+
+    moved = quarantine_incomplete_checkpoints(run_dir)
+
+    assert mounted.is_dir()
+    assert canary.read_text() == "mounted\n"
+    assert not broken.exists()
+    assert "missing_trainer_state" in {read_quarantine_reason(path)["reason"] for path in moved}
+
+
 def test_quarantine_incomplete_does_not_walk_staging_symlink_target(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()

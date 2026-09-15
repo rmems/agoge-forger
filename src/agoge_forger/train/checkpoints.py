@@ -257,6 +257,8 @@ def _quarantine_run_entry(run_dir: Path, entry: Path, *, allow_unsafe: bool) -> 
     reason = incomplete_checkpoint_reason(entry, allow_unsafe=allow_unsafe)
     if reason is None:
         return []
+    if contains_mount(entry):
+        return []
     return [quarantine_tree(entry, reason=reason, run_dir=run_dir)]
 
 
