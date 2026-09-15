@@ -1,0 +1,28 @@
+{
+  "run": {
+    "name": "local_minicpm5_canary",
+    "config": "/home/raulmc/agoge-data/scratch/smoke/configs/local_minicpm5_canary.yaml",
+    "split": "/home/raulmc/agoge-data/splits/tiny-sft-smoke-v1",
+    "split_counts": {
+      "train": 72,
+      "validation": 9,
+      "held_out": 9
+    },
+    "max_seq_length": 512,
+    "adapter_dir": "/home/raulmc/agoge-data/scratch/smoke/adapters/local_minicpm5_canary",
+    "adapter_model_sha256": "af36e2b0893fd83f3b8bd568d4883b61b4de54b230be8683259ff5bb11e3a29b",
+    "producer_provenance": {
+      "base_model_name_or_path": "openbmb/MiniCPM5-1B-Base",
+      "revision": "156170697656c48f69915b33a2fb44110242187c",
+      "training_split_manifest_sha256": "6bf70170b97f4686a5adb5b86db9956fa41d26731f9dd326df827f562e6c08e0",
+      "training_split_name": "train",
+      "training_split_sha256": "95f821bcb1fecdd961f58e1d0017437473761b0c118c78a8f72646d140950f6a"
+    },
+    "train_loss": 2.683,
+    "train_runtime_s": 8.598,
+    "max_vram_gib": 2.49,
+    "global_step": 18,
+    "seed": 42
+  },
+  "recorded_at": "2026-09-11T05:15:10.342480+00:00"
+}
