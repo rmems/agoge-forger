@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .._atomic_file import publish_bytes_replace
+from .._run_status_safetensors import safetensors_usable
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..config import normalize_revision
 from ..logging import logger
@@ -123,9 +124,9 @@ def incomplete_checkpoint_reason(path: PathLike, *, allow_unsafe: bool = False) 
     checkpoint_dir = Path(path)
     if not _is_named_checkpoint_dir(checkpoint_dir):
         return None
-    if is_valid_checkpoint(checkpoint_dir, allow_unsafe=allow_unsafe):
-        return None
-    return _checkpoint_gap_reason(checkpoint_dir, allow_unsafe=allow_unsafe)
+    if not is_valid_checkpoint(checkpoint_dir, allow_unsafe=allow_unsafe):
+        return _checkpoint_gap_reason(checkpoint_dir, allow_unsafe=allow_unsafe)
+    return _unreadable_weight_reason(checkpoint_dir)
 
 
 def _is_named_checkpoint_dir(path: Path) -> bool:
@@ -149,6 +150,14 @@ def _has_adapter_weights(adapter_dir: Path, *, allow_unsafe: bool) -> bool:
     if allow_unsafe:
         weight_files = ADAPTER_WEIGHT_FILES + LEGACY_ADAPTER_WEIGHT_FILES
     return any((adapter_dir / weight_file).is_file() for weight_file in weight_files)
+
+
+def _unreadable_weight_reason(checkpoint_dir: Path) -> str | None:
+    for name in ADAPTER_WEIGHT_FILES:
+        path = checkpoint_dir / name
+        if path.is_file() and not safetensors_usable(path):
+            return "short_write"
+    return None
 
 
 def quarantine_root(run_dir: PathLike) -> Path:

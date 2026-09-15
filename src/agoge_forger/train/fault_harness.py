@@ -18,6 +18,7 @@ import torch
 
 from .._atomic_directory import rename_noreplace, require_rename_noreplace_support
 from .._atomic_file import publish_bytes_replace, write_fsynced_bytes
+from .._run_status_torch_archive import torch_mapping
 from .checkpoint_publish import (
     IncompleteCheckpointError,
     PublishOptions,
@@ -29,6 +30,7 @@ from .checkpoints import (
     EXPORT_STAGING_PREFIX,
     PathLike,
     checkpoint_step,
+    is_adapter_artifact,
     list_quarantined_checkpoints,
     list_valid_checkpoints,
     quarantine_root,
@@ -163,6 +165,13 @@ class HarnessConfig:
     fault: FaultSpec | None = None
     resume: bool = True
 
+    def __post_init__(self) -> None:
+        if self.max_steps < 1 or self.save_steps < 1 or self.batch_size < 1:
+            raise ValueError("max_steps, save_steps, and batch_size must be >= 1")
+        if self.fault is None:
+            return
+        _validate_fault_schedule(self)
+
 
 @dataclass(frozen=True)
 class HarnessResult:
@@ -179,6 +188,7 @@ class CheckpointSnapshot:
     step: int
     sampler_position: int
     optimizer: Mapping[str, Any]
+    scheduler: Mapping[str, Any]
     batch_size: int
     short_write: bool = False
 
@@ -187,6 +197,8 @@ class CheckpointSnapshot:
 class _LoopState:
     start_step: int
     sampler_position: int
+    optimizer: dict[str, Any]
+    scheduler: dict[str, Any]
 
 
 def run_fault_harness(config: HarnessConfig) -> HarnessResult:
@@ -194,7 +206,7 @@ def run_fault_harness(config: HarnessConfig) -> HarnessResult:
     run_dir = Path(config.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     _seed_rng(config.seed)
-    start_step, sampler_position = _restore_or_initialize(config, run_dir)
+    start_step, sampler_position, optimizer, scheduler = _restore_or_initialize(config, run_dir)
     error_type: str | None = None
     export_published = False
     completed = False
@@ -202,7 +214,7 @@ def run_fault_harness(config: HarnessConfig) -> HarnessResult:
         _run_steps(
             config,
             run_dir,
-            _LoopState(start_step, sampler_position),
+            _LoopState(start_step, sampler_position, optimizer, scheduler),
         )
         _export_final_adapter(config, run_dir)
         export_published = True
@@ -230,25 +242,38 @@ def last_failure_evidence(run_dir: PathLike) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _restore_or_initialize(config: HarnessConfig, run_dir: Path) -> tuple[int, int]:
+def _restore_or_initialize(
+    config: HarnessConfig, run_dir: Path
+) -> tuple[int, int, dict[str, Any], dict[str, Any]]:
     if not config.resume:
-        return 0, 0
+        return 0, 0, _optimizer_state(step=1), _scheduler_state(step=0)
     inspection = select_resume_checkpoint(run_dir, restore=True)
-    return inspection.global_step or 0, inspection.sampler_position or 0
+    start_step = inspection.global_step or 0
+    sampler_position = inspection.sampler_position or 0
+    return (
+        start_step,
+        sampler_position,
+        _load_mapping(inspection, "optimizer.pt") or _optimizer_state(step=max(start_step, 1)),
+        _load_mapping(inspection, "scheduler.pt") or _scheduler_state(step=start_step),
+    )
 
 
 def _run_steps(config: HarnessConfig, run_dir: Path, loop: _LoopState) -> None:
     position = loop.sampler_position
+    optimizer = loop.optimizer
+    scheduler = loop.scheduler
     for step in range(loop.start_step + 1, config.max_steps + 1):
         position += config.batch_size
         _advance_rng()
-        state = _optimizer_state(step=step)
+        optimizer = _advance_optimizer(optimizer, step)
+        scheduler = _advance_scheduler(scheduler, step)
         if step % config.save_steps != 0:
             continue
         snapshot = CheckpointSnapshot(
             step=step,
             sampler_position=position,
-            optimizer=state,
+            optimizer=optimizer,
+            scheduler=scheduler,
             batch_size=config.batch_size,
             short_write=_is_fault(config.fault, step, "during_write"),
         )
@@ -267,24 +292,31 @@ def _save_step(config: HarnessConfig, run_dir: Path, snapshot: CheckpointSnapsho
 
 
 def _export_final_adapter(config: HarnessConfig, run_dir: Path) -> None:
-    _raise_if_fault(config.fault, config.max_steps, "during_export")
+    if is_adapter_artifact(run_dir):
+        return
     require_rename_noreplace_support(run_dir)
     staging_root = Path(tempfile.mkdtemp(prefix=EXPORT_STAGING_PREFIX, dir=run_dir))
     staged = staging_root / "adapter"
+    published: list[Path] = []
     try:
-        _publish_run_root_adapter(run_dir, staged)
+        published.extend(_publish_run_root_adapter(config, run_dir, staged))
     except BaseException:
-        _quarantine_failed_export(run_dir, staged)
+        _quarantine_failed_export(run_dir, staged, published)
         raise
     finally:
         _reclaim_export_staging(run_dir, staging_root)
 
 
-def _publish_run_root_adapter(run_dir: Path, staged: Path) -> None:
+def _publish_run_root_adapter(config: HarnessConfig, run_dir: Path, staged: Path) -> list[Path]:
     staged.mkdir()
     _write_adapter_files(staged)
+    _raise_if_fault(config.fault, config.max_steps, "during_export")
+    published: list[Path] = []
     for filename in _ADAPTER_FILENAMES:
-        _publish_adapter_file(staged / filename, run_dir / filename)
+        destination = run_dir / filename
+        _publish_adapter_file(staged / filename, destination)
+        published.append(destination)
+    return published
 
 
 def _publish_adapter_file(source: Path, destination: Path) -> None:
@@ -293,9 +325,8 @@ def _publish_adapter_file(source: Path, destination: Path) -> None:
     rename_noreplace(source, destination)
 
 
-def _quarantine_failed_export(run_dir: Path, staged: Path) -> None:
-    for filename in _ADAPTER_FILENAMES:
-        leaked = run_dir / filename
+def _quarantine_failed_export(run_dir: Path, staged: Path, published: list[Path]) -> None:
+    for leaked in published:
         if os.path.lexists(leaked):
             quarantine_tree(leaked, reason="export_failure", run_dir=run_dir)
     if staged.exists():
@@ -333,16 +364,7 @@ def _write_checkpoint_tree(staged: Path, snapshot: CheckpointSnapshot) -> None:
     )
     _write_adapter_files(staged)
     _write_torch(staged / "optimizer.pt", dict(snapshot.optimizer))
-    _write_torch(
-        staged / "scheduler.pt",
-        {
-            "last_epoch": snapshot.step,
-            "_step_count": snapshot.step + 1,
-            "base_lrs": [0.001, 0.001],
-            "_last_lr": [0.001, 0.001],
-            "lr_lambdas": [{}, {}],
-        },
-    )
+    _write_torch(staged / "scheduler.pt", dict(snapshot.scheduler))
     _write_torch(
         staged / "rng_state.pth",
         {
@@ -413,7 +435,7 @@ def _optimizer_state(step: int) -> dict[str, Any]:
         "state": {
             parameter_id: {
                 "step": torch.tensor(float(step)),
-                "exp_avg": torch.zeros(shape),
+                "exp_avg": torch.full(shape, float(step)),
                 "exp_avg_sq": torch.zeros(shape),
             }
             for parameter_id, shape in enumerate(shapes)
@@ -423,6 +445,62 @@ def _optimizer_state(step: int) -> dict[str, Any]:
             adamw_group([], 0.0),
         ],
     }
+
+
+def _scheduler_state(step: int) -> dict[str, Any]:
+    return {
+        "last_epoch": step,
+        "_step_count": step + 1,
+        "base_lrs": [0.001, 0.001],
+        "_last_lr": [0.001, 0.001],
+        "lr_lambdas": [{}, {}],
+    }
+
+
+def _advance_optimizer(state: Mapping[str, Any], step: int) -> dict[str, Any]:
+    inner = state.get("state")
+    if not isinstance(inner, dict):
+        return _optimizer_state(step)
+    advanced: dict[str, Any] = {
+        "state": {},
+        "param_groups": state.get("param_groups"),
+    }
+    for parameter_id, bucket in inner.items():
+        if not isinstance(bucket, dict):
+            advanced["state"][parameter_id] = bucket
+            continue
+        updated = dict(bucket)
+        updated["step"] = torch.tensor(float(step))
+        advanced["state"][parameter_id] = updated
+    return advanced
+
+
+def _advance_scheduler(state: Mapping[str, Any], step: int) -> dict[str, Any]:
+    advanced = dict(state)
+    advanced["last_epoch"] = step
+    advanced["_step_count"] = step + 1
+    return advanced
+
+
+def _load_mapping(inspection: ResumeInspection, filename: str) -> dict[str, Any] | None:
+    if inspection.checkpoint is None:
+        return None
+    payload = torch_mapping(inspection.checkpoint / filename, require_data_record=True)
+    return payload if isinstance(payload, dict) else None
+
+
+def _validate_fault_schedule(config: HarnessConfig) -> None:
+    fault = config.fault
+    if fault is None:
+        return
+    if fault.point == "during_export":
+        if fault.step != config.max_steps:
+            raise ValueError("during_export fault step must equal max_steps")
+        return
+    if fault.step > config.max_steps or fault.step % config.save_steps != 0:
+        raise ValueError(
+            f"checkpoint fault step {fault.step} is not a save step in 1..{config.max_steps}"
+        )
 
 
 def _seed_rng(seed: int) -> None:

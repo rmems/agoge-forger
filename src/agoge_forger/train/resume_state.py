@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import json
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import numpy as np
 import torch
 
-from .._run_status_rng import _rng_payload_usable, _rng_state_usable
+from .._run_status_rng import _cuda_rng_state_usable, _rng_payload_usable, _rng_state_usable
 from .._run_status_safetensors import safetensors_usable
 from .._run_status_torch_archive import torch_mapping
-from .._run_status_trainer_metadata import _json_object, _trainer_state_step
+from .._run_status_trainer_metadata import _trainer_state_step
 from .._run_status_trainer_state import _optimizer_payload_usable, _scheduler_payload_usable
 from .._run_status_validation import adapter_optimizer_shapes
 from .checkpoints import (
@@ -33,6 +34,7 @@ REQUIRED_RESUME_FIELDS = (
     "rng",
     "adapter_weights",
 )
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,7 @@ def _resume_inventory(checkpoint: Path, *, restore: bool, allow_unsafe: bool) ->
     global_step = _trainer_state_step(checkpoint)
     _record_field("global_step", global_step is not None, restored, missing)
     sidecar = _load_sidecar(checkpoint)
-    sampler_position = _sampler_position(checkpoint, sidecar, global_step)
+    sampler_position = _sampler_position(sidecar)
     _record_field("sampler_position", sampler_position is not None, restored, missing)
     _record_field(
         "optimizer",
@@ -159,34 +161,26 @@ def _load_sidecar(checkpoint: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _sampler_position(
-    checkpoint: Path,
-    sidecar: dict[str, Any] | None,
-    global_step: int | None,
-) -> int | None:
-    if sidecar is not None:
-        return _nonneg_int(sidecar.get("sampler_position"))
-    return _derived_sampler_position(checkpoint, global_step)
-
-
-def _derived_sampler_position(checkpoint: Path, global_step: int | None) -> int | None:
-    payload = _json_object(checkpoint / "trainer_state.json")
-    batch_size = None if payload is None else _positive_int(payload.get("train_batch_size"))
-    if global_step is None or batch_size is None:
+def _sampler_position(sidecar: dict[str, Any] | None) -> int | None:
+    if sidecar is None:
         return None
-    return global_step * batch_size
+    return _nonneg_int(sidecar.get("sampler_position"))
 
 
 def _nonneg_int(value: Any) -> int | None:
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-        return value
-    return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    if value < 0:
+        return None
+    return value
 
 
 def _positive_int(value: Any) -> int | None:
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
-        return value
-    return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    if value < 1:
+        return None
+    return value
 
 
 def _optimizer_groups(
@@ -235,27 +229,23 @@ def _param_group_count(optimizer: dict[str, Any] | None) -> int | None:
 
 
 def _shape_groups(value: Any) -> list[list[tuple[int, ...]]] | None:
-    if not isinstance(value, list):
-        return None
-    groups: list[list[tuple[int, ...]]] = []
-    for group in value:
-        parsed = _shape_group(group)
-        if parsed is None:
-            return None
-        groups.append(parsed)
-    return groups
+    return _parse_list(value, _shape_group)
 
 
 def _shape_group(group: Any) -> list[tuple[int, ...]] | None:
-    if not isinstance(group, list):
+    return _parse_list(group, _shape_tuple)
+
+
+def _parse_list(value: Any, parse_item: Callable[[Any], _T | None]) -> list[_T] | None:
+    if not isinstance(value, list):
         return None
-    shapes: list[tuple[int, ...]] = []
-    for shape in group:
-        parsed = _shape_tuple(shape)
+    parsed_items: list[_T] = []
+    for item in value:
+        parsed = parse_item(item)
         if parsed is None:
             return None
-        shapes.append(parsed)
-    return shapes
+        parsed_items.append(parsed)
+    return parsed_items
 
 
 def _shape_tuple(shape: Any) -> tuple[int, ...] | None:
@@ -277,3 +267,10 @@ def _restore_rng(checkpoint: Path) -> None:
     random.setstate(payload["python"])
     np.random.set_state(payload["numpy"])
     torch.random.set_rng_state(payload["cpu"])
+    cuda_state = payload.get("cuda")
+    if (
+        torch.cuda.is_available()
+        and isinstance(cuda_state, torch.Tensor)
+        and _cuda_rng_state_usable(cuda_state)
+    ):
+        torch.cuda.set_rng_state(cuda_state)

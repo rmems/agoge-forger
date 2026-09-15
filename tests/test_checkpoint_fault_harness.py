@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 import torch
 
+from agoge_forger._run_status_torch_archive import torch_mapping
 from agoge_forger.cleanup_run import CleanupOptions, plan_cleanup
 from agoge_forger.train.checkpoints import (
     ADAPTER_WEIGHT_FILES,
@@ -33,7 +34,11 @@ from agoge_forger.train.fault_harness import (
     last_failure_evidence,
     run_fault_harness,
 )
-from agoge_forger.train.resume_state import inspect_resume_state, select_resume_checkpoint
+from agoge_forger.train.resume_state import (
+    RESUME_SIDECAR_FILENAME,
+    inspect_resume_state,
+    select_resume_checkpoint,
+)
 
 
 def _config(run_dir: Path, **kwargs) -> HarnessConfig:
@@ -343,17 +348,44 @@ def test_select_resume_skips_truncated_newest_adapter_weights(tmp_path: Path) ->
     run_fault_harness(_config(run_dir))
     newest = run_dir / "checkpoint-4"
     (newest / ADAPTER_WEIGHT_FILES[0]).write_bytes(b"\0\0\0\0")
+    assert is_valid_checkpoint(newest) is True
 
     inspection = select_resume_checkpoint(run_dir)
 
-    assert is_valid_checkpoint(newest) is True
-    assert find_latest_valid_checkpoint(run_dir) == newest.resolve()
+    assert not newest.exists()
+    assert "short_write" in _reasons(run_dir)
     assert inspection.checkpoint == (run_dir / "checkpoint-2").resolve()
     assert inspection.equivalent is True
     assert inspection.global_step == 2
-    newest_inspection = inspect_resume_state(newest)
-    assert newest_inspection.equivalent is False
-    assert "adapter_weights" in newest_inspection.missing
+
+
+def test_resolve_resume_checkpoint_skips_truncated_newest_weights(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_fault_harness(
+        _config(run_dir, max_steps=2, fault=FaultSpec(step=2, point="after_save", kind="oom"))
+    )
+    newest = run_dir / "checkpoint-4"
+    newest.mkdir()
+    for name in ("trainer_state.json", "adapter_config.json", ADAPTER_WEIGHT_FILES[0]):
+        (newest / name).write_bytes((run_dir / "checkpoint-2" / name).read_bytes())
+    (newest / ADAPTER_WEIGHT_FILES[0]).write_bytes(b"\0\0\0\0")
+
+    class Runtime:
+        allow_unsafe_serialization = False
+
+    class Training:
+        resume_checkpoint_path = None
+        resume_from_latest_checkpoint = True
+
+    class Config:
+        runtime = Runtime()
+        training = Training()
+
+    selected = resolve_resume_checkpoint(str(run_dir), Config())
+
+    assert selected == str((run_dir / "checkpoint-2").resolve())
+    assert not newest.exists()
+    assert "short_write" in _reasons(run_dir)
 
 
 def test_select_resume_skips_malformed_newest_trainer_state(tmp_path: Path) -> None:
@@ -369,3 +401,74 @@ def test_select_resume_skips_malformed_newest_trainer_state(tmp_path: Path) -> N
     assert inspection.checkpoint == (run_dir / "checkpoint-2").resolve()
     assert inspection.equivalent is True
     assert inspect_resume_state(newest).equivalent is False
+
+
+def test_sampler_position_is_missing_without_sidecar(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_fault_harness(
+        _config(run_dir, max_steps=2, fault=FaultSpec(step=2, point="after_save", kind="oom"))
+    )
+    (run_dir / "checkpoint-2" / RESUME_SIDECAR_FILENAME).unlink()
+
+    inspection = inspect_resume_state(run_dir / "checkpoint-2")
+
+    assert is_valid_checkpoint(run_dir / "checkpoint-2") is True
+    assert inspection.equivalent is False
+    assert "sampler_position" in inspection.missing
+
+
+def test_resumed_optimizer_keeps_momentum_tensors(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_fault_harness(_config(run_dir, fault=FaultSpec(step=2, point="after_save", kind="oom")))
+    first = torch_mapping(run_dir / "checkpoint-2" / "optimizer.pt", require_data_record=True)
+    run_fault_harness(_config(run_dir))
+    later = torch_mapping(run_dir / "checkpoint-4" / "optimizer.pt", require_data_record=True)
+    assert first is not None and later is not None
+    assert torch.equal(first["state"][0]["exp_avg"], later["state"][0]["exp_avg"])
+    assert int(later["state"][0]["step"].item()) == 4
+    first_sched = torch_mapping(run_dir / "checkpoint-2" / "scheduler.pt")
+    later_sched = torch_mapping(run_dir / "checkpoint-4" / "scheduler.pt")
+    assert first_sched is not None and later_sched is not None
+    assert later_sched["base_lrs"] == first_sched["base_lrs"]
+    assert later_sched["last_epoch"] == 4
+
+
+def test_completed_rerun_does_not_quarantine_existing_export(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    first = run_fault_harness(_config(run_dir))
+    config_bytes = (run_dir / "adapter_config.json").read_bytes()
+    weight_bytes = (run_dir / ADAPTER_WEIGHT_FILES[0]).read_bytes()
+
+    second = run_fault_harness(_config(run_dir))
+
+    assert first.export_published is True
+    assert second.completed is True
+    assert is_adapter_artifact(run_dir) is True
+    assert (run_dir / "adapter_config.json").read_bytes() == config_bytes
+    assert (run_dir / ADAPTER_WEIGHT_FILES[0]).read_bytes() == weight_bytes
+    assert "export_failure" not in _reasons(run_dir)
+
+
+def test_export_does_not_quarantine_preexisting_root_adapter_files(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_fault_harness(
+        _config(run_dir, max_steps=2, fault=FaultSpec(step=2, point="after_save", kind="oom"))
+    )
+    original = '{"peft_type": "LORA"}\n'
+    (run_dir / "adapter_config.json").write_text(original)
+
+    result = run_fault_harness(_config(run_dir, max_steps=2))
+
+    assert result.export_published is False
+    assert (run_dir / "adapter_config.json").read_text() == original
+    assert not (run_dir / ADAPTER_WEIGHT_FILES[0]).exists()
+
+
+def test_unfireable_fault_spec_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not a save step"):
+        _config(tmp_path / "run", fault=FaultSpec(step=3, point="before_save", kind="oom"))
+    with pytest.raises(ValueError, match="during_export fault step"):
+        _config(
+            tmp_path / "run",
+            fault=FaultSpec(step=2, point="during_export", kind="export_failure"),
+        )

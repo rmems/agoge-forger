@@ -9,8 +9,13 @@ The harness writes `checkpoint-N` trees through the same atomic no-replace
 directory publish used by eval bundles and split snapshots. Incomplete trees
 are moved under `.agoge-quarantine/` with `quarantine_reason.json`. Resume
 selects the last complete checkpoint and reports `equivalent=true` only when
-optimizer, scheduler, global step, sampler position, and RNG state are all
-present.
+optimizer, scheduler, global step, sampler position, RNG, and usable adapter
+weights are all present. Sampler position is read from `agoge_resume.json`;
+it is not inferred from `global_step * train_batch_size`.
+
+Live `train-qlora` still lets Transformers write `checkpoint-N` in place.
+This harness proves resume, quarantine, and the atomic publisher; wiring that
+publisher into `SFTTrainer` is separate.
 
 ```bash
 uv run pytest tests/test_checkpoint_fault_harness.py -q
