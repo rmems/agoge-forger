@@ -262,15 +262,21 @@ def _restore_rng(checkpoint: Path) -> None:
         allow_numpy=True,
         require_data_record=True,
     )
-    if payload is None or not _rng_payload_usable(payload):
+    if payload is None:
+        return
+    if not _rng_payload_usable(payload):
         return
     random.setstate(payload["python"])
     np.random.set_state(payload["numpy"])
     torch.random.set_rng_state(payload["cpu"])
-    cuda_state = payload.get("cuda")
-    if (
-        torch.cuda.is_available()
-        and isinstance(cuda_state, torch.Tensor)
-        and _cuda_rng_state_usable(cuda_state)
-    ):
-        torch.cuda.set_rng_state(cuda_state)
+    _restore_cuda_rng(payload.get("cuda"))
+
+
+def _restore_cuda_rng(cuda_state: object) -> None:
+    if not torch.cuda.is_available():
+        return
+    if not isinstance(cuda_state, torch.Tensor):
+        return
+    if not _cuda_rng_state_usable(cuda_state):
+        return
+    torch.cuda.set_rng_state(cuda_state)

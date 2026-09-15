@@ -166,8 +166,12 @@ class HarnessConfig:
     resume: bool = True
 
     def __post_init__(self) -> None:
-        if self.max_steps < 1 or self.save_steps < 1 or self.batch_size < 1:
-            raise ValueError("max_steps, save_steps, and batch_size must be >= 1")
+        if self.max_steps < 1:
+            raise ValueError("max_steps must be >= 1")
+        if self.save_steps < 1:
+            raise ValueError("save_steps must be >= 1")
+        if self.batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
         if self.fault is None:
             return
         _validate_fault_schedule(self)
@@ -497,10 +501,14 @@ def _validate_fault_schedule(config: HarnessConfig) -> None:
         if fault.step != config.max_steps:
             raise ValueError("during_export fault step must equal max_steps")
         return
-    if fault.step > config.max_steps or fault.step % config.save_steps != 0:
-        raise ValueError(
-            f"checkpoint fault step {fault.step} is not a save step in 1..{config.max_steps}"
-        )
+    if fault.step > config.max_steps:
+        raise ValueError(_save_step_fault_message(fault.step, config.max_steps))
+    if fault.step % config.save_steps != 0:
+        raise ValueError(_save_step_fault_message(fault.step, config.max_steps))
+
+
+def _save_step_fault_message(step: int, max_steps: int) -> str:
+    return f"checkpoint fault step {step} is not a save step in 1..{max_steps}"
 
 
 def _seed_rng(seed: int) -> None:
