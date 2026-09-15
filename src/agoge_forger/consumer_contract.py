@@ -144,7 +144,7 @@ def consume_file(path: Path) -> dict[str, Any]:
     except UnicodeDecodeError as exc:
         return {
             "schema_version": SIDECAR_SCHEMA,
-            "source_path": path.name,
+            "source_path": str(path),
             "source_sha256": source_sha256,
             "parser": PARSER_NAME,
             "row_count": 0,
@@ -167,7 +167,7 @@ def consume_file(path: Path) -> dict[str, Any]:
             rows.append(row)
     return {
         "schema_version": SIDECAR_SCHEMA,
-        "source_path": path.name,
+        "source_path": str(path),
         "source_sha256": source_sha256,
         "parser": PARSER_NAME,
         "row_count": len(rows),
@@ -185,10 +185,21 @@ def write_sidecar(sidecar: dict[str, Any], out_dir: Path, stem: str) -> Path:
     return out_path
 
 
-def _consume_input(raw_path: str, out_dir: Path) -> dict[str, Any]:
+def _sidecar_stem(path: Path, used: set[str]) -> str:
+    stem = path.stem
+    if stem not in used:
+        used.add(stem)
+        return stem
+    digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:12]
+    unique = f"{stem}-{digest}"
+    used.add(unique)
+    return unique
+
+
+def _consume_input(raw_path: str, out_dir: Path, used_stems: set[str]) -> dict[str, Any]:
     path = resolve_existing_path(raw_path, must_be_file=True)
     sidecar = consume_file(path)
-    write_sidecar(sidecar, out_dir, path.stem)
+    write_sidecar(sidecar, out_dir, _sidecar_stem(path, used_stems))
     return sidecar
 
 
@@ -197,7 +208,8 @@ def run_consumer_contract(inputs: list[str], out_dir: str) -> list[dict[str, Any
     if not inputs:
         raise ConsumerContractError("consumer-contract requires at least one JSONL input")
     safe_out = resolve_output_directory(out_dir)
-    sidecars = [_consume_input(raw_path, safe_out) for raw_path in inputs]
+    used_stems: set[str] = set()
+    sidecars = [_consume_input(raw_path, safe_out, used_stems) for raw_path in inputs]
     failures = [error for sidecar in sidecars for error in sidecar["errors"]]
     if failures:
         raise ConsumerContractError("; ".join(failures))

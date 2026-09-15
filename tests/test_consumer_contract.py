@@ -86,6 +86,23 @@ def test_consumer_contract_cli_rejects_future_leakage(tmp_path):
     assert "future-event leakage" in result.output
 
 
+def test_same_stem_inputs_keep_distinct_sidecars(tmp_path):
+    first = tmp_path / "a" / "dup.jsonl"
+    second = tmp_path / "b" / "dup.jsonl"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text('{"text": "hello"}\n')
+    second.write_text('{"text": "world"}\n')
+    out_dir = tmp_path / "out"
+    sidecars = run_consumer_contract([str(first), str(second)], str(out_dir))
+    names = {path.name for path in out_dir.glob("*.sidecar.json")}
+    assert len(names) == 2
+    assert {sidecar["source_path"] for sidecar in sidecars} == {
+        str(first.resolve()),
+        str(second.resolve()),
+    }
+
+
 def test_pr_workflows_never_receive_hf_token():
     workflows = ROOT / ".github" / "workflows"
     for path in workflows.glob("*.yml"):
