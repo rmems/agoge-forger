@@ -1,0 +1,80 @@
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/pinned-split/split_manifest.json
+  ai_agent 1
+reports/model-compatibility/2026-09-11/minicpm5/generation-smoke.json
+  s_198c868d219752::t_57e839d26922c0 1-10
+reports/model-compatibility/2026-09-11/minicpm5/lora-targets.json
+  s_198c868d219752::t_57e839d26922c0 1-69
+reports/model-compatibility/2026-09-11/minicpm5/run-manifest.json
+  s_198c868d219752::t_57e839d26922c0 1-28
+reports/model-compatibility/2026-09-11/report.md
+  s_198c868d219752::t_57e839d26922c0 1-44
+src/agoge_forger/eval/__init__.py
+  s_198c868d219752::t_1d3ec5d9d978d3 17-24
+  s_198c868d219752::t_f9770698a6d53c 36,38,40,42
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/reproduction.md
+  s_198c868d219752::t_f5790a75f880bd 1-76
+src/agoge_forger/eval/g0_bundle.py
+  ai_agent 63
+  s_198c868d219752::t_2fd11d280e3ad3 1-62,64-72
+reports/model-compatibility/2026-09-11/granite-4.1/run-manifest.json
+  s_198c868d219752::t_57e839d26922c0 1-55
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/pinned-split/splits/held_out.jsonl
+  ai_agent 1-16
+src/agoge_forger/eval/experiment_contract.py
+  s_198c868d219752::t_64f381694c41fc 1-6,8-14,16-105,107-134,136-273,277-281,286-288,290-294
+  s_198c868d219752::t_c372d3682926de 135
+  s_198c868d219752::t_30d5e990fddadb 274-276
+  s_198c868d219752::t_5d19447c31e1eb 7
+  s_198c868d219752::t_50a669dabf6449 289
+  s_198c868d219752::t_100e6283c23c31 15
+  s_198c868d219752::t_0dfee4ddedd47d 282-285
+  s_198c868d219752::t_05813d7601b37a 106
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/experiment-contract.json
+  s_198c868d219752::t_4b8c223bff515a 1
+configs/granite_4_1_flagship.yaml
+  s_198c868d219752::t_e5efafe15a5a50 6
+tests/test_experiment_contract.py
+  s_198c868d219752::t_35931aefd58d74 119
+  s_198c868d219752::t_c694c0f1a525d7 19
+  s_198c868d219752::t_d11b5b17975968 1-13,15-18,20-96,98-118,120-126
+  s_198c868d219752::t_f911ae29bba044 97
+  s_198c868d219752::t_18df5cae9cd6ab 14
+reports/model-compatibility/2026-09-11/minicpm5/compatibility.json
+  s_198c868d219752::t_57e839d26922c0 1-39
+reports/model-compatibility/2026-09-11/granite-4.1/compatibility.json
+  s_198c868d219752::t_57e839d26922c0 1-33
+reports/model-compatibility/2026-09-11/granite-4.1/generation-smoke.json
+  s_198c868d219752::t_57e839d26922c0 1-10
+src/agoge_forger/eval/harness.py
+  s_198c868d219752::t_b9636b3cd66339 230-231
+  s_198c868d219752::t_7fa9c8f969c4f9 44-80
+  s_198c868d219752::t_e9d1047c46a9db 120-128,131-133,138
+  s_198c868d219752::t_7ecae7e4036707 202-211
+src/agoge_forger/_cli_eval.py
+  s_198c868d219752::t_b0e1bae599036b 19
+  s_198c868d219752::t_74c0f04fbcc97a 189-299
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/pinned-split/splits/train.jsonl
+  ai_agent 1-129
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/pinned-split/splits/validation.jsonl
+  ai_agent 1-10
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/pinned-split/split_report.md
+  ai_agent 1-33
+reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/train.yaml
+  s_198c868d219752::t_4b8c223bff515a 1-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ac54d549cb7324632a46da0eb74b06e818c789f6",
+  "prompts": {},
+  "sessions": {
+    "s_198c868d219752": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5bf69feb-f83c-4490-a860-35fdc5e73836",
+        "model": "composer-2.5"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
