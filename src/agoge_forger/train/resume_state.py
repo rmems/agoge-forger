@@ -52,76 +52,19 @@ def inspect_resume_state(
     flip ``equivalent`` if anything required is missing.
     """
     if checkpoint is None:
-        return ResumeInspection(
-            checkpoint=None,
-            global_step=None,
-            sampler_position=None,
-            restored=(),
-            missing=REQUIRED_RESUME_FIELDS,
-            equivalent=False,
-            reason="no complete checkpoint",
-        )
-
+        return _empty_inspection()
     checkpoint_dir = Path(checkpoint)
-    restored: list[str] = []
-    missing: list[str] = []
-    global_step = _trainer_state_step(checkpoint_dir)
-    if global_step is None:
-        missing.append("global_step")
-    else:
-        restored.append("global_step")
-
-    sidecar = _load_sidecar(checkpoint_dir)
-    sampler_position = _sampler_position(checkpoint_dir, sidecar, global_step)
-    if sampler_position is None:
-        missing.append("sampler_position")
-    else:
-        restored.append("sampler_position")
-
-    expected_groups = _optimizer_groups(checkpoint_dir, sidecar, allow_unsafe=allow_unsafe)
-    optimizer = torch_mapping(checkpoint_dir / "optimizer.pt", require_data_record=True)
-    groups = None if optimizer is None else optimizer.get("param_groups")
-    group_count = len(groups) if isinstance(groups, list) and groups else None
-    if (
-        expected_groups is not None
-        and global_step is not None
-        and _optimizer_payload_usable(optimizer, global_step, expected_groups)
-    ):
-        restored.append("optimizer")
-    else:
-        missing.append("optimizer")
-
-    if (
-        group_count is not None
-        and global_step is not None
-        and _scheduler_payload_usable(
-            torch_mapping(checkpoint_dir / "scheduler.pt"),
-            global_step,
-            group_count,
-        )
-    ):
-        restored.append("scheduler")
-    else:
-        missing.append("scheduler")
-
-    if _rng_state_usable(checkpoint_dir):
-        restored.append("rng")
-        if restore:
-            _restore_rng(checkpoint_dir)
-    else:
-        missing.append("rng")
-
-    missing_fields = tuple(missing)
-    equivalent = not missing_fields
-    reason = None if equivalent else "missing " + ", ".join(missing_fields)
+    inventory = _resume_inventory(checkpoint_dir, restore=restore, allow_unsafe=allow_unsafe)
+    missing = tuple(inventory.missing)
+    equivalent = not missing
     return ResumeInspection(
         checkpoint=checkpoint_dir,
-        global_step=global_step,
-        sampler_position=sampler_position,
-        restored=tuple(restored),
-        missing=missing_fields,
+        global_step=inventory.global_step,
+        sampler_position=inventory.sampler_position,
+        restored=tuple(inventory.restored),
+        missing=missing,
         equivalent=equivalent,
-        reason=reason,
+        reason=None if equivalent else "missing " + ", ".join(missing),
     )
 
 
@@ -132,6 +75,57 @@ def select_resume_checkpoint(
     quarantine_incomplete_checkpoints(run_dir, allow_unsafe=allow_unsafe)
     latest = find_latest_valid_checkpoint(run_dir, allow_unsafe=allow_unsafe)
     return inspect_resume_state(latest, restore=restore, allow_unsafe=allow_unsafe)
+
+
+@dataclass
+class _ResumeInventory:
+    restored: list[str]
+    missing: list[str]
+    global_step: int | None
+    sampler_position: int | None
+
+
+def _empty_inspection() -> ResumeInspection:
+    return ResumeInspection(
+        checkpoint=None,
+        global_step=None,
+        sampler_position=None,
+        restored=(),
+        missing=REQUIRED_RESUME_FIELDS,
+        equivalent=False,
+        reason="no complete checkpoint",
+    )
+
+
+def _resume_inventory(checkpoint: Path, *, restore: bool, allow_unsafe: bool) -> _ResumeInventory:
+    restored: list[str] = []
+    missing: list[str] = []
+    global_step = _trainer_state_step(checkpoint)
+    _record_field("global_step", global_step is not None, restored, missing)
+    sidecar = _load_sidecar(checkpoint)
+    sampler_position = _sampler_position(checkpoint, sidecar, global_step)
+    _record_field("sampler_position", sampler_position is not None, restored, missing)
+    _record_field(
+        "optimizer",
+        _optimizer_usable(
+            checkpoint,
+            _optimizer_groups(checkpoint, sidecar, allow_unsafe=allow_unsafe),
+            global_step,
+        ),
+        restored,
+        missing,
+    )
+    _record_field("scheduler", _scheduler_usable(checkpoint, global_step), restored, missing)
+    rng_ok = _rng_state_usable(checkpoint)
+    _record_field("rng", rng_ok, restored, missing)
+    if restore and rng_ok:
+        _restore_rng(checkpoint)
+    return _ResumeInventory(restored, missing, global_step, sampler_position)
+
+
+def _record_field(name: str, present: bool, restored: list[str], missing: list[str]) -> None:
+    target = restored if present else missing
+    target.append(name)
 
 
 def _load_sidecar(checkpoint: Path) -> dict[str, Any] | None:
@@ -151,20 +145,28 @@ def _sampler_position(
     global_step: int | None,
 ) -> int | None:
     if sidecar is not None:
-        recorded = sidecar.get("sampler_position")
-        if isinstance(recorded, int) and not isinstance(recorded, bool) and recorded >= 0:
-            return recorded
-        return None
+        return _nonneg_int(sidecar.get("sampler_position"))
+    return _derived_sampler_position(checkpoint, global_step)
+
+
+def _derived_sampler_position(checkpoint: Path, global_step: int | None) -> int | None:
     payload = _json_object(checkpoint / "trainer_state.json")
-    batch_size = None if payload is None else payload.get("train_batch_size")
-    if (
-        global_step is None
-        or not isinstance(batch_size, int)
-        or isinstance(batch_size, bool)
-        or batch_size < 1
-    ):
+    batch_size = None if payload is None else _positive_int(payload.get("train_batch_size"))
+    if global_step is None or batch_size is None:
         return None
     return global_step * batch_size
+
+
+def _nonneg_int(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return None
 
 
 def _optimizer_groups(
@@ -178,24 +180,70 @@ def _optimizer_groups(
     return adapter_optimizer_shapes(checkpoint, allow_unsafe=allow_unsafe)
 
 
+def _optimizer_usable(
+    checkpoint: Path,
+    expected_groups: list[list[tuple[int, ...]]] | None,
+    step: int | None,
+) -> bool:
+    optimizer = torch_mapping(checkpoint / "optimizer.pt", require_data_record=True)
+    return bool(
+        expected_groups is not None
+        and step is not None
+        and _optimizer_payload_usable(optimizer, step, expected_groups)
+    )
+
+
+def _scheduler_usable(checkpoint: Path, global_step: int | None) -> bool:
+    optimizer = torch_mapping(checkpoint / "optimizer.pt", require_data_record=True)
+    group_count = _param_group_count(optimizer)
+    return bool(
+        group_count is not None
+        and global_step is not None
+        and _scheduler_payload_usable(
+            torch_mapping(checkpoint / "scheduler.pt"),
+            global_step,
+            group_count,
+        )
+    )
+
+
+def _param_group_count(optimizer: dict[str, Any] | None) -> int | None:
+    groups = None if optimizer is None else optimizer.get("param_groups")
+    if isinstance(groups, list) and groups:
+        return len(groups)
+    return None
+
+
 def _shape_groups(value: Any) -> list[list[tuple[int, ...]]] | None:
     if not isinstance(value, list):
         return None
     groups: list[list[tuple[int, ...]]] = []
     for group in value:
-        if not isinstance(group, list):
+        parsed = _shape_group(group)
+        if parsed is None:
             return None
-        shapes: list[tuple[int, ...]] = []
-        for shape in group:
-            if not isinstance(shape, list) or not shape:
-                return None
-            if not all(
-                isinstance(dim, int) and not isinstance(dim, bool) and dim > 0 for dim in shape
-            ):
-                return None
-            shapes.append(tuple(shape))
-        groups.append(shapes)
+        groups.append(parsed)
     return groups
+
+
+def _shape_group(group: Any) -> list[tuple[int, ...]] | None:
+    if not isinstance(group, list):
+        return None
+    shapes: list[tuple[int, ...]] = []
+    for shape in group:
+        parsed = _shape_tuple(shape)
+        if parsed is None:
+            return None
+        shapes.append(parsed)
+    return shapes
+
+
+def _shape_tuple(shape: Any) -> tuple[int, ...] | None:
+    if not isinstance(shape, list) or not shape:
+        return None
+    if not all(_positive_int(dim) is not None for dim in shape):
+        return None
+    return tuple(shape)
 
 
 def _restore_rng(checkpoint: Path) -> None:

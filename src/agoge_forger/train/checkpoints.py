@@ -121,12 +121,18 @@ def infer_base_revision_from_adapter(adapter_path: PathLike) -> str | None:
 def incomplete_checkpoint_reason(path: PathLike, *, allow_unsafe: bool = False) -> str | None:
     """Return why a `checkpoint-N` tree is not resume-selectable, if it isn't."""
     checkpoint_dir = Path(path)
-    if not checkpoint_dir.is_dir() or checkpoint_dir.is_symlink():
-        return None
-    if checkpoint_step(checkpoint_dir) < 0:
+    if not _is_named_checkpoint_dir(checkpoint_dir):
         return None
     if is_valid_checkpoint(checkpoint_dir, allow_unsafe=allow_unsafe):
         return None
+    return _checkpoint_gap_reason(checkpoint_dir, allow_unsafe=allow_unsafe)
+
+
+def _is_named_checkpoint_dir(path: Path) -> bool:
+    return path.is_dir() and not path.is_symlink() and checkpoint_step(path) >= 0
+
+
+def _checkpoint_gap_reason(checkpoint_dir: Path, *, allow_unsafe: bool) -> str:
     if not (checkpoint_dir / "trainer_state.json").is_file():
         return "missing_trainer_state"
     if not (checkpoint_dir / "adapter_config.json").is_file():
