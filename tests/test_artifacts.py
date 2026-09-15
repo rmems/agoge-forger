@@ -284,21 +284,12 @@ def test_verified_adapter_source_requires_caller_supplied_identity(
         pytest.raises(ValueError, match="does not match the contracted"),
         verified_adapter_source(
             adapter,
-            sealed.base_model_name_or_path,
-            sealed.revision,
-            split_manifest_sha256="a" * 64,
-            train_split_sha256=sealed.training_split_sha256,
+            replace(_peft_context(sealed), split_manifest_sha256="a" * 64),
         ),
     ):
         pass
 
-    with verified_adapter_source(
-        adapter,
-        sealed.base_model_name_or_path,
-        sealed.revision,
-        split_manifest_sha256=sealed.training_split_manifest_sha256,
-        train_split_sha256=sealed.training_split_sha256,
-    ) as source:
+    with verified_adapter_source(adapter, _peft_context(sealed)) as source:
         assert source.provenance == sealed
 
 

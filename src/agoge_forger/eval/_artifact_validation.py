@@ -49,27 +49,18 @@ class VerifiedAdapterSource:
 @contextmanager
 def verified_adapter_source(
     root: Path,
-    model_repository: str,
-    model_revision: str,
-    *,
-    split_manifest_sha256: str,
-    train_split_sha256: str,
+    context: ArtifactValidationContext,
 ) -> Iterator[VerifiedAdapterSource]:
     """Yield a descriptor-pinned adapter snapshot bound to caller-supplied identity."""
 
+    if context.kind != "peft_adapter":
+        raise ValueError("verified adapter source requires peft_adapter validation context")
     index_path = root / "artifact_index.json"
     expected_digest = _descriptor_index_digest(root)
     with verified_artifact_snapshot(root, index_path, expected_digest) as (index, snapshot):
         provenance = index.producer_provenance
         if provenance is None:
             raise ValueError("peft_adapter artifact index requires producer_provenance")
-        context = ArtifactValidationContext(
-            kind="peft_adapter",
-            model_repository=model_repository,
-            model_revision=model_revision,
-            split_manifest_sha256=split_manifest_sha256,
-            train_split_sha256=train_split_sha256,
-        )
         _require_safe_weight_paths(snapshot)
         _require_valid_safetensors(snapshot)
         adapter_config = _require_peft_adapter_structure(snapshot, context)
