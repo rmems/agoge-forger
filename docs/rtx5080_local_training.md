@@ -25,3 +25,9 @@ The local default is QLoRA:
 - **Double Quantization**: Compresses the quantization constants to save more memory.
 - **Paged Optimizers**: Allows offloading optimizer states to CPU RAM if needed (configured via bitsandbytes).
 - **Gradient Checkpointing**: Trades compute for memory by dropping intermediate activations and recomputing them during the backward pass.
+
+Checkpoint recovery after OOM or an interrupted step is proven on CPU by the
+fault harness in [`checkpoint_fault_injection.md`](checkpoint_fault_injection.md).
+That document also has an optional trusted-GPU recipe; CI never requires a GPU
+or a model download for this contract.
+
