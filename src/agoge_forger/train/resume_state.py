@@ -12,11 +12,17 @@ import numpy as np
 import torch
 
 from .._run_status_rng import _rng_payload_usable, _rng_state_usable
+from .._run_status_safetensors import safetensors_usable
 from .._run_status_torch_archive import torch_mapping
 from .._run_status_trainer_metadata import _json_object, _trainer_state_step
 from .._run_status_trainer_state import _optimizer_payload_usable, _scheduler_payload_usable
 from .._run_status_validation import adapter_optimizer_shapes
-from .checkpoints import PathLike, find_latest_valid_checkpoint, quarantine_incomplete_checkpoints
+from .checkpoints import (
+    ADAPTER_WEIGHT_FILES,
+    PathLike,
+    list_valid_checkpoints,
+    quarantine_incomplete_checkpoints,
+)
 
 RESUME_SIDECAR_FILENAME = "agoge_resume.json"
 REQUIRED_RESUME_FIELDS = (
@@ -25,6 +31,7 @@ REQUIRED_RESUME_FIELDS = (
     "scheduler",
     "sampler_position",
     "rng",
+    "adapter_weights",
 )
 
 
@@ -71,9 +78,16 @@ def inspect_resume_state(
 def select_resume_checkpoint(
     run_dir: PathLike, *, allow_unsafe: bool = False, restore: bool = False
 ) -> ResumeInspection:
-    """Quarantine incompletes, then inspect the latest complete checkpoint."""
+    """Quarantine incompletes, then inspect the latest equivalent checkpoint."""
     quarantine_incomplete_checkpoints(run_dir, allow_unsafe=allow_unsafe)
-    latest = find_latest_valid_checkpoint(run_dir, allow_unsafe=allow_unsafe)
+    candidates = list(reversed(list_valid_checkpoints(run_dir, allow_unsafe=allow_unsafe)))
+    for checkpoint in candidates:
+        inspection = inspect_resume_state(checkpoint, restore=False, allow_unsafe=allow_unsafe)
+        if inspection.equivalent:
+            if not restore:
+                return inspection
+            return inspect_resume_state(checkpoint, restore=True, allow_unsafe=allow_unsafe)
+    latest = candidates[0] if candidates else None
     return inspect_resume_state(latest, restore=restore, allow_unsafe=allow_unsafe)
 
 
@@ -118,6 +132,12 @@ def _resume_inventory(checkpoint: Path, *, restore: bool, allow_unsafe: bool) ->
     _record_field("scheduler", _scheduler_usable(checkpoint, global_step), restored, missing)
     rng_ok = _rng_state_usable(checkpoint)
     _record_field("rng", rng_ok, restored, missing)
+    _record_field(
+        "adapter_weights",
+        all(safetensors_usable(checkpoint / name) for name in ADAPTER_WEIGHT_FILES),
+        restored,
+        missing,
+    )
     if restore and rng_ok:
         _restore_rng(checkpoint)
     return _ResumeInventory(restored, missing, global_step, sampler_position)

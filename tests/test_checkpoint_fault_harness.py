@@ -12,11 +12,16 @@ import torch
 
 from agoge_forger.cleanup_run import CleanupOptions, plan_cleanup
 from agoge_forger.train.checkpoints import (
+    ADAPTER_WEIGHT_FILES,
+    CHECKPOINT_STAGING_PREFIX,
+    QUARANTINE_REASON_FILENAME,
     find_latest_valid_checkpoint,
     is_adapter_artifact,
     is_valid_checkpoint,
     list_quarantined_checkpoints,
     list_valid_checkpoints,
+    quarantine_incomplete_checkpoints,
+    quarantine_tree,
     read_quarantine_reason,
     resolve_resume_checkpoint,
 )
@@ -73,6 +78,7 @@ def test_fault_harness_completes_without_downloads_or_gpu(tmp_path: Path) -> Non
         "scheduler",
         "sampler_position",
         "rng",
+        "adapter_weights",
     }
     assert is_adapter_artifact(run_dir) is True
 
@@ -277,3 +283,89 @@ def test_select_resume_checkpoint_is_deterministic_with_mixed_trees(tmp_path: Pa
     assert inspection.checkpoint == (run_dir / "checkpoint-2").resolve()
     assert inspection.equivalent is True
     assert not later.exists()
+
+
+def test_quarantine_tree_moves_directory_symlink_as_leaf(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    target = tmp_path / "outside"
+    target.mkdir()
+    canary = target / "keep-me.txt"
+    canary.write_text("external\n")
+    linked = run_dir / "checkpoint-99"
+    linked.symlink_to(target, target_is_directory=True)
+
+    moved = quarantine_tree(linked, reason="leftover_staging", run_dir=run_dir)
+
+    assert not linked.exists()
+    assert not linked.is_symlink()
+    assert canary.read_text() == "external\n"
+    assert not (target / QUARANTINE_REASON_FILENAME).exists()
+    assert (moved / "checkpoint-99").is_symlink()
+    assert (moved / "checkpoint-99").resolve() == target.resolve()
+    assert read_quarantine_reason(moved)["reason"] == "leftover_staging"
+
+
+def test_quarantine_incomplete_does_not_walk_staging_symlink_target(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    target = tmp_path / "outside-staging"
+    target.mkdir()
+    (target / "keep-me.txt").write_text("external\n")
+    linked = run_dir / f"{CHECKPOINT_STAGING_PREFIX}link"
+    linked.symlink_to(target, target_is_directory=True)
+
+    moved = quarantine_incomplete_checkpoints(run_dir)
+
+    assert linked.is_symlink() is False
+    assert not linked.exists()
+    assert (target / "keep-me.txt").read_text() == "external\n"
+    assert not (target / QUARANTINE_REASON_FILENAME).exists()
+    assert len(moved) == 1
+    assert (moved[0] / linked.name).is_symlink()
+    assert read_quarantine_reason(moved[0])["reason"] == "leftover_staging"
+
+
+def test_quarantine_tree_replaces_existing_reason_file(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    source = run_dir / "checkpoint-3"
+    source.mkdir(parents=True)
+    (source / QUARANTINE_REASON_FILENAME).write_text('{"reason": "stale"}\n')
+
+    moved = quarantine_tree(source, reason="interrupted_save", run_dir=run_dir)
+
+    assert read_quarantine_reason(moved)["reason"] == "interrupted_save"
+    assert not source.exists()
+
+
+def test_select_resume_skips_truncated_newest_adapter_weights(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_fault_harness(_config(run_dir))
+    newest = run_dir / "checkpoint-4"
+    (newest / ADAPTER_WEIGHT_FILES[0]).write_bytes(b"\0\0\0\0")
+
+    inspection = select_resume_checkpoint(run_dir)
+
+    assert is_valid_checkpoint(newest) is True
+    assert find_latest_valid_checkpoint(run_dir) == newest.resolve()
+    assert inspection.checkpoint == (run_dir / "checkpoint-2").resolve()
+    assert inspection.equivalent is True
+    assert inspection.global_step == 2
+    newest_inspection = inspect_resume_state(newest)
+    assert newest_inspection.equivalent is False
+    assert "adapter_weights" in newest_inspection.missing
+
+
+def test_select_resume_skips_malformed_newest_trainer_state(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_fault_harness(_config(run_dir))
+    newest = run_dir / "checkpoint-4"
+    (newest / "trainer_state.json").write_text("{}\n")
+
+    inspection = select_resume_checkpoint(run_dir)
+
+    assert is_valid_checkpoint(newest) is True
+    assert find_latest_valid_checkpoint(run_dir) == newest.resolve()
+    assert inspection.checkpoint == (run_dir / "checkpoint-2").resolve()
+    assert inspection.equivalent is True
+    assert inspect_resume_state(newest).equivalent is False

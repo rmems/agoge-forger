@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .._atomic_file import write_fsynced_bytes
+from .._atomic_file import publish_bytes_replace
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..config import normalize_revision
 from ..logging import logger
@@ -193,14 +193,18 @@ def quarantine_tree(
         "details": dict(details or {}),
     }
     encoded = (json.dumps(payload, indent=2) + "\n").encode()
+    if source.is_symlink() or source.is_file():
+        destination.mkdir()
+        publish_bytes_replace(destination / QUARANTINE_REASON_FILENAME, encoded)
+        if source.exists() or source.is_symlink():
+            shutil.move(str(source), str(destination / source.name))
+        return destination
     if source.is_dir():
-        write_fsynced_bytes(source / QUARANTINE_REASON_FILENAME, encoded)
+        publish_bytes_replace(source / QUARANTINE_REASON_FILENAME, encoded)
         shutil.move(str(source), str(destination))
         return destination
     destination.mkdir()
-    write_fsynced_bytes(destination / QUARANTINE_REASON_FILENAME, encoded)
-    if source.exists() or source.is_symlink():
-        shutil.move(str(source), str(destination / source.name))
+    publish_bytes_replace(destination / QUARANTINE_REASON_FILENAME, encoded)
     return destination
 
 
@@ -229,6 +233,8 @@ def quarantine_incomplete_checkpoints(
 
 
 def _quarantine_run_entry(run_dir: Path, entry: Path, *, allow_unsafe: bool) -> list[Path]:
+    if entry.is_symlink() and entry.name.startswith(_STAGING_PREFIXES):
+        return [quarantine_tree(entry, reason="leftover_staging", run_dir=run_dir)]
     if _is_staging_dir(entry):
         return _quarantine_staging_tree(run_dir, entry, allow_unsafe=allow_unsafe)
     reason = incomplete_checkpoint_reason(entry, allow_unsafe=allow_unsafe)
@@ -238,7 +244,7 @@ def _quarantine_run_entry(run_dir: Path, entry: Path, *, allow_unsafe: bool) -> 
 
 
 def _is_staging_dir(path: Path) -> bool:
-    return path.is_dir() and path.name.startswith(_STAGING_PREFIXES)
+    return not path.is_symlink() and path.is_dir() and path.name.startswith(_STAGING_PREFIXES)
 
 
 def _quarantine_staging_tree(run_dir: Path, staging: Path, *, allow_unsafe: bool) -> list[Path]:

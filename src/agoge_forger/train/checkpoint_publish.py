@@ -12,6 +12,7 @@ from .._atomic_directory import rename_noreplace, require_rename_noreplace_suppo
 from .._atomic_file import _fsync_directory
 from .._run_status_safetensors import safetensors_usable
 from .checkpoints import (
+    ADAPTER_WEIGHT_FILES,
     CHECKPOINT_STAGING_PREFIX,
     incomplete_checkpoint_reason,
     quarantine_incomplete_checkpoints,
@@ -112,7 +113,7 @@ def _publish_refusal_reason(staged: Path, *, allow_unsafe: bool) -> str | None:
     reason = incomplete_checkpoint_reason(staged, allow_unsafe=allow_unsafe)
     if reason is not None:
         return reason
-    weights = staged / "adapter_model.safetensors"
+    weights = staged / ADAPTER_WEIGHT_FILES[0]
     if weights.is_file() and not safetensors_usable(weights):
         return "short_write"
     return None
@@ -137,13 +138,16 @@ def _rollback_failed_publish(run_dir: Path, failed: _FailedPublish) -> None:
 
 
 def _reclaim_staging_root(run_dir: Path, staging_root: Path) -> None:
-    if not staging_root.exists():
+    if not staging_root.exists() and not staging_root.is_symlink():
         return
     try:
-        leftover = any(staging_root.iterdir())
+        leftover = staging_root.is_symlink() or any(staging_root.iterdir())
     except OSError:
         leftover = True
     if leftover:
         quarantine_tree(staging_root, reason="leftover_staging", run_dir=run_dir)
         return
-    staging_root.rmdir()
+    try:
+        staging_root.rmdir()
+    except OSError:
+        quarantine_tree(staging_root, reason="leftover_staging", run_dir=run_dir)

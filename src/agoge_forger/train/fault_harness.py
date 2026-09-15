@@ -18,7 +18,6 @@ import torch
 
 from .._atomic_directory import rename_noreplace, require_rename_noreplace_support
 from .._atomic_file import publish_bytes_replace, write_fsynced_bytes
-from .._run_status_torch_archive import torch_mapping
 from .checkpoint_publish import (
     IncompleteCheckpointError,
     PublishOptions,
@@ -26,6 +25,7 @@ from .checkpoint_publish import (
     rollback_run_dir,
 )
 from .checkpoints import (
+    ADAPTER_WEIGHT_FILES,
     EXPORT_STAGING_PREFIX,
     PathLike,
     checkpoint_step,
@@ -76,7 +76,7 @@ _LORA_SHAPES: dict[str, tuple[int, ...]] = {
     "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
     "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
 }
-_ADAPTER_FILENAMES = ("adapter_config.json", "adapter_model.safetensors")
+_ADAPTER_FILENAMES = ("adapter_config.json", ADAPTER_WEIGHT_FILES[0])
 _OPTIMIZER_SHAPES: list[list[tuple[int, ...]]] = [[(1, 8), (8, 1)], []]
 
 
@@ -84,7 +84,7 @@ class InjectedOOMError(RuntimeError):
     """CPU stand-in for a CUDA out-of-memory abort."""
 
 
-class InjectedInterrupt(KeyboardInterrupt):
+class InjectedInterrupt(Exception):
     """SIGINT-equivalent interruption."""
 
 
@@ -187,7 +187,6 @@ class CheckpointSnapshot:
 class _LoopState:
     start_step: int
     sampler_position: int
-    optimizer: dict[str, Any]
 
 
 def run_fault_harness(config: HarnessConfig) -> HarnessResult:
@@ -195,7 +194,7 @@ def run_fault_harness(config: HarnessConfig) -> HarnessResult:
     run_dir = Path(config.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     _seed_rng(config.seed)
-    start_step, sampler_position, optimizer = _restore_or_initialize(config, run_dir)
+    start_step, sampler_position = _restore_or_initialize(config, run_dir)
     error_type: str | None = None
     export_published = False
     completed = False
@@ -203,7 +202,7 @@ def run_fault_harness(config: HarnessConfig) -> HarnessResult:
         _run_steps(
             config,
             run_dir,
-            _LoopState(start_step, sampler_position, optimizer),
+            _LoopState(start_step, sampler_position),
         )
         _export_final_adapter(config, run_dir)
         export_published = True
@@ -231,22 +230,15 @@ def last_failure_evidence(run_dir: PathLike) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _restore_or_initialize(config: HarnessConfig, run_dir: Path) -> tuple[int, int, dict[str, Any]]:
+def _restore_or_initialize(config: HarnessConfig, run_dir: Path) -> tuple[int, int]:
     if not config.resume:
-        return 0, 0, _optimizer_state(step=1)
+        return 0, 0
     inspection = select_resume_checkpoint(run_dir, restore=True)
-    start_step = inspection.global_step or 0
-    sampler_position = inspection.sampler_position or 0
-    if inspection.checkpoint is not None and "optimizer" in inspection.restored:
-        payload = torch_mapping(inspection.checkpoint / "optimizer.pt", require_data_record=True)
-        if isinstance(payload, dict):
-            return start_step, sampler_position, payload
-    return start_step, sampler_position, _optimizer_state(step=max(start_step, 1))
+    return inspection.global_step or 0, inspection.sampler_position or 0
 
 
 def _run_steps(config: HarnessConfig, run_dir: Path, loop: _LoopState) -> None:
     position = loop.sampler_position
-    state = loop.optimizer
     for step in range(loop.start_step + 1, config.max_steps + 1):
         position += config.batch_size
         _advance_rng()
@@ -311,13 +303,19 @@ def _quarantine_failed_export(run_dir: Path, staged: Path) -> None:
 
 
 def _reclaim_export_staging(run_dir: Path, staging_root: Path) -> None:
-    if not staging_root.exists():
+    if not staging_root.exists() and not staging_root.is_symlink():
         return
-    leftover = any(staging_root.iterdir())
+    try:
+        leftover = staging_root.is_symlink() or any(staging_root.iterdir())
+    except OSError:
+        leftover = True
     if leftover:
         quarantine_tree(staging_root, reason="leftover_staging", run_dir=run_dir)
         return
-    staging_root.rmdir()
+    try:
+        staging_root.rmdir()
+    except OSError:
+        quarantine_tree(staging_root, reason="leftover_staging", run_dir=run_dir)
 
 
 def _write_checkpoint_tree(staged: Path, snapshot: CheckpointSnapshot) -> None:
@@ -355,7 +353,7 @@ def _write_checkpoint_tree(staged: Path, snapshot: CheckpointSnapshot) -> None:
         },
     )
     if snapshot.short_write:
-        (staged / "adapter_model.safetensors").write_bytes(b"\0\0\0\0")
+        (staged / ADAPTER_WEIGHT_FILES[0]).write_bytes(b"\0\0\0\0")
 
 
 def _write_adapter_files(directory: Path) -> None:
@@ -366,7 +364,7 @@ def _write_adapter_files(directory: Path) -> None:
         "base_model_name_or_path": "harness/fake-base",
     }
     write_fsynced_bytes(directory / "adapter_config.json", (json.dumps(config) + "\n").encode())
-    write_fsynced_bytes(directory / "adapter_model.safetensors", _safetensors_bytes(_LORA_SHAPES))
+    write_fsynced_bytes(directory / ADAPTER_WEIGHT_FILES[0], _safetensors_bytes(_LORA_SHAPES))
 
 
 def _safetensors_bytes(shapes: Mapping[str, tuple[int, ...]]) -> bytes:
@@ -428,13 +426,13 @@ def _optimizer_state(step: int) -> dict[str, Any]:
 
 
 def _seed_rng(seed: int) -> None:
-    random.seed(seed)
+    random.seed(seed)  # nosec B311 - trainer RNG, not a secret
     np.random.seed(seed)
     torch.manual_seed(seed)
 
 
 def _advance_rng() -> None:
-    random.random()
+    random.random()  # nosec B311 - advances trainer RNG
     np.random.random()
     torch.rand(1)
 
@@ -444,9 +442,8 @@ def _is_fault(fault: FaultSpec | None, step: int, point: FaultPoint) -> bool:
 
 
 def _raise_if_fault(fault: FaultSpec | None, step: int, point: FaultPoint) -> None:
-    if not _is_fault(fault, step, point):
+    if fault is None or not _is_fault(fault, step, point):
         return
-    assert fault is not None
     raiser = _FAULT_RAISERS.get(fault.kind)
     if raiser is None:
         raise ValueError(f"unsupported fault kind: {fault.kind}")

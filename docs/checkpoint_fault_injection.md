@@ -39,8 +39,9 @@ single-GPU run that you interrupt yourself:
    uv run agoge run-status adapters/<run_name> --format table
    ```
 
-4. Confirm `resume_ready` points at the highest complete `checkpoint-N`, not a
-   partial tree. Incomplete `checkpoint-*` directories should be absent from
+4. Confirm `resume_checkpoint_path` is the highest complete `checkpoint-N`
+   and `resume_ready` is `yes` only when that snapshot has usable trainer
+   state. Incomplete `checkpoint-*` directories should be absent from
    that latest path; after `agoge train-qlora` resume they are quarantined
    with an explicit reason under `adapters/<run_name>/.agoge-quarantine/`.
 5. Resume the same config. `run-status` must keep reporting the restored
