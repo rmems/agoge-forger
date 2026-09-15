@@ -5,7 +5,7 @@ trust_remote_code: false
 dataset_path: "pinned-split/splits/train.jsonl"
 dataset_text_field: "text"
 completion_only_loss: true
-output_dir: "~/agoge-data/adapters/granite-4.1-rm760-code-repair-v1-rm760-20260914"
+output_dir: "/home/raulmc/agoge-data/adapters/granite-4.1-rm760-code-repair-v1-rm760-20260914"
 run_name: "rm760-code-repair-v1-rm760-20260914"
 load_in_4bit: true
 bnb_4bit_quant_type: "nf4"

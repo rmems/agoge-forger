@@ -44,7 +44,8 @@ uv run agoge g0-held-out-eval \
   --base-model-id /home/raulmc/.models/ibm-granite/granite-4.1-3b-base \
   --base-revision dacb9cb9157bec98e99b09f285c92a4d58405c96 \
   --context-window 832 --max-new-tokens 576 --seed 17 \
-  --truncation-policy mark_unsupported
+  --truncation-policy mark_unsupported \
+  --device-map cuda:0
 ```
 
 ## G1 train
@@ -59,18 +60,21 @@ uv run agoge train-qlora --config reports/granite-4.1-first-sft/rm760-code-repai
 ```bash
 uv run agoge held-out-eval \
   --split-manifest reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/pinned-split/split_manifest.json \
-  --sft-artifact ~/agoge-data/adapters/granite-4.1-rm760-code-repair-v1-rm760-20260914/<run>/ \
+  --sft-artifact /home/raulmc/agoge-data/adapters/granite-4.1-rm760-code-repair-v1-rm760-20260914/rm760-code-repair-v1-rm760-20260914 \
   --output-dir reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g1-eval \
-  --base-model-id /home/raulmc/.models/ibm-granite/granite-4.1-3b-base \
+  --base-model-id ibm-granite/granite-4.1-3b-base \
   --base-revision dacb9cb9157bec98e99b09f285c92a4d58405c96 \
   --context-window 832 --max-new-tokens 576 --seed 17 \
-  --truncation-policy mark_unsupported
+  --truncation-policy mark_unsupported \
+  --device-map cuda:0
 ```
 
-## Measured results
+## Measured results (2026-09-14, ShipOfTheseus)
 
-Fill after the run completes:
+| Stage | n_scored | accuracy | notes |
+| --- | ---: | ---: | --- |
+| G0 base | 16 | 0.0000 | `g0-eval/g0-base/metrics.json` |
+| G1 paired base | 16 | 0.0000 | `g1-eval/base/metrics.json` |
+| G1 paired SFT | 16 | 0.6250 | `g1-eval/sft/metrics.json` |
 
-- G0 metrics: `g0-eval/g0-base/metrics.json`
-- G1 metrics / comparison: `g1-eval/`
-- Training diagnostics: `training-results.json` (written post-run)
+**Paired conclusion:** improved (10 improved, 0 regressed, 6 tied). See `comparison.json`, `report.md`, `training-results.json`.
