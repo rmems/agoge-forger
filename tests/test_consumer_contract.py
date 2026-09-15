@@ -63,6 +63,14 @@ def test_consumer_contract_cli(tmp_path):
     assert (tmp_path / "out" / "messages_and_instruction.sidecar.json").is_file()
 
 
+def test_consume_file_records_invalid_json_instead_of_crashing(tmp_path):
+    path = tmp_path / "broken.jsonl"
+    path.write_text("{not json}\n")
+    sidecar = consume_file(path)
+    assert sidecar["ok"] is False
+    assert any("Invalid JSON" in error for error in sidecar["errors"])
+
+
 def test_consumer_contract_cli_rejects_future_leakage(tmp_path):
     result = CliRunner().invoke(
         app,
