@@ -77,6 +77,24 @@ def resolve_existing_path(
     return resolved
 
 
+def contains_mount(root: Path) -> bool:
+    """True when ``root`` or anything beneath it is a mount point.
+
+    Moving or deleting a tree that contains a mount copies or unlinks the
+    mounted contents, so callers must refuse those paths instead of walking
+    them with ``shutil.move`` or ``rmtree``.
+    """
+    if os.path.ismount(root):
+        return True
+    try:
+        for parent, dirs, _ in os.walk(root):
+            if any(os.path.ismount(os.path.join(parent, name)) for name in dirs):
+                return True
+    except OSError:
+        return True
+    return False
+
+
 def resolve_output_directory(path: str) -> Path:
     if not path or not path.strip():
         raise ValueError("Output directory must not be empty")

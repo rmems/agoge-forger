@@ -25,7 +25,7 @@ from typing import Any
 from .artifacts.producer_provenance import producer_provenance_from_adapter
 from .artifacts.safetensors_io import sha256_file, write_artifact_index
 from .logging import logger
-from .path_safety import resolve_existing_path
+from .path_safety import contains_mount, resolve_existing_path
 from .run_status import _escape_controls, build_run_status
 from .train.checkpoints import CHECKPOINT_RE, checkpoint_step
 from .train.preflight import BYTES_PER_GB, directory_size_bytes
@@ -185,21 +185,6 @@ def _resolved_run_dir(run_dir: str) -> tuple[Path, Path]:
         if parent.is_symlink():
             raise ValueError(f"Refusing to clean through a symlinked path: {parent}")
     return logical, resolve_existing_path(run_dir, must_be_dir=True)
-
-
-def contains_mount(root: Path) -> bool:
-    """True when `root` or anything beneath it is a mount point.
-
-    `rmtree` descends into a mounted subdirectory and deletes its contents before
-    failing on the busy mount itself, so testing only the checkpoint root would
-    still let `checkpoint-100/cache` take data from another filesystem with it.
-    """
-    if os.path.ismount(root):
-        return True
-    for parent, dirs, _ in os.walk(root):
-        if any(os.path.ismount(os.path.join(parent, name)) for name in dirs):
-            return True
-    return False
 
 
 def _partition_candidates(

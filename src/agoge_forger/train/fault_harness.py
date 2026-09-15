@@ -320,6 +320,7 @@ def _publish_run_root_adapter(config: HarnessConfig, run_dir: Path, staged: Path
         destination = run_dir / filename
         _publish_adapter_file(staged / filename, destination)
         published.append(destination)
+    _rmdir_if_empty(staged)
     return published
 
 
@@ -351,6 +352,19 @@ def _reclaim_export_staging(run_dir: Path, staging_root: Path) -> None:
         staging_root.rmdir()
     except OSError:
         quarantine_tree(staging_root, reason="leftover_staging", run_dir=run_dir)
+
+
+def _rmdir_if_empty(path: Path) -> None:
+    try:
+        leftover = any(path.iterdir())
+    except OSError:
+        leftover = True
+    if leftover:
+        return
+    try:
+        path.rmdir()
+    except OSError:
+        return
 
 
 def _write_checkpoint_tree(staged: Path, snapshot: CheckpointSnapshot) -> None:

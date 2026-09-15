@@ -258,7 +258,7 @@ def test_mounted_checkpoint_is_skipped(tmp_path, monkeypatch):
     run_dir = _run_with_checkpoints(tmp_path, steps=(50, 100))
     mounted = run_dir / "checkpoint-100"
     monkeypatch.setattr(
-        "agoge_forger.cleanup_run.os.path.ismount",
+        "agoge_forger.path_safety.os.path.ismount",
         lambda path: Path(path) == mounted,
     )
 

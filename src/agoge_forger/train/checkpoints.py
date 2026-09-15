@@ -11,7 +11,7 @@ from .._run_status_safetensors import safetensors_usable
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..config import normalize_revision
 from ..logging import logger
-from ..path_safety import resolve_existing_path
+from ..path_safety import contains_mount, resolve_existing_path
 
 CHECKPOINT_RE = re.compile(r"^checkpoint-(\d+)$")
 ADAPTER_WEIGHT_FILES = ("adapter_model.safetensors",)
@@ -202,6 +202,7 @@ def quarantine_tree(
         "details": dict(details or {}),
     }
     encoded = (json.dumps(payload, indent=2) + "\n").encode()
+    _refuse_quarantine_mount(source)
     if source.is_symlink() or source.is_file():
         destination.mkdir()
         publish_bytes_replace(destination / QUARANTINE_REASON_FILENAME, encoded)
@@ -215,6 +216,13 @@ def quarantine_tree(
     destination.mkdir()
     publish_bytes_replace(destination / QUARANTINE_REASON_FILENAME, encoded)
     return destination
+
+
+def _refuse_quarantine_mount(source: Path) -> None:
+    if source.is_symlink():
+        return
+    if contains_mount(source):
+        raise ValueError(f"Refusing to quarantine a mount point: {source}")
 
 
 def _unique_quarantine_destination(run_dir: Path, original_name: str, reason: str) -> Path:

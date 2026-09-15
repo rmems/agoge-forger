@@ -86,6 +86,8 @@ def test_fault_harness_completes_without_downloads_or_gpu(tmp_path: Path) -> Non
         "adapter_weights",
     }
     assert is_adapter_artifact(run_dir) is True
+    assert "leftover_staging" not in _reasons(run_dir)
+    assert _staging_names(run_dir) == []
 
 
 @pytest.mark.parametrize(
@@ -309,6 +311,25 @@ def test_quarantine_tree_moves_directory_symlink_as_leaf(tmp_path: Path) -> None
     assert (moved / "checkpoint-99").is_symlink()
     assert (moved / "checkpoint-99").resolve() == target.resolve()
     assert read_quarantine_reason(moved)["reason"] == "leftover_staging"
+
+
+def test_quarantine_tree_refuses_mount_points(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "run"
+    source = run_dir / "checkpoint-3"
+    source.mkdir(parents=True)
+    (source / "keep-me.txt").write_text("mounted\n")
+    monkeypatch.setattr(
+        "agoge_forger.path_safety.os.path.ismount",
+        lambda path: Path(path) == source,
+    )
+
+    with pytest.raises(ValueError, match="mount point"):
+        quarantine_tree(source, reason="missing_trainer_state", run_dir=run_dir)
+
+    assert (source / "keep-me.txt").read_text() == "mounted\n"
+    assert not (source / QUARANTINE_REASON_FILENAME).exists()
 
 
 def test_quarantine_incomplete_does_not_walk_staging_symlink_target(tmp_path: Path) -> None:
