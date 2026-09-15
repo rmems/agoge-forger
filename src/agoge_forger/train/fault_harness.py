@@ -174,7 +174,7 @@ class HarnessConfig:
             raise ValueError("batch_size must be >= 1")
         if self.fault is None:
             return
-        _validate_fault_schedule(self)
+        _validate_fault_schedule(self.fault, self.max_steps, self.save_steps)
 
 
 @dataclass(frozen=True)
@@ -493,18 +493,23 @@ def _load_mapping(inspection: ResumeInspection, filename: str) -> dict[str, Any]
     return payload if isinstance(payload, dict) else None
 
 
-def _validate_fault_schedule(config: HarnessConfig) -> None:
-    fault = config.fault
-    if fault is None:
-        return
+def _validate_fault_schedule(fault: FaultSpec, max_steps: int, save_steps: int) -> None:
     if fault.point == "during_export":
-        if fault.step != config.max_steps:
-            raise ValueError("during_export fault step must equal max_steps")
+        _require_export_fault_step(fault.step, max_steps)
         return
-    if fault.step > config.max_steps:
-        raise ValueError(_save_step_fault_message(fault.step, config.max_steps))
-    if fault.step % config.save_steps != 0:
-        raise ValueError(_save_step_fault_message(fault.step, config.max_steps))
+    _require_save_step_fault(fault.step, max_steps, save_steps)
+
+
+def _require_export_fault_step(step: int, max_steps: int) -> None:
+    if step != max_steps:
+        raise ValueError("during_export fault step must equal max_steps")
+
+
+def _require_save_step_fault(step: int, max_steps: int, save_steps: int) -> None:
+    if step > max_steps:
+        raise ValueError(_save_step_fault_message(step, max_steps))
+    if step % save_steps != 0:
+        raise ValueError(_save_step_fault_message(step, max_steps))
 
 
 def _save_step_fault_message(step: int, max_steps: int) -> str:
