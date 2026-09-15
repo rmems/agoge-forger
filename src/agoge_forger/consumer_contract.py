@@ -28,14 +28,15 @@ class ConsumerContractError(ValueError):
 
 
 def _cuda_is_available() -> bool:
+    # Call `torch.cuda.is_available` directly. `getattr(..., None)` made Qodana
+    # treat the later call as "'None' object is not callable".
     torch = sys.modules.get("torch")
     if torch is None:
         return False
-    cuda = getattr(torch, "cuda", None)
-    checker = getattr(cuda, "is_available", None)
-    if not callable(checker):
+    try:
+        return bool(torch.cuda.is_available())
+    except (AttributeError, TypeError):
         return False
-    return bool(checker())
 
 
 def refuse_gpu() -> None:
