@@ -1,0 +1,2 @@
+{"messages": [{"role": "system", "content": "You repair public engineering trajectories."}, {"role": "user", "content": "The CI job failed after the env var was removed."}, {"role": "assistant", "content": "Restore FOO_NATIVE=1 on the macOS job and re-run tests."}]}
+{"instruction": "Write the missing test assertion", "input": "assert result.ok is missing", "output": "assert result.ok is True"}
