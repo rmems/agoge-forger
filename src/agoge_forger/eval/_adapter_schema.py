@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from collections.abc import Collection
 from typing import Any
@@ -23,7 +24,7 @@ def require_adapter_tensor_schema(
     context: ArtifactValidationContext,
 ) -> None:
     actual = read_verified_tensor_schema(indexed, {_ADAPTER_WEIGHTS_PATH})
-    expected = expected_adapter_tensor_schema(adapter_config, context)
+    expected = _expected_schema_matching_saved_tensors(adapter_config, context, actual)
     _require_floating_adapter_dtypes(actual)
     require_matching_tensor_schema(
         actual,
@@ -32,6 +33,23 @@ def require_adapter_tensor_schema(
         # Empty PEFT init materializes LoRA in F32; trained adapters are often BF16/F16.
         compare_dtypes=False,
     )
+
+
+def _expected_schema_matching_saved_tensors(
+    adapter_config: dict[str, object],
+    context: ArtifactValidationContext,
+    actual: dict[str, TensorSchemaEntry],
+) -> dict[str, TensorSchemaEntry]:
+    expected = expected_adapter_tensor_schema(adapter_config, context)
+    extra = set(actual) - set(expected)
+    missing = set(expected) - set(actual)
+    if extra and not missing:
+        expected_with_embeddings = expected_adapter_tensor_schema(
+            adapter_config, context, save_embedding_layers=True
+        )
+        if set(actual) == set(expected_with_embeddings):
+            return expected_with_embeddings
+    return expected
 
 
 def _require_floating_adapter_dtypes(actual: dict[str, TensorSchemaEntry]) -> None:
@@ -45,6 +63,8 @@ def _require_floating_adapter_dtypes(actual: dict[str, TensorSchemaEntry]) -> No
 def expected_adapter_tensor_schema(
     adapter_config: dict[str, object],
     context: ArtifactValidationContext,
+    *,
+    save_embedding_layers: bool | None = None,
 ) -> dict[str, TensorSchemaEntry]:
     try:
         lora_config = _validated_lora_config(adapter_config)
@@ -53,10 +73,23 @@ def expected_adapter_tensor_schema(
         raise ValueError(
             "PEFT adapter config cannot resolve a local, remote-code-disabled base schema"
         ) from exc
+    persist_embeddings = (
+        saves_embedding_layers(lora_config)
+        if save_embedding_layers is None
+        else save_embedding_layers
+    )
     try:
         adapter = _empty_adapter(base_config, lora_config, context.model_repository)
-        return _saved_adapter_schema(adapter, lora_config)
-    except (ImportError, OSError, ValueError, KeyError) as exc:
+        return _saved_adapter_schema(adapter, persist_embeddings)
+    except (
+        AttributeError,
+        ImportError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as exc:
         raise ValueError(
             "PEFT adapter config cannot resolve a local, remote-code-disabled base schema"
         ) from exc
@@ -69,7 +102,8 @@ def _validated_lora_config(adapter_config: dict[str, object]) -> Any:
         raise ValueError("only LORA adapters are supported")
     if adapter_config.get("task_type") != "CAUSAL_LM":
         raise ValueError("only CAUSAL_LM adapters are supported")
-    config_values: Any = adapter_config
+    allowed = inspect.signature(LoraConfig.__init__).parameters.keys() - {"self"}
+    config_values: Any = {key: value for key, value in adapter_config.items() if key in allowed}
     return LoraConfig(**config_values)
 
 
@@ -84,13 +118,15 @@ def _empty_adapter(base_config: Any, lora_config: Any, repository: str) -> Any:
         return get_peft_model(base, lora_config, low_cpu_mem_usage=True)
 
 
-def _saved_adapter_schema(adapter: Any, lora_config: Any) -> dict[str, TensorSchemaEntry]:
+def _saved_adapter_schema(
+    adapter: Any, save_embedding_layers: bool
+) -> dict[str, TensorSchemaEntry]:
     from peft.utils import get_peft_model_state_dict
 
     state = get_peft_model_state_dict(
         adapter,
         adapter_name="default",
-        save_embedding_layers=saves_embedding_layers(lora_config),
+        save_embedding_layers=save_embedding_layers,
     )
     return {name: torch_tensor_schema_entry(tensor) for name, tensor in state.items()}
 
