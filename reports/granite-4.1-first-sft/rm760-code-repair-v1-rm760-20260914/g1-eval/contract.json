@@ -1,0 +1,75 @@
+{
+  "base": {
+    "artifact": null,
+    "context_window": 832,
+    "decoding": {
+      "do_sample": false,
+      "max_new_tokens": 576,
+      "seed": 17,
+      "temperature": 0.0,
+      "top_p": 1.0
+    },
+    "logical_task_set_sha256": "337d6457c8cde535a5f41107d4e43230380e395a7888ee24a96dc279d6ba92b5",
+    "model_repository": "ibm-granite/granite-4.1-3b-base",
+    "model_revision": "dacb9cb9157bec98e99b09f285c92a4d58405c96",
+    "role": "causal_base",
+    "scoring_version": "exact-match-v1",
+    "serializer_id": "code-repair-prompt-v1",
+    "serializer_sha256": "63c8a5f301669ab881906713cee461f4741471ae9dac09b9039b8d4b105a6ca1",
+    "serializer_version": "1",
+    "tokenizer_repository": "ibm-granite/granite-4.1-3b-base",
+    "tokenizer_revision": "dacb9cb9157bec98e99b09f285c92a4d58405c96",
+    "tokenizer_sha256": "36d323dc631a515407483271d2540fbc6ab0f07e36eb811afd059fb3ad25008b",
+    "truncation_policy": "mark_unsupported"
+  },
+  "held_out_split_sha256": "b5acdc7b4ebefce84ad3895aadcbf7ea4b3fe6e307fe80011e256d300ca18cb8",
+  "logical_task_ids": [
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00007",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00014",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00025",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00040",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00042",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00043",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00065",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00084",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00128",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00132",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00162",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00194",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00196",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00211",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00235",
+    "pfr-890a8af791f8e079cc8bb97e221f32e9afac59da36174d4fa78e7d18d8727e2d-20260908-00237"
+  ],
+  "logical_task_set_sha256": "337d6457c8cde535a5f41107d4e43230380e395a7888ee24a96dc279d6ba92b5",
+  "schema_version": "agoge.evaluation-contract.v2",
+  "sft": {
+    "artifact": {
+      "artifact_index_path": "../../../../../../agoge-data/adapters/granite-4.1-rm760-code-repair-v1-rm760-20260914/rm760-code-repair-v1-rm760-20260914/artifact_index.json",
+      "artifact_index_sha256": "709ec5f8f008670b0cba7074dbab79a4ce496dadfc16d2a7bbcb926f0e675087",
+      "kind": "peft_adapter"
+    },
+    "context_window": 832,
+    "decoding": {
+      "do_sample": false,
+      "max_new_tokens": 576,
+      "seed": 17,
+      "temperature": 0.0,
+      "top_p": 1.0
+    },
+    "logical_task_set_sha256": "337d6457c8cde535a5f41107d4e43230380e395a7888ee24a96dc279d6ba92b5",
+    "model_repository": "ibm-granite/granite-4.1-3b-base",
+    "model_revision": "dacb9cb9157bec98e99b09f285c92a4d58405c96",
+    "role": "causal_sft",
+    "scoring_version": "exact-match-v1",
+    "serializer_id": "code-repair-prompt-v1",
+    "serializer_sha256": "63c8a5f301669ab881906713cee461f4741471ae9dac09b9039b8d4b105a6ca1",
+    "serializer_version": "1",
+    "tokenizer_repository": "ibm-granite/granite-4.1-3b-base",
+    "tokenizer_revision": "dacb9cb9157bec98e99b09f285c92a4d58405c96",
+    "tokenizer_sha256": "36d323dc631a515407483271d2540fbc6ab0f07e36eb811afd059fb3ad25008b",
+    "truncation_policy": "mark_unsupported"
+  },
+  "split_manifest_path": "../pinned-split/split_manifest.json",
+  "split_manifest_sha256": "182e707139f9e7d531dec6aa61936f9b7f32cc2dfc2d39b7c2ee1d79bc403d2a"
+}

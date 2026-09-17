@@ -1,0 +1,29 @@
+# Measured RM-760 Granite 4.1 QLoRA train config (outside configs/ CI glob).
+model_id: "ibm-granite/granite-4.1-3b-base"
+revision: "dacb9cb9157bec98e99b09f285c92a4d58405c96"
+trust_remote_code: false
+dataset_path: "pinned-split/splits/train.jsonl"
+dataset_text_field: "text"
+completion_only_loss: true
+output_dir: "/home/raulmc/agoge-data/adapters/granite-4.1-rm760-code-repair-v1-rm760-20260914"
+run_name: "rm760-code-repair-v1-rm760-20260914"
+load_in_4bit: true
+bnb_4bit_quant_type: "nf4"
+bnb_4bit_compute_dtype: "bfloat16"
+bnb_4bit_use_double_quant: true
+max_seq_length: 2048
+batch_size: 1
+gradient_accumulation_steps: 8
+gradient_checkpointing: true
+learning_rate: 0.0001
+num_train_epochs: 1
+bf16: true
+seed: 42
+target_modules:
+  - down_proj
+  - gate_proj
+  - k_proj
+  - o_proj
+  - q_proj
+  - up_proj
+  - v_proj

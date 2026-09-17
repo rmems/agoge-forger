@@ -1,0 +1,69 @@
+{
+  "model_id": "openbmb/MiniCPM5-1B-Base",
+  "architectures": [
+    "LlamaForCausalLM"
+  ],
+  "candidate_leaf_names": {
+    "q_proj": {
+      "count": 24,
+      "types": [
+        "Linear"
+      ]
+    },
+    "k_proj": {
+      "count": 24,
+      "types": [
+        "Linear"
+      ]
+    },
+    "v_proj": {
+      "count": 24,
+      "types": [
+        "Linear"
+      ]
+    },
+    "o_proj": {
+      "count": 24,
+      "types": [
+        "Linear"
+      ]
+    },
+    "gate_proj": {
+      "count": 24,
+      "types": [
+        "Linear"
+      ]
+    },
+    "up_proj": {
+      "count": 24,
+      "types": [
+        "Linear"
+      ]
+    },
+    "down_proj": {
+      "count": 24,
+      "types": [
+        "Linear"
+      ]
+    },
+    "lm_head": {
+      "count": 1,
+      "types": [
+        "Linear"
+      ]
+    }
+  },
+  "full_module_matches_count": 169,
+  "recommended_common_targets": [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj"
+  ],
+  "custom_architecture_warnings": [
+    "Always inspect 'gka', 'kalman', or 'ssm' modules before adding them to target_modules."
+  ]
+}

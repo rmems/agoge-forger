@@ -1,0 +1,16 @@
+{
+  "experiment_id": "rm760-code-repair-v1-rm760-20260914",
+  "train": {
+    "config_path": "reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/train.yaml",
+    "rows_accepted": 129,
+    "completion_preprocessing_sha256": "0db5f7ae2156db7cf12cb844b0ccc520d4092ab88a02443e9ece08e40b7affa3",
+    "prepared_sha256": "e52b8319f06faf01727d3f77a97f3f18341845f8c6c8cc2a598c33f6bf2048a8",
+    "train_runtime_s": 47,
+    "train_loss": 0.009792,
+    "train_samples_per_second": 2.745,
+    "max_vram_gb": 5.57,
+    "gpu": "NVIDIA GeForce RTX 5080",
+    "adapter_sha256": "3d96278d086c9738140c0bf040931824dd7aeea23bb50c778e49310e9bdcb558",
+    "adapter_path": "/home/raulmc/agoge-data/adapters/granite-4.1-rm760-code-repair-v1-rm760-20260914/rm760-code-repair-v1-rm760-20260914"
+  }
+}

@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..logging import logger
+
 
 @dataclass(frozen=True)
 class _Token:
@@ -199,6 +201,26 @@ def _write_preprocessing_evidence(output_dir, evidence):
     (output / "completion_preprocessing.json").write_text(json.dumps(evidence, indent=2) + "\n")
 
 
+def _is_over_budget_error(exc: BaseException) -> bool:
+    return isinstance(exc, ValueError) and "exceeding max_seq_length=" in str(exc)
+
+
+def _encode_or_drop_over_budget(row, tokenizer, max_length):
+    try:
+        encoded = completion_tokens(row, tokenizer, max_length)
+    except ValueError as exc:
+        if not _is_over_budget_error(exc):
+            raise
+        return {
+            "input_ids": [],
+            "completion_mask": [],
+            "labels": [],
+            "drop_over_budget": True,
+        }
+    encoded["drop_over_budget"] = False
+    return encoded
+
+
 def prepare_completion_dataset(dataset, tokenizer, training_args):
     """Preserve metadata, validate every row, and persist preprocessing evidence."""
     if training_args.dataset_text_field != "text":
@@ -206,10 +228,29 @@ def prepare_completion_dataset(dataset, tokenizer, training_args):
     reserved = {"labels", "assistant_masks", "seq_lengths"} & set(dataset.column_names)
     if reserved:
         raise ValueError(f"completion rows contain reserved loss controls: {sorted(reserved)}")
-    prepared = dataset.map(
-        lambda row: completion_tokens(row, tokenizer, training_args.max_length),
+    mapped = dataset.map(
+        lambda row: _encode_or_drop_over_budget(row, tokenizer, training_args.max_length),
         load_from_cache_file=False,
     )
+    prepared = mapped.filter(
+        lambda row: not row["drop_over_budget"],
+        load_from_cache_file=False,
+    ).remove_columns(["drop_over_budget"])
+    dropped = len(mapped) - len(prepared)
+    if dropped:
+        logger.info(
+            "completion_only_loss dropped %s/%s rows over max_seq_length=%s",
+            dropped,
+            len(mapped),
+            training_args.max_length,
+        )
+    if len(prepared) == 0:
+        raise ValueError(
+            f"every row exceeds max_seq_length={training_args.max_length} "
+            "(completion_only_loss refuses over-budget rows; none remain)"
+        )
     evidence = _preprocessing_evidence(prepared, training_args.max_length)
+    evidence["dropped_over_max_seq_length"] = dropped
+    evidence["source_rows"] = len(mapped)
     _write_preprocessing_evidence(training_args.output_dir, evidence)
     return prepared

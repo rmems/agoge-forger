@@ -18,6 +18,8 @@ from .contract import (
     PairedEvaluationContract,
     compose_evaluation_contract,
 )
+from .experiment_contract import G0EvaluationContract, compose_g0_evaluation_contract
+from .g0_bundle import G0EvalBundle, publish_g0_eval_bundle
 from .generate import (
     PreparedTask,
     apply_context_window,
@@ -37,6 +39,43 @@ class HeldOutEvalRuntime:
     tokenizer: Any | None = None
     trust_remote_code: bool = False
     device_map: str = "auto"
+
+
+def run_g0_base_eval(
+    *,
+    manifest_path: str | Path,
+    output_dir: str | Path,
+    experiment_id: str,
+    base: EvaluationArm,
+    runtime: HeldOutEvalRuntime | None = None,
+) -> Path:
+    """Evaluate the pinned base model on frozen held-out membership before SFT exists."""
+
+    options = runtime or HeldOutEvalRuntime()
+    destination = Path(output_dir).expanduser()
+    contract = compose_g0_evaluation_contract(
+        manifest_path=manifest_path,
+        contract_path=destination / "g0-contract.json",
+        experiment_id=experiment_id,
+        base=base,
+    )
+    _require_g0_contract(contract)
+    tasks = _prepare_g0_held_out(manifest_path, contract, options.tokenizer)
+    generate = options.generator or _transformers_generator(
+        destination,
+        trust_remote_code=options.trust_remote_code,
+        device_map=options.device_map,
+        tokenizer=options.tokenizer,
+    )
+    generations = generate(contract.base, tasks)
+    _require_generation_identity(contract.logical_task_ids, generations, generations)
+    scores, metrics = score_arm(
+        "causal_base", generations, scoring_version=contract.base.scoring_version
+    )
+    return publish_g0_eval_bundle(
+        destination,
+        G0EvalBundle(contract=contract, generations=generations, metrics=metrics, scores=scores),
+    )
 
 
 def run_held_out_eval(
@@ -78,16 +117,25 @@ def _prepare_held_out(
     contract: PairedEvaluationContract,
     tokenizer: Any | None,
 ) -> tuple[PreparedTask, ...]:
+    return _prepare_g0_held_out(manifest_path, contract, tokenizer)
+
+
+def _prepare_g0_held_out(
+    manifest_path: str | Path,
+    contract: PairedEvaluationContract | G0EvaluationContract,
+    tokenizer: Any | None,
+) -> tuple[PreparedTask, ...]:
+    arm = contract.base
     serializer = SerializerBinding(
         implementation=code_repair_prompt,
-        expected_serializer_id=contract.base.serializer_id,
-        expected_serializer_version=contract.base.serializer_version,
-        expected_serializer_sha256=contract.base.serializer_sha256,
+        expected_serializer_id=arm.serializer_id,
+        expected_serializer_version=arm.serializer_version,
+        expected_serializer_sha256=arm.serializer_sha256,
     )
     tasks = prepare_tasks(_load_held_out_records(manifest_path, contract), serializer)
     if tokenizer is None:
         return tasks
-    return apply_truncation(tasks, tokenizer, contract.base)
+    return apply_truncation(tasks, tokenizer, arm)
 
 
 def _bundle_for_arms(
@@ -151,6 +199,16 @@ def apply_truncation(
     )
 
 
+def _require_g0_contract(contract: G0EvaluationContract) -> None:
+    if contract.base.scoring_version != OBJECTIVE_SCORING_VERSION:
+        raise ValueError(
+            f"G0 contract scoring_version must be {OBJECTIVE_SCORING_VERSION}; "
+            f"got {contract.base.scoring_version!r}"
+        )
+    if contract.base.truncation_policy not in {"reject", "mark_unsupported"}:
+        raise ValueError("code-repair G0 supports truncation_policy reject or mark_unsupported")
+
+
 def _require_canary_contract(contract: PairedEvaluationContract) -> None:
     if contract.base.scoring_version != OBJECTIVE_SCORING_VERSION:
         raise ValueError(
@@ -169,7 +227,8 @@ def _require_canary_contract(contract: PairedEvaluationContract) -> None:
 
 
 def _load_held_out_records(
-    manifest_path: str | Path, contract: PairedEvaluationContract
+    manifest_path: str | Path,
+    contract: PairedEvaluationContract | G0EvaluationContract,
 ) -> tuple[dict[str, Any], ...]:
     binding = bind_frozen_split(manifest_path, "held_out")
     if binding.manifest_sha256 != contract.split_manifest_sha256:
