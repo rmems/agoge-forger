@@ -1,0 +1,27 @@
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/pinned-split/splits/validation.jsonl
+  ai_agent 1-46
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/g1-eval/base/generations.jsonl
+  ai_agent 1-55
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/g1-eval/contract.json
+  ai_agent 1
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/g0-eval/g0-contract.json
+  ai_agent 1
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/g0-eval/g0-contract.json
+  ai_agent 1
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/pinned-split/splits/train.jsonl
+  ai_agent 1-411
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/g0-eval/g0-base/generations.jsonl
+  ai_agent 1-55
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/g0-eval/g0-base/generations.jsonl
+  ai_agent 1-55
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/g1-eval/sft/generations.jsonl
+  ai_agent 1-55
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/pinned-split/splits/held_out.jsonl
+  ai_agent 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f6978160b5beef6a18cdad5f2eccaf18dfa3bb7f",
+  "prompts": {}
+}
