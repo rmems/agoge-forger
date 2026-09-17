@@ -77,6 +77,8 @@ class TrainingPin(FrozenEvaluationModel):
     num_train_epochs: int = Field(ge=1)
     gradient_checkpointing: bool = True
     seed: int
+    loss_type: Literal["nll", "chunked_nll"] = "nll"
+    activation_offloading: bool = False
 
 
 class EvaluationPin(FrozenEvaluationModel):

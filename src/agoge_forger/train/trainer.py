@@ -61,6 +61,8 @@ def _build_training_args(config, out_dir):
         max_length=config.training.max_seq_length,
         dataset_text_field=config.dataset_text_field,
         completion_only_loss=config.training.completion_only_loss,
+        loss_type=config.training.loss_type,
+        activation_offloading=config.training.activation_offloading,
     )
 
 
