@@ -1,0 +1,117 @@
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/reproduction.md
+  s_6478cc25663638::t_4591e189fe1707 1-10,12,18-75
+  s_8622631f7713a0::t_bad694b2cbe277 11,13-17
+src/agoge_forger/config.py
+  s_8622631f7713a0::t_7f5593b1279fd5 151-152
+  s_8622631f7713a0::t_07b82484439ae6 41-51
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-seq4096/report.md
+  s_be2515db1f785f::t_42b7dcf52dd010 1-2,4-22
+  s_8622631f7713a0::t_101ffa7b6ea996 3
+tests/test_role_text.py
+  s_8622631f7713a0::t_813e8829ad2c28 15
+  s_8622631f7713a0::t_d919bb6b87ff37 1-8,11-14,16-29
+  s_8622631f7713a0::t_9bcd1b181915d7 9-10
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-seq4096/train.yaml
+  s_a3a6b59905c577::t_53e5a6e7867a0f 1-31
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/report.md
+  s_8622631f7713a0::t_831056f1dd2f4a 3,5,9-11,15-18,22-24,28-29
+  s_6478cc25663638::t_38093d6f5cf185 1-2,4,6-8,12-14,19-21,25-27
+src/agoge_forger/eval/experiment_contract.py
+  s_8622631f7713a0::t_860a0ba3e69480 80-81
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/completion_preprocessing.json
+  s_8622631f7713a0::t_6d6d5597009b28 1-12
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/train.yaml
+  s_8622631f7713a0::t_881357ca4690e3 1-30
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/training-results.json
+  s_8622631f7713a0::t_35c955aff027b5 1-20
+tests/test_trainer_trl_api.py
+  s_8622631f7713a0::t_e9de8525eda7d1 129-138
+  s_8622631f7713a0::t_933db699aaf135 249-255,261-276
+  s_8622631f7713a0::t_f21342116fd456 256-260
+docs/completion-only-training.md
+  s_8622631f7713a0::t_ea7321efd8beaf 43-44
+  s_8622631f7713a0::t_5c5dc788b3500b 52-55
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/reproduction.md
+  s_8622631f7713a0::t_5a4da80459bb06 5
+  s_8622631f7713a0::t_40333946093061 9-16
+  s_8622631f7713a0::t_8f7bad659ee849 1-4,6-8,17-71
+src/agoge_forger/role_text.py
+  s_8622631f7713a0::t_c33a821998c0dd 10-11
+  s_8622631f7713a0::t_0f95f3804c435d 23-25
+  s_8622631f7713a0::t_5ab290a33130b2 1-9,12-22,26-28,31-32
+  s_8622631f7713a0::t_146b7758193fc3 29-30
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/g0-eval/g0-base/metrics.json
+  s_8622631f7713a0::t_21f80fce4cee5d 1
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-seq4096/experiment-contract.json
+  s_a3a6b59905c577::t_87c8841e05e62a 1-73
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-seq4096/reproduction.md
+  s_a3a6b59905c577::t_e92005df0ffa5b 1-69
+AGENTS.md
+  s_0e920af3f3395c::t_420965db5c95fd 17-37
+src/agoge_forger/train/completion.py
+  s_8622631f7713a0::t_21bb236cf212a7 8
+  s_8622631f7713a0::t_991f234066e7e5 9
+  s_8622631f7713a0::t_12423c78196234 204-223,231-232,235-251,253-254
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/train.yaml
+  s_6478cc25663638::t_c22f0a7854add8 1-34
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/report.md
+  s_8622631f7713a0::t_019551a0c3c091 1-27
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/completion_preprocessing.json
+  s_8622631f7713a0::t_ea57c58137bffe 1-12
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/training-results.json
+  s_8622631f7713a0::t_669986e3a4f304 1-17
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v1/pinned-split/split_report.md
+  s_8622631f7713a0::t_d8be72c4e82a25 1-4,6-13,17-33
+src/agoge_forger/train/trainer.py
+  s_8622631f7713a0::t_bb237f95ae235c 64-65
+reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/experiment-contract.json
+  s_6478cc25663638::t_2019b7dbb495e1 1-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9df73642459a1490e57d8fbdf178f2d31c9102f1",
+  "prompts": {},
+  "sessions": {
+    "s_0e920af3f3395c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "8efdb433-8cc8-4041-a937-3b3bae391b4c",
+        "model": "cursor-grok-4.6-medium"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    },
+    "s_6478cc25663638": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "47f71cd6-e5ba-4c57-ae8f-4c12ff8b2d67",
+        "model": "cursor-grok-4.6-high-fast"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    },
+    "s_8622631f7713a0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1ede9dd0-865c-45c3-86e3-a03316f62201",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    },
+    "s_a3a6b59905c577": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e37a50b5-b57b-4aa9-b6f8-628568bdf8b4",
+        "model": "cursor-grok-4.6-high-fast"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    },
+    "s_be2515db1f785f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6db9336e-b051-412a-aec1-5ba055a2fa07",
+        "model": "cursor-grok-4.6-high-fast"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
