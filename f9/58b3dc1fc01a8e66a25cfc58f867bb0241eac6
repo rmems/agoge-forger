@@ -1,0 +1,83 @@
+src/agoge_forger/telemetry/window.py
+  s_91121e289ef81f::t_53ec077bfbe287 10,18-24,69-72,98-99,105-107,111,119-132,134-135,144-145,147-160
+  s_91121e289ef81f::t_caad5ad1dd5aa9 133,136-143
+uv.lock
+  ai_agent 85,2519-2539
+tests/test_telemetry_trainer.py
+  s_91121e289ef81f::t_1f90f0c466af67 92
+  s_91121e289ef81f::t_128abba7ff5d0d 24-25
+src/agoge_forger/config.py
+  s_91121e289ef81f::t_5040ba6bb4a5a3 4,7
+src/agoge_forger/telemetry/join_identity.py
+  s_91121e289ef81f::t_a7ac4380c7020d 1-36
+tests/test_telemetry.py
+  s_91121e289ef81f::t_1e37cce707babe 375,377
+  s_91121e289ef81f::t_fb252eaff52c8c 67-98,100,104-105
+  s_91121e289ef81f::t_7f8419ee696c39 304-374,376,378-390
+  s_91121e289ef81f::t_e06a3d3f6069c0 194-198
+  s_91121e289ef81f::t_c6e18ac9281d29 185
+  s_91121e289ef81f::t_4144f7c2473590 101-103
+  s_91121e289ef81f::t_38770a6af6e726 23
+  s_91121e289ef81f::t_98a37bdedce529 15
+  s_91121e289ef81f::t_8140f6a2d64aad 99
+src/agoge_forger/telemetry/session.py
+  s_91121e289ef81f::t_10291a688e9891 113
+  s_91121e289ef81f::t_e27b9446a310f4 198,210-211,213-215
+  s_91121e289ef81f::t_187595ddfffb5e 170
+  s_91121e289ef81f::t_990abe659c820d 26
+  s_91121e289ef81f::t_9af234a2529332 98
+  s_91121e289ef81f::t_5250b1a7f5c6b6 163-169,171-177
+  s_91121e289ef81f::t_119654e9a7859f 45
+  s_91121e289ef81f::t_1499394986ce7c 265-272
+  s_91121e289ef81f::t_a51d96a3f526e2 73
+  s_91121e289ef81f::t_42fb06677bf034 243
+  s_91121e289ef81f::t_4113579c56d787 156-162
+src/agoge_forger/telemetry/join_window.py
+  s_91121e289ef81f::t_ebf7d7241fa397 1-43
+src/agoge_forger/telemetry/join.py
+  s_91121e289ef81f::t_df93647da56486 10-14,45-46,51,60
+src/agoge_forger/telemetry/summarize_names.py
+  s_91121e289ef81f::t_098deba2e59aa4 1-26,30-31,33-34,39-42
+  s_91121e289ef81f::t_fe0de285bc2bff 27-29,32,35-38
+src/agoge_forger/telemetry/summarize.py
+  s_91121e289ef81f::t_e8561c053f7380 7-20,28-29,32-34,39-43
+src/agoge_forger/telemetry/markers.py
+  s_91121e289ef81f::t_778c2a78b48553 59-64
+  s_91121e289ef81f::t_7464d0c56c2a7b 13
+src/agoge_forger/telemetry/schema.py
+  s_91121e289ef81f::t_1210bcf8402be1 7,19-28
+  s_91121e289ef81f::t_cbfaa92c3e7ef9 52,56-58,61-62
+src/agoge_forger/telemetry/callback.py
+  s_91121e289ef81f::t_d3e1fff652fa9c 8,14,23-24,32,36-37,43-44,46-47,56,59-76,82,84-85,87-98,100-103,105-117,120-128,138,142,146,148,150,164-185
+src/agoge_forger/telemetry/summarize_overhead.py
+  s_91121e289ef81f::t_1147783fa62aed 1-35
+src/agoge_forger/telemetry/summarize_events.py
+  s_91121e289ef81f::t_b93507376e3bb1 1-101
+src/agoge_forger/telemetry/backends.py
+  s_91121e289ef81f::t_e7712950f67cfc 56
+src/agoge_forger/telemetry/summarize_families.py
+  s_91121e289ef81f::t_f752dd5e8e2f2b 1-105,111-115,118-119,128-130,135-140,142-159,161-162
+  s_91121e289ef81f::t_f49f061ee431a3 106-110,120-127
+  s_91121e289ef81f::t_83940199b32202 160
+  s_91121e289ef81f::t_3f8a8029f10115 116-117,131-134,141
+src/agoge_forger/_cli_train.py
+  s_91121e289ef81f::t_ac2fd50ea58b0c 27
+src/agoge_forger/profile_window.py
+  s_91121e289ef81f::t_b58a28b5a08471 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f958b3dc1fc01a8e66a25cfc58f867bb0241eac6",
+  "prompts": {},
+  "sessions": {
+    "s_91121e289ef81f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6d5208d5-5e65-4704-9795-872c93819fa8",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
