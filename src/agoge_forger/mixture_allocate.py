@@ -5,11 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from .mixture_schema import (
-    ExclusionReason,
-    MixtureExclusion,
-    MixturePolicy,
-)
+from .mixture_result_schema import MixtureExclusion
+from .mixture_schema import ExclusionReason, MixturePolicy
 from .split_schema import sha256_bytes
 
 

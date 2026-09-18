@@ -8,7 +8,8 @@ from typing import Any
 
 from ._atomic_file import publish_bytes_noreplace, write_fsynced_bytes
 from ._strict_json import decode_json_object
-from .mixture_schema import TOKEN_LEDGER_VERSION, TokenLedger, TokenLedgerRecord
+from .mixture_ledger_schema import TokenLedger, TokenLedgerRecord
+from .mixture_schema import TOKEN_LEDGER_VERSION
 from .split_contract import SPLIT_NAMES, SplitManifest, SplitMember, SplitName, TokenStatistics
 from .split_loaders import iter_materialized_records
 from .split_schema import canonical_json_bytes, sha256_bytes
@@ -23,7 +24,6 @@ def write_token_ledger(
 ) -> TokenLedger:
     """Write per-record token lengths without mutating canonical split identity."""
 
-    spec = _verified_spec(derivation)
     path = Path(manifest_path).expanduser().resolve(strict=True)
     manifest_snapshot = path.read_bytes()
     manifest = validate_split_manifest_snapshot(path, manifest_snapshot)

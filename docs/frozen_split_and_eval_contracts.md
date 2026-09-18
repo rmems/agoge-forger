@@ -149,15 +149,19 @@ any source-level split digest.
 ## Compose a matched-budget mixture
 
 `compose_mixture` consumes already-frozen split snapshots plus tokenizer-revision
-sidecars. It allocates an exact accepted-token budget with largest-remainder
-rounding, keeps lineage/group/content components atomic, and refuses silent
-oversampling when a source cannot fill its quota.
+sidecars. It allocates per-source quotas that always sum to the accepted-token
+budget with largest-remainder rounding, keeps lineage/group/content components
+atomic, and refuses silent oversampling when a source cannot fill its quota. The
+published mixture can contain fewer accepted tokens than the budget when a
+source underfills; that shortfall is recorded and never taken from another
+source.
 
 Inputs must pin immutable source revisions and SHA-256 digests. All token
-statistics and token ledgers in one composition must share the same tokenizer
-and serializer revisions. Lineage groups cannot cross `train` /
-`validation` / `held_out` or experiment arms, including reserved identities
-from a previously materialized arm.
+statistics and token ledgers in one composition must share the same model,
+tokenizer, serializer, and `context_limit` pins. Lineage, canonical, group, and
+content identities cannot cross `train` / `validation` / `held_out` or
+experiment arms, including reserved identities from a previously materialized
+arm.
 
 ```bash
 uv run agoge compose-mixture \

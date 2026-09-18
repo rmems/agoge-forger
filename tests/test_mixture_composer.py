@@ -11,7 +11,7 @@ from agoge_forger.mixture_contract import (
     write_token_ledger,
 )
 from agoge_forger.mixture_ledger import load_token_ledger, require_ledger_matches_statistics
-from agoge_forger.mixture_schema import TokenLedger, TokenLedgerRecord
+from agoge_forger.mixture_ledger_schema import TokenLedger, TokenLedgerRecord
 from agoge_forger.split_contract import (
     SPLIT_NAMES,
     SerializerBinding,
@@ -84,6 +84,7 @@ def _write_sidecars(
     *,
     tokens: int = 10,
     tokenizer_revision: str = TOKENIZER_REVISION,
+    context_limit: int = 64,
     truncated_ids: frozenset[str] = frozenset(),
 ) -> None:
     manifest_path = snapshot / "split_manifest.json"
@@ -123,7 +124,7 @@ def _write_sidecars(
         serializer_id="plain-text",
         serializer_version="1",
         serializer_sha256=SERIALIZER_SHA256,
-        context_limit=64,
+        context_limit=context_limit,
         splits=splits,
     )
     ledger = TokenLedger(
@@ -163,6 +164,8 @@ def _compose_spec(
     budget: int,
     experiment_arm: str = "F",
     reserved_lineage_ids: tuple[str, ...] = (),
+    reserved_canonical_ids: tuple[str, ...] = (),
+    reserved_content_sha256: tuple[str, ...] = (),
     reserved_experiment_arm: str | None = None,
 ) -> MixtureCompositionSpec:
     return MixtureCompositionSpec(
@@ -176,6 +179,8 @@ def _compose_spec(
             _source_spec(source_id, snapshot, weight) for source_id, snapshot, weight in sources
         ),
         reserved_lineage_ids=reserved_lineage_ids,
+        reserved_canonical_ids=reserved_canonical_ids,
+        reserved_content_sha256=reserved_content_sha256,
         reserved_experiment_arm=reserved_experiment_arm,
     )
 
@@ -276,6 +281,22 @@ def test_tokenizer_revision_mismatch_is_rejected(tmp_path):
         )
 
 
+def test_context_limit_mismatch_is_rejected(tmp_path):
+    synthetic = _freeze_source(tmp_path, "synthetic")
+    public = _freeze_source(tmp_path, "public")
+    _write_sidecars(synthetic, tokens=10)
+    _write_sidecars(public, tokens=10, context_limit=32)
+
+    with pytest.raises(ValueError, match="tokenizer-revision mismatch"):
+        compose_mixture(
+            _compose_spec(
+                (("synthetic", synthetic, 1), ("public", public, 1)),
+                budget=20,
+            ),
+            tmp_path / "mixture",
+        )
+
+
 def test_lineage_groups_are_not_split_to_fill_a_quota(tmp_path):
     snapshot = _freeze_source(
         tmp_path,
@@ -310,6 +331,23 @@ def test_reserved_lineage_cannot_cross_experiment_arms(tmp_path):
                 (("synthetic", snapshot, 1),),
                 budget=10,
                 reserved_lineage_ids=(reserved,),
+                reserved_experiment_arm="E",
+            ),
+            tmp_path / "mixture",
+        )
+
+
+def test_reserved_canonical_cannot_cross_experiment_arms(tmp_path):
+    snapshot = _freeze_source(tmp_path, "synthetic")
+    _write_sidecars(snapshot, tokens=10)
+    reserved = validate_split_manifest(snapshot / "split_manifest.json").splits["train"].members[0]
+
+    with pytest.raises(ValueError, match="cannot cross experiment arms"):
+        compose_mixture(
+            _compose_spec(
+                (("synthetic", snapshot, 1),),
+                budget=10,
+                reserved_canonical_ids=(reserved.canonical_id,),
                 reserved_experiment_arm="E",
             ),
             tmp_path / "mixture",

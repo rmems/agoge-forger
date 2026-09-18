@@ -6,15 +6,15 @@ from ._strict_json import decode_json_object
 from .mixture_allocate import allocate_token_quotas
 from .mixture_compose import compose_mixture
 from .mixture_ledger import load_token_ledger, write_token_ledger
+from .mixture_ledger_schema import TokenLedger
+from .mixture_result_schema import MixtureManifest
 from .mixture_schema import (
     MIXTURE_ALGORITHM_VERSION,
     MIXTURE_MANIFEST_VERSION,
     TOKEN_LEDGER_VERSION,
     MixtureCompositionSpec,
-    MixtureManifest,
     MixturePolicy,
     MixtureSourceSpec,
-    TokenLedger,
 )
 
 __all__ = [

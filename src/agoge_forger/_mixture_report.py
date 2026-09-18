@@ -1,6 +1,6 @@
 """Rendering helpers for immutable mixture metadata."""
 
-from .mixture_schema import MixtureManifest
+from .mixture_result_schema import MixtureManifest
 from .split_schema import canonical_json_bytes
 
 

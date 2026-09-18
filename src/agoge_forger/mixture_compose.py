@@ -5,9 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from ._atomic_directory import require_rename_noreplace_support
 from ._mixture_report import manifest_bytes, render_report
@@ -19,26 +17,17 @@ from .mixture_allocate import (
     allocate_token_quotas,
     select_groups_for_quota,
 )
-from .mixture_ledger import (
-    load_token_ledger,
-    load_token_statistics,
-    require_ledger_matches_statistics,
-)
-from .mixture_schema import (
+from .mixture_identity import require_lineage_isolation
+from .mixture_load import LoadedSource, load_source, require_tokenizer_agreement
+from .mixture_result_schema import (
     MixtureArtifact,
-    MixtureCompositionSpec,
     MixtureLineageAudit,
     MixtureManifest,
     MixtureMember,
     MixtureSourceResult,
-    MixtureSourceSpec,
-    MixtureTokenizerPin,
-    TokenLedger,
-    tokenizer_pin_from_statistics,
 )
-from .path_safety import resolve_existing_path
-from .split_contract import SPLIT_NAMES, SplitManifest, SplitMember, SplitName, TokenStatistics
-from .split_loaders import iter_materialized_records
+from .mixture_schema import MixtureCompositionSpec, MixtureTokenizerPin
+from .split_contract import SplitMember
 from .split_materialize import (
     SourceRecord,
     _atomic_components,
@@ -46,34 +35,7 @@ from .split_materialize import (
     _publish_snapshot,
     exclusive_write,
 )
-from .split_schema import canonical_json_bytes, sha256_file
-from .split_validation import validate_split_manifest
-
-
-@dataclass(frozen=True)
-class _LoadedSource:
-    spec: MixtureSourceSpec
-    manifest_path: Path
-    manifest: SplitManifest
-    manifest_sha256: str
-    statistics: TokenStatistics
-    statistics_sha256: str
-    ledger: TokenLedger
-    ledger_sha256: str
-    consumed_split: SplitName
-    records: tuple[SelectableRecord, ...]
-
-
-@dataclass
-class _IdentityOwners:
-    owners: dict[str, dict[str, tuple[str, SplitName, str]]] = field(
-        default_factory=lambda: {
-            "lineage": {},
-            "canonical": {},
-            "content": {},
-            "group": {},
-        }
-    )
+from .split_schema import sha256_file
 
 
 def compose_mixture(
@@ -87,9 +49,9 @@ def compose_mixture(
     destination = Path(output_dir).expanduser()
     _refuse_existing_destination(destination)
     consumed = spec.policy.consumed_split
-    loaded = tuple(_load_source(source, spec_dir, consumed) for source in spec.sources)
-    tokenizer = _require_tokenizer_agreement(loaded)
-    _require_lineage_isolation(loaded, spec)
+    loaded = tuple(load_source(source, spec_dir, consumed) for source in spec.sources)
+    tokenizer = require_tokenizer_agreement(loaded)
+    require_lineage_isolation(loaded, spec)
     source_ids = tuple(source.spec.source_id for source in loaded)
     weights = {source.spec.source_id: source.spec.weight for source in loaded}
     quotas = allocate_token_quotas(spec.policy.accepted_token_budget, weights, source_ids)
@@ -103,7 +65,7 @@ def _publish_mixture(
     destination: Path,
     spec: MixtureCompositionSpec,
     tokenizer: MixtureTokenizerPin,
-    loaded: Sequence[_LoadedSource],
+    loaded: Sequence[LoadedSource],
     selections: Sequence[SourceSelection],
 ) -> MixtureManifest:
     staging_parent = nearest_existing_output_ancestor(destination)
@@ -130,200 +92,21 @@ def _refuse_existing_destination(destination: Path) -> None:
         raise FileExistsError(
             f"refusing silent regeneration because output path already exists: {destination}"
         )
+    _refuse_symlinked_ancestors(destination)
 
 
-def _load_source(
-    source: MixtureSourceSpec,
-    spec_dir: str | Path | None,
-    consumed: SplitName,
-) -> _LoadedSource:
-    base = Path(spec_dir).expanduser() if spec_dir is not None else Path.cwd()
-    manifest_path = _resolve_input(source.split_manifest, base)
-    statistics_path = _resolve_input(source.token_statistics, base)
-    ledger_path = _resolve_input(source.token_ledger, base)
-    manifest = validate_split_manifest(manifest_path)
-    manifest_sha256 = sha256_file(manifest_path)
-    statistics, statistics_sha256 = load_token_statistics(statistics_path)
-    ledger, ledger_sha256 = load_token_ledger(ledger_path)
-    _require_sidecar_identity(manifest, manifest_sha256, statistics, ledger)
-    require_ledger_matches_statistics(ledger, statistics)
-    records = _consumed_records(source.source_id, manifest_path, manifest, ledger, consumed)
-    return _LoadedSource(
-        spec=source,
-        manifest_path=manifest_path,
-        manifest=manifest,
-        manifest_sha256=manifest_sha256,
-        statistics=statistics,
-        statistics_sha256=statistics_sha256,
-        ledger=ledger,
-        ledger_sha256=ledger_sha256,
-        consumed_split=consumed,
-        records=records,
-    )
-
-
-def _resolve_input(value: str, spec_dir: Path) -> Path:
-    candidate = Path(value).expanduser()
-    if not candidate.is_absolute():
-        candidate = spec_dir / candidate
-    return resolve_existing_path(str(candidate), must_be_file=True)
-
-
-def _require_sidecar_identity(
-    manifest: SplitManifest,
-    manifest_sha256: str,
-    statistics: TokenStatistics,
-    ledger: TokenLedger,
-) -> None:
-    if statistics.split_manifest_sha256 != manifest_sha256:
-        raise ValueError(
-            "token statistics split-manifest digest does not match the frozen manifest"
-        )
-    if ledger.split_manifest_sha256 != manifest_sha256:
-        raise ValueError("token ledger split-manifest digest does not match the frozen manifest")
-    expected = {split: manifest.splits[split].sha256 for split in SPLIT_NAMES}
-    if statistics.source_split_sha256 != expected:
-        raise ValueError("token statistics source-split digests do not match the frozen manifest")
-    if ledger.source_split_sha256 != expected:
-        raise ValueError("token ledger source-split digests do not match the frozen manifest")
-
-
-def _consumed_records(
-    source_id: str,
-    manifest_path: Path,
-    manifest: SplitManifest,
-    ledger: TokenLedger,
-    consumed: SplitName,
-) -> tuple[SelectableRecord, ...]:
-    token_by_id = {
-        record.canonical_id: record for record in ledger.records if record.split == consumed
-    }
-    artifact = manifest.splits[consumed]
-    rows = tuple(iter_materialized_records(manifest_path, manifest, consumed))
-    if len(rows) != len(artifact.members):
-        raise ValueError(
-            f"{source_id}: frozen {consumed} membership does not match materialized rows"
-        )
-    if set(token_by_id) != {member.canonical_id for member in artifact.members}:
-        raise ValueError(f"{source_id}: token ledger does not cover the consumed {consumed} split")
-    return tuple(
-        SelectableRecord(
-            source_id=source_id,
-            canonical_id=member.canonical_id,
-            lineage_id=member.lineage_id,
-            group_id=member.group_id,
-            source_coordinate=member.source_coordinate,
-            content_sha256=member.content_sha256,
-            accepted_tokens=token_by_id[member.canonical_id].accepted_tokens,
-            truncated=token_by_id[member.canonical_id].truncated,
-            line=canonical_json_bytes(row) + b"\n",
-        )
-        for member, row in zip(artifact.members, rows, strict=True)
-    )
-
-
-def _require_tokenizer_agreement(sources: Sequence[_LoadedSource]) -> MixtureTokenizerPin:
-    pin = tokenizer_pin_from_statistics(sources[0].statistics)
-    pin_fields = (
-        "tokenizer_id",
-        "tokenizer_revision",
-        "tokenizer_sha256",
-        "serializer_id",
-        "serializer_version",
-        "serializer_sha256",
-    )
-    for source in sources[1:]:
-        other = tokenizer_pin_from_statistics(source.statistics)
-        for field_name in pin_fields:
-            if getattr(pin, field_name) != getattr(other, field_name):
-                raise ValueError(
-                    "tokenizer-revision mismatch: source "
-                    f"{sources[0].spec.source_id} {field_name}="
-                    f"{getattr(pin, field_name)!r} does not match "
-                    f"{source.spec.source_id} {getattr(other, field_name)!r}"
-                )
-    return pin
-
-
-def _require_lineage_isolation(
-    sources: Sequence[_LoadedSource], spec: MixtureCompositionSpec
-) -> None:
-    owners = _IdentityOwners()
-    arm = spec.policy.experiment_arm
-    for source in sources:
-        for split in SPLIT_NAMES:
-            for member in source.manifest.splits[split].members:
-                _observe_identity(owners, source.spec.source_id, split, arm, member)
-    _reject_reserved_identities(sources, spec)
-
-
-def _reject_reserved_identities(
-    sources: Sequence[_LoadedSource], spec: MixtureCompositionSpec
-) -> None:
-    reserved_arm = spec.reserved_experiment_arm or "reserved"
-    reserved_lineages = set(spec.reserved_lineage_ids)
-    reserved_groups = set(spec.reserved_group_ids)
-    for source in sources:
-        for record in source.records:
-            if record.lineage_id in reserved_lineages:
-                raise ValueError(
-                    "lineage groups cannot cross experiment arms: "
-                    f"{record.lineage_id} reserved for {reserved_arm}"
-                )
-            if record.group_id is not None and record.group_id in reserved_groups:
-                raise ValueError(
-                    "lineage groups cannot cross experiment arms: "
-                    f"group {record.group_id} reserved for {reserved_arm}"
-                )
-
-
-def _observe_identity(
-    owners: _IdentityOwners,
-    source_id: str,
-    split: SplitName,
-    arm: str,
-    member: Any,
-) -> None:
-    values = {
-        "lineage": member.lineage_id,
-        "canonical": member.canonical_id,
-        "content": member.content_sha256,
-        "group": member.group_id,
-    }
-    for kind, value in values.items():
-        if value is None:
-            continue
-        previous = owners.owners[kind].get(value)
-        if previous is None:
-            owners.owners[kind][value] = (source_id, split, arm)
-            continue
-        _reject_identity_collision(kind, value, previous, (source_id, split, arm))
-
-
-def _reject_identity_collision(
-    kind: str,
-    value: str,
-    previous: tuple[str, SplitName, str],
-    current: tuple[str, SplitName, str],
-) -> None:
-    prev_source, prev_split, prev_arm = previous
-    source_id, split, arm = current
-    if prev_split != split:
-        raise ValueError(
-            "lineage groups cannot cross train/validation/held-out: "
-            f"{kind} {value} in {prev_source}:{prev_split} and {source_id}:{split}"
-        )
-    if prev_arm != arm:
-        raise ValueError(
-            f"lineage groups cannot cross experiment arms: {kind} {value} in {prev_arm} and {arm}"
-        )
-    if prev_source != source_id:
-        label = "duplicate-lineage" if kind == "lineage" else f"duplicate {kind}"
-        raise ValueError(f"{label}: {value} in {prev_source} and {source_id}")
+def _refuse_symlinked_ancestors(destination: Path) -> None:
+    current = destination.expanduser().absolute().parent
+    while True:
+        if current.is_symlink():
+            raise ValueError(f"refusing to publish through a symlinked ancestor: {current}")
+        if current.parent == current:
+            return
+        current = current.parent
 
 
 def _select_source(
-    source: _LoadedSource,
+    source: LoadedSource,
     quota: int,
     spec: MixtureCompositionSpec,
 ) -> SourceSelection:
@@ -391,7 +174,7 @@ def _write_mixture_artifact(
 def _build_manifest(
     spec: MixtureCompositionSpec,
     tokenizer: MixtureTokenizerPin,
-    loaded: Sequence[_LoadedSource],
+    loaded: Sequence[LoadedSource],
     selections: Sequence[SourceSelection],
     artifact: MixtureArtifact,
 ) -> MixtureManifest:
@@ -437,7 +220,7 @@ def _build_manifest(
     )
 
 
-def _source_result(source: _LoadedSource, selection: SourceSelection) -> MixtureSourceResult:
+def _source_result(source: LoadedSource, selection: SourceSelection) -> MixtureSourceResult:
     return MixtureSourceResult(
         source_id=source.spec.source_id,
         provenance_class=source.spec.provenance_class,
