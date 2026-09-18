@@ -66,6 +66,7 @@ merged/
 gguf/
 runs/
 smoke_output/
+reports/
 
 # Datasets
 datasets/samples/*.jsonl
