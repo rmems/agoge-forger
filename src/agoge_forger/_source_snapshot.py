@@ -25,10 +25,7 @@ class _SnapshotIdentities:
 
 
 def copy_source_snapshot(source: Path, snapshot: Path) -> str:
-    try:
-        copied, identities = _copy_source_bytes(source, snapshot)
-    except OSError as exc:
-        raise ValueError(f"source changed while creating immutable snapshot: {source}") from exc
+    copied, identities = _copy_source_bytes(source, snapshot)
     _require_unchanged_source(source, copied, identities)
     return copied
 

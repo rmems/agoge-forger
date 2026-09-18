@@ -5,14 +5,17 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from peft import LoraConfig, get_peft_model
+from transformers import LlamaConfig, LlamaForCausalLM
 
 from agoge_forger.artifacts.producer_provenance import (
     producer_provenance_from_adapter,
     producer_provenance_from_config,
+    require_producer_provenance,
 )
 from agoge_forger.artifacts.safetensors_io import assert_no_unsafe_weight_bins, write_artifact_index
 from agoge_forger.config import ExperimentConfig
-from agoge_forger.eval import ArtifactProducerProvenance
+from agoge_forger.eval import ArtifactProducerProvenance, verified_adapter_source
 from agoge_forger.eval.contract import ArtifactValidationContext, require_artifact_index
 from agoge_forger.split_contract import sha256_file
 from agoge_forger.train.lora import train_lora
@@ -249,3 +252,86 @@ def test_producer_provenance_from_config_fails_closed_without_revision_digest(tm
     config = config.model_copy(update={"revision": None})
     with pytest.raises(ValueError, match="cannot construct producer_provenance"):
         producer_provenance_from_config(config)
+
+
+def test_require_producer_provenance_rejects_mismatched_sealed_identity(tmp_path):
+    config = _frozen_train_config(tmp_path)
+    sealed = producer_provenance_from_config(config)
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    write_complete_adapter_model(adapter)
+    write_artifact_index(str(adapter), producer_provenance=sealed)
+
+    mismatched = sealed.model_copy(update={"revision": "9" * 40})
+    with pytest.raises(ValueError, match="does not match the adapter artifact identity"):
+        require_producer_provenance(mismatched, adapter)
+
+    assert require_producer_provenance(sealed, adapter) == sealed
+    assert require_producer_provenance(None, adapter) == sealed
+
+
+def test_verified_adapter_source_requires_caller_supplied_identity(
+    tmp_path, cached_test_base_config
+):
+    config = _frozen_train_config(tmp_path)
+    sealed = producer_provenance_from_config(config)
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    write_complete_adapter_model(adapter)
+    write_artifact_index(str(adapter), producer_provenance=sealed)
+
+    with (
+        pytest.raises(ValueError, match="does not match the contracted"),
+        verified_adapter_source(
+            adapter,
+            replace(_peft_context(sealed), split_manifest_sha256="a" * 64),
+        ),
+    ):
+        pass
+
+    with verified_adapter_source(adapter, _peft_context(sealed)) as source:
+        assert source.provenance == sealed
+
+
+def test_artifact_validation_accepts_unknown_adapter_config_keys(tmp_path, cached_test_base_config):
+    config = _frozen_train_config(tmp_path)
+    provenance = producer_provenance_from_config(config)
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    write_complete_adapter_model(adapter)
+    payload = json.loads((adapter / "adapter_config.json").read_text())
+    payload["future_peft_flag"] = True
+    (adapter / "adapter_config.json").write_text(json.dumps(payload))
+    index_path = Path(write_artifact_index(str(adapter), producer_provenance=provenance))
+    require_artifact_index(index_path, sha256_file(index_path), _peft_context(provenance))
+
+
+def test_artifact_validation_accepts_saved_embedding_layers(tmp_path, cached_test_base_config):
+    config = _frozen_train_config(tmp_path)
+    provenance = producer_provenance_from_config(config)
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    base = LlamaForCausalLM(
+        LlamaConfig(
+            vocab_size=16,
+            hidden_size=8,
+            intermediate_size=16,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+        )
+    )
+    base.name_or_path = provenance.base_model_name_or_path
+    peft_model = get_peft_model(
+        base,
+        LoraConfig(
+            r=2,
+            lora_alpha=4,
+            target_modules=["q_proj", "v_proj"],
+            task_type="CAUSAL_LM",
+            revision=provenance.revision,
+        ),
+    )
+    peft_model.save_pretrained(adapter, save_embedding_layers=True)
+    index_path = Path(write_artifact_index(str(adapter), producer_provenance=provenance))
+    require_artifact_index(index_path, sha256_file(index_path), _peft_context(provenance))

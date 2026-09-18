@@ -1,0 +1,58 @@
+name: Consumer Contract
+
+# Fast PR gate: Agoge parser compatibility without training, GPU, or Hub tokens.
+
+on:
+  pull_request:
+    paths:
+      - "src/agoge_forger/datasets.py"
+      - "src/agoge_forger/consumer_contract.py"
+      - "src/agoge_forger/_cli_consumer.py"
+      - "src/agoge_forger/cli.py"
+      - "src/agoge_forger/path_safety.py"
+      - "src/agoge_forger/_atomic_file.py"
+      - "tests/fixtures/consumer/**"
+      - "tests/test_consumer_contract.py"
+      - ".github/workflows/consumer_contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  consumer-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CUDA_VISIBLE_DEVICES: "-1"
+      HF_HUB_OFFLINE: "1"
+      HF_DATASETS_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Install dev dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
+
+      - name: Parse sample derivatives through the current dataset parser
+        run: |
+          .venv/bin/agoge consumer-contract \
+            --input tests/fixtures/consumer/messages_and_instruction.jsonl \
+            --out-dir reports/consumer-contract
+
+      - name: Reject leakage and malformed JSONL
+        run: .venv/bin/pytest tests/test_consumer_contract.py -q
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: consumer-contract-sidecars
+          path: reports/consumer-contract/
+          if-no-files-found: error
