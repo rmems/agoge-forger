@@ -229,3 +229,11 @@ mixed, null, or inconclusive. Close #100 only after a bounded local canary
 produces valid scored paired outcomes (`n_scored > 0` on both arms) and the
 bundle is inspected. A run whose tasks are all invalid or unsupported is not
 sufficient.
+
+## Prometheus consumer contract
+
+`agoge consumer-contract` loads sample `messages` and instruction/input/output
+JSONL through `normalize_row`, writes a provenance sidecar, and rejects
+future-event leakage. It is a CPU-only compatibility gate: no tokenizer
+download, no GPU, and no `HF_TOKEN`.
+

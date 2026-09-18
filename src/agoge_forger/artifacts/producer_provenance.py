@@ -49,13 +49,38 @@ def require_producer_provenance(
     producer_provenance: ArtifactProducerProvenance | Mapping[str, object] | None,
     adapter_path: PathLike,
 ) -> ArtifactProducerProvenance:
-    """Return supplied provenance, or the adapter index copy, or fail closed."""
+    """Return sealed adapter provenance, rejecting a mismatched caller copy."""
 
+    supplied = _coerce_optional_provenance(producer_provenance)
+    sealed = _sealed_provenance_if_present(adapter_path)
+    if sealed is None:
+        if supplied is None:
+            return producer_provenance_from_adapter(adapter_path)
+        return supplied
+    if supplied is None or supplied == sealed:
+        return sealed
+    raise ValueError("supplied producer_provenance does not match the adapter artifact identity")
+
+
+def _coerce_optional_provenance(
+    producer_provenance: ArtifactProducerProvenance | Mapping[str, object] | None,
+) -> ArtifactProducerProvenance | None:
     if producer_provenance is None:
-        return producer_provenance_from_adapter(adapter_path)
+        return None
     if isinstance(producer_provenance, ArtifactProducerProvenance):
         return producer_provenance
     return ArtifactProducerProvenance.model_validate(producer_provenance)
+
+
+def _sealed_provenance_if_present(adapter_path: PathLike) -> ArtifactProducerProvenance | None:
+    index_path = Path(adapter_path) / "artifact_index.json"
+    if not index_path.is_file():
+        return None
+    payload = _load_artifact_index_payload(index_path)
+    provenance = payload.get("producer_provenance")
+    if provenance is None:
+        return None
+    return ArtifactProducerProvenance.model_validate(provenance)
 
 
 def _require_immutable_revision(revision: str | None) -> str:

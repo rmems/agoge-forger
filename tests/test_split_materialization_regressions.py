@@ -1,3 +1,4 @@
+import errno
 import os
 from pathlib import Path
 
@@ -378,6 +379,44 @@ def test_source_snapshot_rehash_detects_same_metadata_content_race(
 
     with pytest.raises(ValueError, match="source changed while creating immutable snapshot"):
         _source_snapshot.copy_source_snapshot(source, snapshot)
+
+
+@pytest.mark.parametrize("error_code", [errno.ENOSPC, errno.EACCES, errno.EEXIST])
+def test_source_snapshot_propagates_io_errors_with_errno(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_code: int
+) -> None:
+    from agoge_forger import _source_snapshot
+
+    source = tmp_path / "source.jsonl"
+    snapshot = tmp_path / "snapshot.jsonl"
+    source.write_bytes(b"payload\n")
+    original_open = Path.open
+
+    def fail_exclusive_create(path, mode="r", *args, **kwargs):
+        if path == snapshot and "x" in mode:
+            raise OSError(error_code, os.strerror(error_code))
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_exclusive_create)
+    with pytest.raises(OSError) as excinfo:
+        _source_snapshot.copy_source_snapshot(source, snapshot)
+    assert excinfo.value.errno == error_code
+    assert "source changed while creating immutable snapshot" not in str(excinfo.value)
+
+
+def test_source_snapshot_propagates_existing_snapshot_eexist(tmp_path: Path) -> None:
+    from agoge_forger import _source_snapshot
+
+    source = tmp_path / "source.jsonl"
+    snapshot = tmp_path / "snapshot.jsonl"
+    source.write_bytes(b"payload\n")
+    snapshot.write_bytes(b"already-present\n")
+
+    with pytest.raises(FileExistsError) as excinfo:
+        _source_snapshot.copy_source_snapshot(source, snapshot)
+    assert excinfo.value.errno == errno.EEXIST
+    assert "source changed while creating immutable snapshot" not in str(excinfo.value)
+    assert snapshot.read_bytes() == b"already-present\n"
 
 
 def test_materialization_stages_on_output_filesystem(tmp_path: Path, monkeypatch) -> None:
