@@ -1,0 +1,72 @@
+src/agoge_forger/release/verify_config.py
+  s_2170b87ca6d8a4::t_019d9072cc8be4 17
+  s_2170b87ca6d8a4::t_726ede7b87f46c 1-4,6-16,18-105
+  s_2170b87ca6d8a4::t_24fa08cc4d6bbe 5
+src/agoge_forger/release/verify_errors.py
+  s_2170b87ca6d8a4::t_a0127109f2f09d 49-50
+  s_2170b87ca6d8a4::t_f44f28df93c41b 1-48,51-68
+src/agoge_forger/release/report.py
+  s_2170b87ca6d8a4::t_b5d7ff278f9477 5
+  s_2170b87ca6d8a4::t_0609b7f9cdbba3 56
+  s_2170b87ca6d8a4::t_fc094f5255030e 63-64,68-81
+tests/test_verify_bundle.py
+  s_2170b87ca6d8a4::t_c65a1bdfb3f704 260
+  s_2170b87ca6d8a4::t_b757c5edf1f4a9 342-346
+  s_2170b87ca6d8a4::t_d9668543ff003c 171-172
+  s_2170b87ca6d8a4::t_70a8c30c7dc9c8 189-259,261-328,349-368
+  s_2170b87ca6d8a4::t_93fe29ef1fb603 329-341,347-348
+tests/reproducibility_bundle_cases.py
+  s_2170b87ca6d8a4::t_cd4a32fd398b9a 14
+  s_2170b87ca6d8a4::t_a046e4978d836c 58-64
+src/agoge_forger/release/__init__.py
+  s_2170b87ca6d8a4::t_d404079a2c3b15 22
+  s_2170b87ca6d8a4::t_7f5a377e2335fb 12
+uv.lock
+  ai_agent 85,2519-2539
+src/agoge_forger/release/verify_split.py
+  s_2170b87ca6d8a4::t_92a2f2f6801979 56
+  s_2170b87ca6d8a4::t_9e7c4d47bf5732 1-55,57-64
+src/agoge_forger/release/schema.py
+  s_2170b87ca6d8a4::t_a66c9356ef5ce0 6,13-14,32-41,49,69-70,74,79-85,95-116,134-135
+src/agoge_forger/release/verify_artifacts.py
+  s_2170b87ca6d8a4::t_9b60ad7a532e95 1-12,14-15,18-172,174-219,221-292,294-295,297-346
+  s_2170b87ca6d8a4::t_97927630c1bf2b 220
+  s_2170b87ca6d8a4::t_01daea515aee02 173
+src/agoge_forger/eval/_descriptor_bundle.py
+  s_2170b87ca6d8a4::t_c53986ad9c1b03 79-87
+  s_2170b87ca6d8a4::t_7b60e627442d43 218-236
+src/agoge_forger/release/verify_evaluation.py
+  s_2170b87ca6d8a4::t_cf32c852e76ec4 1-241,244-264
+  s_2170b87ca6d8a4::t_c3eca9b30c3a07 242-243
+src/agoge_forger/release/verify.py
+  s_2170b87ca6d8a4::t_c0f10d0874908d 43
+  s_2170b87ca6d8a4::t_c0c43439c0ab2f 12
+  s_2170b87ca6d8a4::t_4710cef26c6b60 15-25,27,38,45-47,49-51,59-65,69-71,77-80
+  s_2170b87ca6d8a4::t_cf96691382e65e 14
+src/agoge_forger/eval/_artifact_schema.py
+  s_2170b87ca6d8a4::t_929d0df19b1a70 113-118
+src/agoge_forger/release/verify_io.py
+  s_2170b87ca6d8a4::t_d05fc47a7d3031 1-8,10-37,40-90
+  s_2170b87ca6d8a4::t_01ecafd78554fa 38-39
+  s_2170b87ca6d8a4::t_847383fa173b76 9
+src/agoge_forger/release/verify_inventory.py
+  s_2170b87ca6d8a4::t_83bff6049ea8f3 35-38
+  s_2170b87ca6d8a4::t_1e2cefc41f3872 1-28,32-34,39-144
+  s_2170b87ca6d8a4::t_b6fde9119c889a 29-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d10f7741dbd0da82b74ed5ea86c854d40b91225b",
+  "prompts": {},
+  "sessions": {
+    "s_2170b87ca6d8a4": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bc2b2134-a8a9-4c42-bb20-adb08316ebe0",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
