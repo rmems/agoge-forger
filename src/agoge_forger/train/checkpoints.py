@@ -15,6 +15,7 @@ from ..logging import logger
 from ..path_safety import resolve_existing_path
 
 CHECKPOINT_RE = re.compile(r"^checkpoint-(\d+)$")
+ADAPTER_CONFIG_FILENAME = "adapter_config.json"
 ADAPTER_WEIGHT_FILES = ("adapter_model.safetensors",)
 LEGACY_ADAPTER_WEIGHT_FILES = ("adapter_model.bin",)
 QUARANTINE_DIRNAME = ".agoge-quarantine"
@@ -76,7 +77,7 @@ def is_adapter_artifact(path: PathLike, *, allow_unsafe: bool = False) -> bool:
     adapter_dir = Path(path)
     if not adapter_dir.is_dir():
         return False
-    if not (adapter_dir / "adapter_config.json").is_file():
+    if not (adapter_dir / ADAPTER_CONFIG_FILENAME).is_file():
         return False
 
     weight_files: tuple[str, ...] = ADAPTER_WEIGHT_FILES
@@ -124,7 +125,7 @@ def find_latest_valid_checkpoint(run_dir: PathLike, *, allow_unsafe: bool = Fals
 
 def _load_adapter_config(adapter_path: PathLike) -> dict:
     adapter_dir = Path(adapter_path)
-    config_path = adapter_dir / "adapter_config.json"
+    config_path = adapter_dir / ADAPTER_CONFIG_FILENAME
     with config_path.open() as handle:
         return json.load(handle)
 
@@ -134,7 +135,7 @@ def infer_base_model_from_adapter(adapter_path: PathLike) -> str:
     base_model = adapter_config.get("base_model_name_or_path")
     if not base_model:
         raise ValueError(
-            f"base_model_name_or_path not found in {Path(adapter_path) / 'adapter_config.json'}"
+            f"base_model_name_or_path not found in {Path(adapter_path) / ADAPTER_CONFIG_FILENAME}"
         )
     return base_model
 
@@ -162,7 +163,7 @@ def _is_named_checkpoint_dir(path: Path) -> bool:
 def _checkpoint_gap_reason(checkpoint_dir: Path, *, allow_unsafe: bool) -> str:
     if not (checkpoint_dir / "trainer_state.json").is_file():
         return "missing_trainer_state"
-    if not (checkpoint_dir / "adapter_config.json").is_file():
+    if not (checkpoint_dir / ADAPTER_CONFIG_FILENAME).is_file():
         return "missing_adapter_config"
     if not _has_adapter_weights(checkpoint_dir, allow_unsafe=allow_unsafe):
         return "missing_adapter_weights"

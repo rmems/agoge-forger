@@ -67,6 +67,21 @@ def _reasons(run_dir: Path) -> set[str]:
     return reasons
 
 
+def _trainer_rng_fingerprint() -> tuple[object, ...]:
+    """Compare restored trainer streams without drawing from ``random``/legacy NumPy."""
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    torch_state = torch.random.get_rng_state().detach().cpu().tolist()
+    return (
+        python_state,
+        numpy_state[0],
+        bytes(numpy_state[1]),
+        int(numpy_state[2]),
+        tuple(numpy_state[3:]),
+        torch_state,
+    )
+
+
 def test_fault_harness_completes_without_downloads_or_gpu(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     result = run_fault_harness(_config(run_dir))
@@ -211,9 +226,9 @@ def test_rng_and_sampler_restore_from_the_last_complete_checkpoint(tmp_path: Pat
     checkpoint = result.resume.checkpoint
     assert checkpoint is not None
     inspect_resume_state(checkpoint, restore=True)
-    first = (random.random(), float(np.random.random()), float(torch.rand(1)))
+    first = _trainer_rng_fingerprint()
     inspect_resume_state(checkpoint, restore=True)
-    second = (random.random(), float(np.random.random()), float(torch.rand(1)))
+    second = _trainer_rng_fingerprint()
     assert first == second
     assert result.resume.sampler_position == 2
 

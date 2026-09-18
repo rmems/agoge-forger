@@ -26,6 +26,7 @@ from .checkpoint_publish import (
     rollback_run_dir,
 )
 from .checkpoints import (
+    ADAPTER_CONFIG_FILENAME,
     ADAPTER_WEIGHT_FILES,
     EXPORT_STAGING_PREFIX,
     PathLike,
@@ -78,7 +79,7 @@ _LORA_SHAPES: dict[str, tuple[int, ...]] = {
     "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": (1, 8),
     "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": (8, 1),
 }
-_ADAPTER_FILENAMES = ("adapter_config.json", ADAPTER_WEIGHT_FILES[0])
+_ADAPTER_FILENAMES = (ADAPTER_CONFIG_FILENAME, ADAPTER_WEIGHT_FILES[0])
 _OPTIMIZER_SHAPES: list[list[tuple[int, ...]]] = [[(1, 8), (8, 1)], []]
 
 
@@ -403,7 +404,7 @@ def _write_adapter_files(directory: Path) -> None:
         "target_modules": ["q_proj"],
         "base_model_name_or_path": "harness/fake-base",
     }
-    write_fsynced_bytes(directory / "adapter_config.json", (json.dumps(config) + "\n").encode())
+    write_fsynced_bytes(directory / ADAPTER_CONFIG_FILENAME, (json.dumps(config) + "\n").encode())
     write_fsynced_bytes(directory / ADAPTER_WEIGHT_FILES[0], _safetensors_bytes(_LORA_SHAPES))
 
 
@@ -538,8 +539,24 @@ def _seed_rng(seed: int) -> None:
 
 def _advance_rng() -> None:
     random.random()  # nosec B311 - advances trainer RNG
-    np.random.random()
+    _advance_numpy_module_rng()
     torch.rand(1)
+
+
+def _advance_numpy_module_rng() -> None:
+    """Advance the module RandomState that resume restores via ``set_state``."""
+    next_seed = int(np.random.default_rng(_numpy_stream_seed()).integers(1, 2**31 - 1))
+    np.random.seed(next_seed)
+
+
+def _numpy_stream_seed() -> int:
+    payload = np.random.get_state()
+    if not isinstance(payload, tuple) or len(payload) < 3:
+        return 1
+    keys, position = payload[1], payload[2]
+    if not hasattr(keys, "__getitem__"):
+        return int(position)
+    return int(keys[0]) ^ int(position)
 
 
 def _is_fault(fault: FaultSpec | None, step: int, point: FaultPoint) -> bool:
