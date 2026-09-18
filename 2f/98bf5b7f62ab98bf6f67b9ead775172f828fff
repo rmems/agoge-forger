@@ -1,0 +1,61 @@
+src/agoge_forger/mixture_compose.py
+  s_2170b87ca6d8a4::t_08375788621b1d 52-54
+  s_2170b87ca6d8a4::t_971af443165f42 22,29
+  s_2170b87ca6d8a4::t_20980473512bcc 68
+  s_2170b87ca6d8a4::t_f5e215c0367937 20-21,30,38
+  s_2170b87ca6d8a4::t_dddcfac6b4e3ee 109,177,223
+  s_2170b87ca6d8a4::t_f23106b337adc4 95,98-105
+uv.lock
+  ai_agent 85,2519-2539
+src/agoge_forger/mixture_schema.py
+  s_2170b87ca6d8a4::t_a92c2978887be3 61,63
+  s_2170b87ca6d8a4::t_e283452360346d 15
+  s_2170b87ca6d8a4::t_77ce7977cad41d 47-48
+  s_2170b87ca6d8a4::t_1e66502aa2d698 7,9
+src/agoge_forger/mixture_load.py
+  s_2170b87ca6d8a4::t_d414eae594fd5e 1-14,17-152
+  s_2170b87ca6d8a4::t_e1f3c2a0fef1df 15-16
+src/agoge_forger/mixture_ledger_schema.py
+  s_2170b87ca6d8a4::t_2c7bfcb3ce5be3 12
+  s_2170b87ca6d8a4::t_10e223bc233502 1-11,13-55
+src/agoge_forger/mixture_result_schema.py
+  s_2170b87ca6d8a4::t_2c7bfcb3ce5be3 11-13
+  s_2170b87ca6d8a4::t_30150e812ae128 1-10,14-169
+src/agoge_forger/mixture_identity.py
+  s_2170b87ca6d8a4::t_baa23e2af4a98b 1-115
+src/agoge_forger/mixture_contract.py
+  s_2170b87ca6d8a4::t_51a5e94427f42d 9-10
+src/agoge_forger/mixture_allocate.py
+  s_2170b87ca6d8a4::t_943eda4dca2941 8-9
+src/agoge_forger/_mixture_report.py
+  s_2170b87ca6d8a4::t_aa846414bd1709 3
+docs/frozen_split_and_eval_contracts.md
+  s_2170b87ca6d8a4::t_335692b6904712 152-157,160-164
+src/agoge_forger/mixture_ledger.py
+  s_2170b87ca6d8a4::t_c3008001580701 11-12
+tests/test_mixture_composer.py
+  s_2170b87ca6d8a4::t_3bf3fcde14cc10 87
+  s_2170b87ca6d8a4::t_a14c7677637470 284-299
+  s_2170b87ca6d8a4::t_2c7bfcb3ce5be3 343
+  s_2170b87ca6d8a4::t_4e571683805bdc 182-183
+  s_2170b87ca6d8a4::t_9cd8b840134f68 340-342,344-356
+  s_2170b87ca6d8a4::t_9550418c0a75b5 167-168
+  s_2170b87ca6d8a4::t_b4da8015cc10b0 14
+  s_2170b87ca6d8a4::t_7a9ff0348e5bbe 127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2f98bf5b7f62ab98bf6f67b9ead775172f828fff",
+  "prompts": {},
+  "sessions": {
+    "s_2170b87ca6d8a4": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bc2b2134-a8a9-4c42-bb20-adb08316ebe0",
+        "model": "grok-4.6"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
