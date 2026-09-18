@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
-_TRANSFER = ("memcpy", "hto d", "dtoh", "htod", "d2h", "h2d", "copy_kernel", "cudamemcpy")
-_SYNC = ("sync", "synchronize", "wait")
-_ATTENTION = ("flash", "sdpa", "fmha", "attention", "mem_eff")
-_GEMM = ("gemm", "cutlass", "nvjet", "wmma", "mma", "addmm", "bmm", "mm_")
-_ALLOC = ("alloc", "malloc", "caching", "reserved", "cudamalloc")
+_FAMILIES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("memcpy", "hto d", "dtoh", "htod", "d2h", "h2d", "copy_kernel", "cudamemcpy"), "transfer"),
+    (("sync", "synchronize", "wait"), "sync"),
+    (("flash", "sdpa", "fmha", "attention", "mem_eff"), "attention"),
+    (("gemm", "cutlass", "nvjet", "wmma", "mma", "addmm", "bmm", "mm_"), "gemm"),
+    (("alloc", "malloc", "caching", "reserved", "cudamalloc"), "allocator"),
+)
 
 
 def classify_name(name: str) -> str:
     lowered = name.lower()
-    if _contains(lowered, _TRANSFER):
-        return "transfer"
-    if _contains(lowered, _SYNC):
-        return "sync"
-    if _contains(lowered, _ATTENTION):
-        return "attention"
-    if _contains(lowered, _GEMM) or lowered in {"mm", "matmul"}:
-        return "gemm"
-    if _contains(lowered, _ALLOC):
-        return "allocator"
+    for needles, family in _FAMILIES:
+        if family == "gemm" and lowered in {"mm", "matmul"}:
+            return family
+        if _contains(lowered, needles):
+            return family
     return "other"
 
 
