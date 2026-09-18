@@ -9,6 +9,7 @@ from .report import (
 from .schema import (
     BUNDLE_INVENTORY_NAME,
     BUNDLE_SCHEMA_VERSION,
+    BundlePointers,
     ReproducibilityBundle,
     write_reproducibility_bundle,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "BUNDLE_INVENTORY_NAME",
     "BUNDLE_SCHEMA_VERSION",
     "BundleFailure",
+    "BundlePointers",
     "BundleVerificationReport",
     "BundleVerifyFormat",
     "ReproducibilityBundle",

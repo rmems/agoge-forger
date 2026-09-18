@@ -168,8 +168,8 @@ def test_bundled_split_still_validates(tmp_path):
 
 
 def test_verify_module_does_not_import_model_runtimes():
-    source = Path(__file__).resolve().parents[1] / "src" / "agoge_forger" / "release" / "verify.py"
-    text = source.read_text(encoding="utf-8")
+    release = Path(__file__).resolve().parents[1] / "src" / "agoge_forger" / "release"
+    text = "\n".join(path.read_text(encoding="utf-8") for path in sorted(release.glob("*.py")))
     assert "transformers" not in text
     assert "torch" not in text
     assert "safe_open" not in text
@@ -186,3 +186,183 @@ def test_unknown_evaluation_contract_version_fails(tmp_path):
     report = verify_reproducibility_bundle(bundle)
     assert report.verdict == "fail"
     assert "unknown_schema_version" in _codes(report)
+
+
+def test_deleted_listed_file_is_missing_not_crash(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    (bundle / "adapter" / "adapter_model.safetensors").unlink()
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert "missing_file" in _codes(report)
+
+
+def test_artifact_index_digest_mismatch_fails(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    target = bundle / "adapter" / "adapter_model.safetensors"
+    target.write_bytes(target.read_bytes() + b"\x00")
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert "modified_file" in _codes(report)
+
+
+def test_trust_remote_code_fails(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    _rewrite_locked_and_run_config(bundle, trust_remote_code=True)
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert "locked_config" in _codes(report)
+    assert any("trust_remote_code" in failure.message for failure in report.failures)
+
+
+def test_missing_revision_fails(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    _rewrite_locked_and_run_config(bundle, revision=None)
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert "locked_config" in _codes(report)
+    assert any("revision" in failure.message for failure in report.failures)
+
+
+def test_evaluation_model_identity_mismatch_fails(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    contract_path = bundle / EVAL_CONTRACT_PATH
+    payload = json.loads(contract_path.read_text(encoding="utf-8"))
+    payload["base"]["model_repository"] = "other/base-model"
+    payload["sft"]["model_repository"] = "other/base-model"
+    contract_path.write_bytes(canonical_json_bytes(payload) + b"\n")
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert any("model repository" in failure.message for failure in report.failures)
+
+
+def test_artifact_kind_must_match_selected_index(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    contract_path = bundle / EVAL_CONTRACT_PATH
+    payload = json.loads(contract_path.read_text(encoding="utf-8"))
+    payload["sft"]["artifact"]["kind"] = "merged_model"
+    contract_path.write_bytes(canonical_json_bytes(payload) + b"\n")
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert "artifact_index" in _codes(report)
+
+
+def test_malformed_adapter_config_fails(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    config_path = bundle / "adapter" / "adapter_config.json"
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    del payload["peft_type"]
+    config_path.write_bytes(canonical_json_bytes(payload) + b"\n")
+    _rewrite_adapter_index(bundle)
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert any("peft_type" in failure.message for failure in report.failures)
+
+
+def test_sharded_merged_artifact_requires_shards(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    merged = bundle / "merged"
+    merged.mkdir()
+    (merged / "config.json").write_bytes(canonical_json_bytes({"model_type": "llama"}) + b"\n")
+    (merged / "model.safetensors.index.json").write_bytes(
+        canonical_json_bytes({"weight_map": {"weight": "model-00001-of-00001.safetensors"}}) + b"\n"
+    )
+    from agoge_forger.release.schema import BundlePointers, write_reproducibility_bundle
+    from agoge_forger.split_contract import sha256_file
+    from tests.evaluation_contract_cases import model_provenance, write_artifact_index
+    from tests.reproducibility_bundle_cases import (
+        ADAPTER_INDEX_PATH,
+        EVAL_CONTRACT_PATH,
+        LOCKED_CONFIG_PATH,
+        RUN_MANIFEST_PATH,
+        SPLIT_MANIFEST_PATH,
+    )
+
+    split_digest = sha256_file(bundle / SPLIT_MANIFEST_PATH)
+    train_digest = json.loads((bundle / SPLIT_MANIFEST_PATH).read_text(encoding="utf-8"))["splits"][
+        "train"
+    ]["sha256"]
+    write_artifact_index(
+        merged,
+        model_provenance(split_manifest_sha256=split_digest, train_split_sha256=train_digest),
+    )
+    write_reproducibility_bundle(
+        bundle,
+        BundlePointers(
+            run_manifest_path=RUN_MANIFEST_PATH,
+            locked_config_path=LOCKED_CONFIG_PATH,
+            split_manifest_path=SPLIT_MANIFEST_PATH,
+            adapter_artifact_index_path=ADAPTER_INDEX_PATH,
+            evaluation_contract_path=EVAL_CONTRACT_PATH,
+            merged_artifact_index_path="merged/artifact_index.json",
+        ),
+    )
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert any("missing shards" in failure.message for failure in report.failures)
+
+
+def test_table_report_escapes_control_characters(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    (bundle / "bad\nname.txt").write_text("unexpected\n", encoding="utf-8")
+    report = verify_reproducibility_bundle(bundle)
+    table = format_verification_table(report)
+    assert "\\u000a" in table
+    assert "bad\nname" not in table
+
+
+def test_read_only_bundle_still_passes(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    _chmod_tree(bundle, dir_mode=0o555, file_mode=0o444)
+    try:
+        report = verify_reproducibility_bundle(bundle)
+        assert report.verdict == "pass"
+    finally:
+        _chmod_tree(bundle, dir_mode=0o755, file_mode=0o644)
+
+
+def _rewrite_adapter_index(bundle) -> None:
+    from agoge_forger.split_contract import sha256_file
+    from tests.evaluation_contract_cases import model_provenance, write_artifact_index
+    from tests.reproducibility_bundle_cases import SPLIT_MANIFEST_PATH
+
+    split_digest = sha256_file(bundle / SPLIT_MANIFEST_PATH)
+    train_digest = json.loads((bundle / SPLIT_MANIFEST_PATH).read_text(encoding="utf-8"))["splits"][
+        "train"
+    ]["sha256"]
+    write_artifact_index(
+        bundle / "adapter",
+        model_provenance(split_manifest_sha256=split_digest, train_split_sha256=train_digest),
+    )
+    index = bundle / "adapter" / "artifact_index.json"
+    contract_path = bundle / EVAL_CONTRACT_PATH
+    payload = json.loads(contract_path.read_text(encoding="utf-8"))
+    payload["sft"]["artifact"]["artifact_index_sha256"] = sha256_file(index)
+    contract_path.write_bytes(canonical_json_bytes(payload) + b"\n")
+
+
+def _rewrite_locked_and_run_config(bundle, **updates):
+    from tests.reproducibility_bundle_cases import LOCKED_CONFIG_PATH, RUN_MANIFEST_PATH
+
+    locked_path = bundle / LOCKED_CONFIG_PATH
+    locked = json.loads(locked_path.read_text(encoding="utf-8"))
+    locked.update(updates)
+    locked_path.write_bytes(canonical_json_bytes(locked) + b"\n")
+    run_path = bundle / RUN_MANIFEST_PATH
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["config"].update(updates)
+    run_path.write_bytes(canonical_json_bytes(run) + b"\n")
+
+
+def _chmod_tree(root, *, dir_mode: int, file_mode: int) -> None:
+    import os
+
+    for dirpath, _dirnames, filenames in os.walk(root):
+        os.chmod(dirpath, dir_mode)
+        for name in filenames:
+            os.chmod(Path(dirpath) / name, file_mode)

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
-
-from ..run_status import _escape_controls
 
 VERIFICATION_REPORT_VERSION: Literal["agoge.bundle-verification.v1"] = (
     "agoge.bundle-verification.v1"
@@ -54,16 +53,32 @@ class BundleVerificationReport:
 def format_verification_table(report: BundleVerificationReport) -> str:
     rows = [
         ("verdict", report.verdict),
-        ("bundle", _escape_controls(report.bundle_path)),
+        ("bundle", escape_controls(report.bundle_path)),
         ("bundle_schema_version", report.bundle_schema_version or "-"),
         ("failures", str(len(report.failures))),
     ]
     width = max(len(label) for label, _ in rows) + 1
     lines = [f"{label:<{width}} {value}" for label, value in rows]
     for failure in report.failures:
-        location = f"{failure.path}: " if failure.path else ""
-        lines.append(f"  {failure.code}: {location}{_escape_controls(failure.message)}")
+        location = f"{escape_controls(failure.path)}: " if failure.path else ""
+        lines.append(f"  {failure.code}: {location}{escape_controls(failure.message)}")
     return "\n".join(lines)
+
+
+def escape_controls(text: str) -> str:
+    """Render control, format, and surrogate characters as escapes."""
+
+    unsafe = {"Cc", "Cf", "Cs"}
+
+    def escaped(character: str) -> str:
+        codepoint = ord(character)
+        prefix, width = ("u", 4) if codepoint <= 0xFFFF else ("U", 8)
+        return f"\\{prefix}{codepoint:0{width}x}"
+
+    return "".join(
+        escaped(character) if unicodedata.category(character) in unsafe else character
+        for character in text
+    )
 
 
 def sort_failures(

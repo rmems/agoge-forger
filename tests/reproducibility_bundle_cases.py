@@ -11,7 +11,7 @@ from agoge_forger.eval.contract import (
     held_out_task_ids,
     logical_task_set_sha256,
 )
-from agoge_forger.release.schema import write_reproducibility_bundle
+from agoge_forger.release.schema import BundlePointers, write_reproducibility_bundle
 from agoge_forger.split_contract import (
     SplitManifest,
     SplitMaterializationSpec,
@@ -55,11 +55,13 @@ def write_valid_bundle(tmp_path: Path) -> Path:
 def reseal_bundle(bundle: Path) -> Path:
     return write_reproducibility_bundle(
         bundle,
-        run_manifest_path=RUN_MANIFEST_PATH,
-        locked_config_path=LOCKED_CONFIG_PATH,
-        split_manifest_path=SPLIT_MANIFEST_PATH,
-        adapter_artifact_index_path=ADAPTER_INDEX_PATH,
-        evaluation_contract_path=EVAL_CONTRACT_PATH,
+        BundlePointers(
+            run_manifest_path=RUN_MANIFEST_PATH,
+            locked_config_path=LOCKED_CONFIG_PATH,
+            split_manifest_path=SPLIT_MANIFEST_PATH,
+            adapter_artifact_index_path=ADAPTER_INDEX_PATH,
+            evaluation_contract_path=EVAL_CONTRACT_PATH,
+        ),
     )
 
 

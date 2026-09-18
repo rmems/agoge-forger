@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from pydantic import Field, model_validator
 
 from .._atomic_file import publish_bytes_replace
-from ..eval._artifact_schema import FrozenEvaluationModel, _portable_artifact_path
-from ..eval._descriptor_bundle import open_bundle, read_relative_file, scan_bundle
+from ..eval._artifact_schema import FrozenEvaluationModel, portable_artifact_path
+from ..eval._descriptor_bundle import hash_relative_file, open_bundle, scan_bundle
 from ..split_schema import canonical_json_bytes
 
 BUNDLE_INVENTORY_NAME = "reproducibility-bundle.json"
@@ -28,6 +29,16 @@ _POINTER_FIELDS = (
 )
 
 
+@dataclass(frozen=True)
+class BundlePointers:
+    run_manifest_path: str
+    locked_config_path: str
+    split_manifest_path: str
+    adapter_artifact_index_path: str
+    evaluation_contract_path: str
+    merged_artifact_index_path: str | None = None
+
+
 class BundleFileEntry(FrozenEvaluationModel):
     path: str = Field(min_length=1)
     size_bytes: int = Field(ge=0, strict=True)
@@ -35,7 +46,7 @@ class BundleFileEntry(FrozenEvaluationModel):
 
     @model_validator(mode="after")
     def require_portable_path(self) -> BundleFileEntry:
-        portable = _portable_artifact_path(self.path)
+        portable = portable_artifact_path(self.path)
         if portable.as_posix() != self.path:
             raise ValueError(f"bundle inventory path must be canonical POSIX: {self.path}")
         if self.path == BUNDLE_INVENTORY_NAME:
@@ -55,44 +66,23 @@ class ReproducibilityBundle(FrozenEvaluationModel):
 
     @model_validator(mode="after")
     def require_unique_listed_pointers(self) -> ReproducibilityBundle:
-        paths = tuple(entry.path for entry in self.files)
-        if len(paths) != len(set(paths)):
-            raise ValueError("bundle inventory contains duplicate file paths")
-        listed = set(paths)
-        for field in _POINTER_FIELDS:
-            pointer = getattr(self, field)
-            if pointer is None:
-                continue
-            canonical = _portable_artifact_path(pointer).as_posix()
-            if canonical != pointer:
-                raise ValueError(f"{field} must be a canonical POSIX path: {pointer}")
-            if pointer not in listed:
-                raise ValueError(f"{field} is not listed in the bundle inventory: {pointer}")
+        _require_unique_files(self.files)
+        _require_listed_pointers(self)
         return self
 
 
-def write_reproducibility_bundle(
-    bundle_root: str | Path,
-    *,
-    run_manifest_path: str,
-    locked_config_path: str,
-    split_manifest_path: str,
-    adapter_artifact_index_path: str,
-    evaluation_contract_path: str,
-    merged_artifact_index_path: str | None = None,
-) -> Path:
+def write_reproducibility_bundle(bundle_root: str | Path, pointers: BundlePointers) -> Path:
     """Seal a complete membership inventory over an already-populated bundle."""
 
     root = Path(bundle_root)
-    entries = _inventory_entries(root)
     document = ReproducibilityBundle(
-        files=entries,
-        run_manifest_path=run_manifest_path,
-        locked_config_path=locked_config_path,
-        split_manifest_path=split_manifest_path,
-        adapter_artifact_index_path=adapter_artifact_index_path,
-        evaluation_contract_path=evaluation_contract_path,
-        merged_artifact_index_path=merged_artifact_index_path,
+        files=_inventory_entries(root),
+        run_manifest_path=pointers.run_manifest_path,
+        locked_config_path=pointers.locked_config_path,
+        split_manifest_path=pointers.split_manifest_path,
+        adapter_artifact_index_path=pointers.adapter_artifact_index_path,
+        evaluation_contract_path=pointers.evaluation_contract_path,
+        merged_artifact_index_path=pointers.merged_artifact_index_path,
     )
     destination = root / BUNDLE_INVENTORY_NAME
     publish_bytes_replace(
@@ -100,6 +90,28 @@ def write_reproducibility_bundle(
         canonical_json_bytes(document.model_dump(mode="json")) + b"\n",
     )
     return destination
+
+
+def _require_unique_files(files: tuple[BundleFileEntry, ...]) -> None:
+    paths = tuple(entry.path for entry in files)
+    if len(paths) != len(set(paths)):
+        raise ValueError("bundle inventory contains duplicate file paths")
+
+
+def _require_listed_pointers(document: ReproducibilityBundle) -> None:
+    listed = {entry.path for entry in document.files}
+    for field in _POINTER_FIELDS:
+        _require_listed_pointer(listed, field, getattr(document, field))
+
+
+def _require_listed_pointer(listed: set[str], field: str, pointer: str | None) -> None:
+    if pointer is None:
+        return
+    canonical = portable_artifact_path(pointer).as_posix()
+    if canonical != pointer:
+        raise ValueError(f"{field} must be a canonical POSIX path: {pointer}")
+    if pointer not in listed:
+        raise ValueError(f"{field} is not listed in the bundle inventory: {pointer}")
 
 
 def _inventory_entries(root: Path) -> tuple[BundleFileEntry, ...]:
@@ -119,5 +131,5 @@ def _inventory_entries(root: Path) -> tuple[BundleFileEntry, ...]:
 
 
 def _read_inventory_entry(root_descriptor: int, relative: PurePosixPath) -> BundleFileEntry:
-    payload, digest = read_relative_file(root_descriptor, relative)
-    return BundleFileEntry(path=relative.as_posix(), size_bytes=len(payload), sha256=digest)
+    size, digest = hash_relative_file(root_descriptor, relative)
+    return BundleFileEntry(path=relative.as_posix(), size_bytes=size, sha256=digest)
