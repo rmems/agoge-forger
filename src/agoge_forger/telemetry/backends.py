@@ -53,7 +53,7 @@ def _probe_torch() -> dict[str, Any]:
     }
 
 
-def _external(name: str, binary: str) -> dict[str, Any]:
+def _external(_backend: str, binary: str) -> dict[str, Any]:
     path = shutil.which(binary)
     if path is None:
         return {

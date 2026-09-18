@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from .join_identity import gpu_match
+from .join_window import join_profile_window
+
+__all__ = ["join_profile_window", "join_samples", "load_jsonl"]
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -37,39 +41,14 @@ def join_samples(
     return joined
 
 
-def join_profile_window(
-    summary: Mapping[str, Any],
-    samples: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    window_id = summary.get("profile_window_id")
-    run_id = summary.get("agoge_run_id")
-    start_ns = summary.get("monotonic_ns_start")
-    end_ns = summary.get("monotonic_ns_end")
-    matched: list[dict[str, Any]] = []
-    for sample in samples:
-        if sample.get("agoge_run_id") != run_id:
-            continue
-        sample_ns = sample.get("monotonic_ns")
-        if not isinstance(sample_ns, int):
-            continue
-        if isinstance(start_ns, int) and sample_ns < start_ns:
-            continue
-        if isinstance(end_ns, int) and sample_ns > end_ns:
-            continue
-        ref = sample.get("profile_window_ref")
-        if ref is not None and ref != window_id:
-            continue
-        matched.append(sample)
-    return matched
-
-
 def _bucket(record: dict[str, Any]) -> tuple[str, str]:
-    return (str(record["agoge_run_id"]), str(record["host"]["hostname"]))
+    host = record["host"]["hostname"]
+    return str(record["agoge_run_id"]), str(host)
 
 
 def _marker_sort_key(marker: dict[str, Any]) -> tuple[int, datetime]:
     stamp = datetime.fromisoformat(str(marker["timestamp_utc"]).replace("Z", "+00:00"))
-    return (int(marker["monotonic_ns"]), stamp)
+    return int(marker["monotonic_ns"]), stamp
 
 
 def _latest_marker(markers: list[dict[str, Any]], sample: dict[str, Any]) -> dict[str, Any] | None:
@@ -78,26 +57,6 @@ def _latest_marker(markers: list[dict[str, Any]], sample: dict[str, Any]) -> dic
     for marker in markers:
         if int(marker["monotonic_ns"]) > sample_ns:
             break
-        if _gpu_match(marker.get("gpu"), sample.get("gpu")):
+        if gpu_match(marker.get("gpu"), sample.get("gpu")):
             chosen = marker
     return chosen
-
-
-def _gpu_match(marker_gpu: Any, sample_gpu: Any) -> bool:
-    if not isinstance(marker_gpu, dict) or not isinstance(sample_gpu, dict):
-        return False
-    marker_uuid = _id(marker_gpu.get("uuid"))
-    sample_uuid = _id(sample_gpu.get("uuid"))
-    if marker_uuid is not None and sample_uuid is not None:
-        return marker_uuid == sample_uuid
-    marker_pci = _id(marker_gpu.get("pci_bus_id"))
-    sample_pci = _id(sample_gpu.get("pci_bus_id"))
-    if marker_pci is not None and sample_pci is not None:
-        return marker_pci == sample_pci
-    return False
-
-
-def _id(value: Any) -> str | None:
-    if isinstance(value, str) and value:
-        return value
-    return None

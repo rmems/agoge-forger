@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..logging import logger
-from .schema import RECORD_MARKER, UNPINNED_REVISION, envelope, utc_z
+from .schema import RECORD_MARKER, UNPINNED_REVISION, EnvelopeIdentity, envelope, utc_z
 
 
 @dataclass
@@ -56,12 +56,13 @@ class MarkerWriter:
         monotonic_ns = self._next_monotonic()
         record = envelope(
             record_kind=RECORD_MARKER,
-            run_id=self.run_id,
-            hostname=self.hostname,
-            gpu=self.gpu,
+            identity=EnvelopeIdentity(
+                run_id=self.run_id,
+                hostname=self.hostname,
+                gpu=self.gpu,
+                collector_version=self.collector_version,
+            ),
             monotonic_ns=monotonic_ns,
-            collector_version=self.collector_version,
-            cadence_ms=None,
         )
         record.update(
             {

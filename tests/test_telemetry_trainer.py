@@ -21,6 +21,8 @@ VOCAB = {"[UNK]": 0, "[PAD]": 1, "hello": 2, "world": 3, "agoge": 4}
 @pytest.fixture(autouse=True)
 def _quiet_dataset_progress_bars(monkeypatch):
     monkeypatch.setenv("ACCELERATE_USE_CPU", "true")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    monkeypatch.setattr("torch.cuda.is_available", lambda: False)
     disable_progress_bars()
     yield
     enable_progress_bars()
@@ -87,6 +89,7 @@ def test_profile_window_covers_one_optimizer_step(tmp_path, monkeypatch, model, 
     markers = [json.loads(line) for line in session.markers_path.read_text().splitlines()]
     events = [row["event"] for row in markers]
     assert "train_start" in events
+    assert "step_begin" in events
     assert "profile_window_start" in events
     assert "profile_window_end" in events
     assert "train_end" in events

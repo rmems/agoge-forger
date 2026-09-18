@@ -23,6 +23,7 @@ from .schema import (
     RECORD_PROFILE_WINDOW,
     TORCH_BACKEND,
     UNPINNED_REVISION,
+    EnvelopeIdentity,
     envelope,
 )
 from .window import overlay_telemetry_env, profile_window_id
@@ -41,6 +42,7 @@ class TelemetrySession:
     backend_probes: dict[str, dict[str, Any]]
     window_id: str | None
     emit_markers: bool = True
+    primary_rank: bool = True
     profiler_error: str | None = None
     _closed: bool = field(default=False, init=False)
     _summary_written: bool = field(default=False, init=False)
@@ -68,7 +70,7 @@ class TelemetrySession:
         start_ns: int | None,
         end_ns: int | None,
     ) -> None:
-        if self._summary_written or not self.window.enabled:
+        if not self._can_write_summary():
             return
         try:
             self._write_summary(events, overhead, start_ns, end_ns)
@@ -93,7 +95,7 @@ class TelemetrySession:
             "agoge_run_id": self.run_id,
             "markers": str(self.markers_path),
             "profile_window_request": str(self.request_path),
-            "profile_window": str(self.summary_path) if self.summary_path.exists() else None,
+            "profile_window": self._published_summary_path(),
             "profile_window_id": self.window_id,
         }
 
@@ -108,12 +110,8 @@ class TelemetrySession:
         backend = requested_backend_status(self.window.backend, self.backend_probes)
         record = envelope(
             record_kind=RECORD_PROFILE_WINDOW,
-            run_id=self.run_id,
-            hostname=self.writer.hostname,
-            gpu=self.writer.gpu,
+            identity=self.envelope_identity(),
             monotonic_ns=end_ns if end_ns is not None else monotonic_ns,
-            collector_version=self.writer.collector_version,
-            cadence_ms=None,
         )
         record.update(
             {
@@ -155,6 +153,28 @@ class TelemetrySession:
         torch_probe = self.backend_probes.get(TORCH_BACKEND, {})
         return str(torch_probe.get("cuda_kernels", "unavailable"))
 
+    def _can_write_summary(self) -> bool:
+        if self._summary_written:
+            return False
+        if not self.window.enabled:
+            return False
+        return self.primary_rank
+
+    def _published_summary_path(self) -> str | None:
+        if not self.window.enabled or not self._summary_written:
+            return None
+        if not self.summary_path.exists():
+            return None
+        return str(self.summary_path)
+
+    def envelope_identity(self) -> EnvelopeIdentity:
+        return EnvelopeIdentity(
+            run_id=self.run_id,
+            hostname=self.writer.hostname,
+            gpu=self.writer.gpu,
+            collector_version=self.writer.collector_version,
+        )
+
 
 def open_training_session(config: ExperimentConfig) -> TelemetrySession:
     telemetry = overlay_telemetry_env(config.telemetry, os.environ)
@@ -175,6 +195,7 @@ def open_training_session(config: ExperimentConfig) -> TelemetrySession:
         model_revision=config.revision or UNPINNED_REVISION,
         dataset=_dataset_ref(config),
     )
+    primary = _is_primary_rank()
     session = TelemetrySession(
         run_id=run_id,
         run_dir=run_dir,
@@ -186,10 +207,12 @@ def open_training_session(config: ExperimentConfig) -> TelemetrySession:
         window=window,
         backend_probes=probes,
         window_id=window_id,
-        emit_markers=telemetry.emit_markers,
+        emit_markers=telemetry.emit_markers and primary,
+        primary_rank=primary,
     )
-    _write_request(session)
-    session.emit("run_start", phase="setup", global_step=0)
+    if primary:
+        _write_request(session)
+        session.emit("run_start", phase="setup", global_step=0)
     return session
 
 
@@ -217,12 +240,8 @@ def _write_request(session: TelemetrySession) -> None:
     stamp_utc, monotonic_ns = session.writer.stamp()
     record = envelope(
         record_kind=RECORD_PROFILE_REQUEST,
-        run_id=session.run_id,
-        hostname=session.writer.hostname,
-        gpu=session.writer.gpu,
+        identity=session.envelope_identity(),
         monotonic_ns=monotonic_ns,
-        collector_version=session.writer.collector_version,
-        cadence_ms=None,
     )
     record.update(
         {
@@ -243,3 +262,11 @@ def _write_request(session: TelemetrySession) -> None:
         session.request_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     except OSError as error:
         logger.warning(f"profile window request write failed: {error}")
+
+
+def _is_primary_rank() -> bool:
+    for key in ("RANK", "LOCAL_RANK"):
+        value = os.environ.get(key)
+        if value is not None and value != "":
+            return value == "0"
+    return True

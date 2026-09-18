@@ -24,7 +24,7 @@ def _load(config: str):
     """
     try:
         return load_config(config)
-    except CLI_PATH_ERRORS as e:
+    except (*CLI_PATH_ERRORS, TypeError) as e:
         exit_on_error(e)
 
 

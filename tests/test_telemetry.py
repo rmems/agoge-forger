@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 from agoge_forger.cli import app
 from agoge_forger.config import ExperimentConfig, ProfileWindowConfig, load_config
 from agoge_forger.telemetry.backends import probe_profiler_backends, requested_backend_status
+from agoge_forger.telemetry.callback import TrainingCorrelationCallback
 from agoge_forger.telemetry.join import join_profile_window, join_samples, load_jsonl
 from agoge_forger.telemetry.markers import MarkerWriter
 from agoge_forger.telemetry.overhead import measure_torch_profiler_overhead
@@ -19,6 +20,7 @@ from agoge_forger.telemetry.schema import SCHEMA_VERSION
 from agoge_forger.telemetry.session import open_training_session
 from agoge_forger.telemetry.summarize import classify_name, summarize_profiler
 from agoge_forger.telemetry.window import (
+    overlay_cli_telemetry,
     overlay_telemetry_env,
     parse_profile_window,
     profile_window_id,
@@ -60,6 +62,45 @@ def test_parse_compact_and_kv_windows():
 def test_parse_window_rejects_garbage():
     with pytest.raises(ValueError):
         parse_profile_window("not-a-window")
+
+
+def test_parse_window_rejects_non_integer_steps():
+    with pytest.raises(ValueError, match="must be an integer"):
+        parse_profile_window("phase=train,start_step=abc,end_step=2")
+
+
+def test_parse_window_rejects_unknown_and_duplicate_fields():
+    with pytest.raises(ValueError, match="unknown profile window field"):
+        parse_profile_window("phase=train,start_stpe=1,end_step=2")
+    with pytest.raises(ValueError, match="duplicate profile window field"):
+        parse_profile_window("phase=train,start_step=1,start_step=2")
+
+
+def test_parse_window_rejects_eval_phase():
+    with pytest.raises(ValueError, match="must be 'train'"):
+        parse_profile_window("eval:1-2")
+
+
+def test_cli_window_skips_malformed_environment(monkeypatch):
+    telemetry = ExperimentConfig(model_id="m", dataset_path="x").telemetry
+    monkeypatch.setenv("AGOGE_PROFILE_WINDOW", "not-a-window")
+    updated = overlay_cli_telemetry(telemetry, None, "train:2-3")
+    assert updated.profile_window.start_step == 2
+    assert updated.profile_window.end_step == 3
+
+
+def test_non_mapping_telemetry_is_usage_error(tmp_path):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    config_path = tmp_path / "exp.yaml"
+    config_path.write_text(
+        f'model_id: "org/model"\ndataset_path: "{dataset.name}"\ntelemetry: []\n'
+    )
+    with pytest.raises(TypeError, match="telemetry must be a mapping"):
+        load_config(str(config_path))
+    result = CliRunner().invoke(app, ["train-qlora", "--config", str(config_path)])
+    assert result.exit_code == 1
+    assert "Traceback" not in (result.stdout + (result.stderr or ""))
 
 
 def test_env_enables_window_yaml_left_off():
@@ -141,7 +182,7 @@ def test_join_markers_to_gpu_samples_and_profile_window():
     pairs = join_samples(markers, samples)
     assert len(pairs) == 2
     idle_marker, idle_sample = pairs[0]
-    assert idle_sample["utilization_gpu"]["value"] == 0.0
+    assert int(idle_sample["utilization_gpu"]["value"]) == 0
     assert idle_marker["global_step"] == 0
     assert idle_sample["profile_window_ref"] is None
     window_marker, busy_sample = pairs[1]
@@ -150,6 +191,11 @@ def test_join_markers_to_gpu_samples_and_profile_window():
     matched = join_profile_window(summary, samples)
     assert len(matched) == 1
     assert matched[0]["profile_window_ref"] == summary["profile_window_id"]
+    other_host = dict(samples[1])
+    other_host["host"] = {"hostname": "other-host"}
+    other_gpu = dict(samples[1])
+    other_gpu["gpu"] = {**samples[1]["gpu"], "uuid": "GPU-other"}
+    assert join_profile_window(summary, [other_host, other_gpu]) == []
 
 
 def test_unknown_backend_is_unsupported_not_guessed():
@@ -255,3 +301,90 @@ def test_run_training_emits_failure_marker(tmp_path, monkeypatch):
     ]
     assert rows[-1]["event"] == "run_failed"
     assert rows[-1]["phase"] == "failed"
+
+
+def test_disabled_window_does_not_publish_stale_summary(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="stale")
+    session = open_training_session(config)
+    session.summary_path.write_text('{"stale": true}\n', encoding="utf-8")
+    entry = session.manifest_entry()
+    assert entry["profile_window_id"] is None
+    assert entry["profile_window"] is None
+
+
+def test_unstarted_window_does_not_emit_end(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="missed")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=5, end_step=5
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+    state = SimpleNamespace(global_step=1)
+    callback.on_step_end(None, state, None)
+    callback.on_train_end(None, state, None)
+    events = [json.loads(line)["event"] for line in session.markers_path.read_text().splitlines()]
+    assert "profile_window_start" not in events
+    assert "profile_window_end" not in events
+
+
+def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="nsight")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=1, backend="nsight_systems"
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+    events = [json.loads(line)["event"] for line in session.markers_path.read_text().splitlines()]
+    assert "step_begin" in events
+    assert "profile_window_start" in events
+    assert "profile_window_end" in events
+    summary = json.loads(session.summary_path.read_text())
+    assert summary["overhead"]["status"] == "unavailable"
+    assert summary["monotonic_ns_start"] is not None
+    assert summary["monotonic_ns_end"] is not None
+
+
+def test_summarize_prefers_device_time_and_memory_counters():
+    fake = SimpleNamespace(
+        events=lambda: [
+            SimpleNamespace(
+                name="aten::empty",
+                duration=9.0,
+                cpu_time_total=9.0,
+                device_time_total=40.0,
+                device_type=SimpleNamespace(name="CUDA"),
+                cpu_memory_usage=128.0,
+                device_memory_usage=256.0,
+            ),
+        ],
+        key_averages=list,
+    )
+    summary = summarize_profiler(fake, cuda_kernel_status="ok")
+    assert summary["kernel_duration"]["status"] == "ok"
+    assert int(summary["kernels"][0]["duration_us"]["sum"]) == 40
+    assert summary["memory"]["status"] == "ok"
+    assert int(summary["memory"]["device_bytes"]["sum"]) == 256
+
+
+def test_secondary_rank_does_not_write_markers(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RANK", "1")
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="rank1")
+    session = open_training_session(config)
+    session.emit("run_start", phase="setup", global_step=0)
+    assert session.primary_rank is False
+    assert not session.markers_path.exists()
+    assert not session.request_path.exists()

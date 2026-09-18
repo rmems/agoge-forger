@@ -1,9 +1,10 @@
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .path_safety import resolve_existing_path
+from .profile_window import ProfileWindowConfig
 
 
 def normalize_revision(value: object) -> str | None:
@@ -63,26 +64,6 @@ class RuntimeConfig(BaseModel):
     max_shard_size: str = "4GB"
     disk_free_warning_gb: float = 20.0
     checkpoint_disk_buffer_gb: float = 8.0
-
-
-class ProfileWindowConfig(BaseModel):
-    """Opt-in bounded CUDA/torch.profiler window. Off for ordinary training."""
-
-    enabled: bool = False
-    phase: str = "train"
-    start_step: int = 1
-    end_step: int = 2
-    backend: str = "torch"
-
-    @model_validator(mode="after")
-    def range_ok(self) -> "ProfileWindowConfig":
-        if self.start_step < 0 or self.end_step < 0:
-            raise ValueError("profile window steps must be >= 0")
-        if self.end_step < self.start_step:
-            raise ValueError("profile window end_step must be >= start_step")
-        if not self.phase.strip():
-            raise ValueError("profile window phase must be non-empty")
-        return self
 
 
 class TelemetryConfig(BaseModel):
