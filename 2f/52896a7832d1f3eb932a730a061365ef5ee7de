@@ -1,0 +1,25 @@
+src/agoge_forger/telemetry/window.py
+  s_341bff81dd5a3a::t_f49ba40cc0f29a 67,86
+src/agoge_forger/telemetry/callback.py
+  s_341bff81dd5a3a::t_f49ba40cc0f29a 245
+src/agoge_forger/telemetry/session.py
+  s_341bff81dd5a3a::t_f49ba40cc0f29a 196
+src/agoge_forger/config.py
+  s_341bff81dd5a3a::t_f49ba40cc0f29a 75-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2f52896a7832d1f3eb932a730a061365ef5ee7de",
+  "prompts": {},
+  "sessions": {
+    "s_341bff81dd5a3a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b991-cbcd-7782-9d3c-2cc8b05c137f",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
