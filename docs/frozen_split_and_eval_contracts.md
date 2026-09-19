@@ -188,6 +188,12 @@ eval/<run_name>/
   report.md
 ```
 
+A complete experiment/release directory can later be sealed as an
+`agoge.reproducibility-bundle.v1` inventory and checked offline with
+`agoge verify-bundle` (see [Reproducibility bundle schema](contracts/reproducibility_bundle.md)).
+Verification hashes files and parses contracts; it does not load weights or
+use the network.
+
 Paired arms cannot drift in task IDs, serializer, decoding, or scoring version.
 Heuristic or model-judge signals are not mixed into the objective verdict.
 

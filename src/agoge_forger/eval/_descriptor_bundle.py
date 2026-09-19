@@ -76,6 +76,15 @@ def read_relative_file(root_descriptor: int, relative: PurePosixPath) -> tuple[b
         return target.getvalue(), digest
 
 
+def hash_relative_file(root_descriptor: int, relative: PurePosixPath) -> tuple[int, str]:
+    """Return size and SHA-256 without buffering the file contents."""
+
+    with _opened_relative_file(root_descriptor, relative) as opened:
+        size, digest = _hash_descriptor(opened.source, "hashed")
+        _require_unchanged_entry(opened, "hashed")
+        return size, digest
+
+
 def copy_relative_file(
     root_descriptor: int, relative: PurePosixPath, destination: Path
 ) -> tuple[int, str]:
@@ -206,9 +215,27 @@ def _stream_descriptor(source: int, target: BinaryIO, action: str) -> tuple[int,
             digest.update(chunk)
             size += len(chunk)
             target.write(chunk)
+    _require_stable_descriptor(source, before, action)
+    return size, digest.hexdigest()
+
+
+def _hash_descriptor(source: int, action: str) -> tuple[int, str]:
+    before = os.fstat(source)
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError("artifact bundle entry is not a regular file")
+    digest = hashlib.sha256()
+    size = 0
+    with os.fdopen(os.dup(source), "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    _require_stable_descriptor(source, before, action)
+    return size, digest.hexdigest()
+
+
+def _require_stable_descriptor(source: int, before: os.stat_result, action: str) -> None:
     if _identity(os.fstat(source), "file") != _identity(before, "file"):
         raise ValueError(f"artifact bundle entry changed while being {action}")
-    return size, digest.hexdigest()
 
 
 def _require_unchanged_entry(entry: _OpenedEntry, action: str) -> None:

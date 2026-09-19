@@ -152,6 +152,22 @@ uv run agoge held-out-eval \
 
 See [Frozen split and evaluation contracts](docs/frozen_split_and_eval_contracts.md) for the bundle layout and local GPU steps. `smoke-eval` remains a toy hardcoded-prompt check and is not this harness.
 
+## Verify a reproducibility bundle offline
+
+A sealed experiment directory can be checked without network access or loading
+weights. The command hashes membership, validates the run manifest, locked
+config, frozen split, artifact indexes, and both evaluation arms, then prints a
+machine-readable verdict:
+
+```bash
+uv run agoge verify-bundle /path/to/bundle
+uv run agoge verify-bundle /path/to/bundle --format table
+```
+
+Unknown schema versions, truncated JSON, extra or missing files, mutated
+digests, duplicate or path-escaping inventory entries, and unsafe symlinks fail
+closed with exit `1`. See [Reproducibility bundle schema](docs/contracts/reproducibility_bundle.md).
+
 ## Validation
 
 ```bash
