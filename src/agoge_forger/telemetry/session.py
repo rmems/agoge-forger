@@ -150,15 +150,7 @@ class TelemetrySession:
                 "backend_status": backend,
                 "profiler_error": self.profiler_error,
                 "overhead": dict(overhead),
-                "kernels": [],
-                "kernel_duration": {
-                    "status": "unavailable",
-                    "value": None,
-                    "unit": "us",
-                    "count": 0,
-                },
-                "sync": {"status": "unavailable", "count": 0, "duration_us": None},
-                "transfers": {"status": "unavailable", "h2d_us": None, "d2h_us": None},
+                **_unavailable_profile_metrics(),
             }
         )
         if events:
@@ -250,6 +242,20 @@ def open_training_session(config: ExperimentConfig) -> TelemetrySession:
         _write_request(session)
         session.emit("run_start", phase="setup", global_step=0)
     return session
+
+
+def _unavailable_profile_metrics() -> dict[str, Any]:
+    return {
+        "kernels": [],
+        "kernel_duration": {
+            "status": "unavailable",
+            "value": None,
+            "unit": "us",
+            "count": 0,
+        },
+        "sync": {"status": "unavailable", "count": 0, "duration_us": None},
+        "transfers": {"status": "unavailable", "h2d_us": None, "d2h_us": None},
+    }
 
 
 def attach_telemetry(trainer: Any, session: TelemetrySession) -> None:
