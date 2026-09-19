@@ -44,13 +44,7 @@ def _adapter_layout_failures(
     provenance: ArtifactProducerProvenance | None,
 ) -> list[BundleFailure]:
     missing = sorted(_ADAPTER_FILES - names)
-    unsafe = sorted(
-        name
-        for name in names - _ADAPTER_FILES
-        if any(
-            fnmatch.fnmatch(PurePosixPath(name).name, pattern) for pattern in UNSAFE_WEIGHT_PATTERNS
-        )
-    )
+    unsafe = _unsafe_names(names)
     failures: list[BundleFailure] = []
     if missing:
         failures.append(
@@ -71,6 +65,16 @@ def _adapter_layout_failures(
     if _ADAPTER_CONFIG in names:
         failures.extend(_adapter_config_failures(check, provenance))
     return failures
+
+
+def _unsafe_names(names: set[str]) -> list[str]:
+    return sorted(
+        name
+        for name in names - _ADAPTER_FILES
+        if any(
+            fnmatch.fnmatch(PurePosixPath(name).name, pattern) for pattern in UNSAFE_WEIGHT_PATTERNS
+        )
+    )
 
 
 def _adapter_config_failures(
@@ -170,24 +174,26 @@ def _shard_failures(check: ArtifactCheck, names: set[str]) -> list[BundleFailure
     loaded = load_object(check.root, relative, "merged shard index")
     if isinstance(loaded, BundleFailure):
         return [loaded]
-    weight_map = loaded.get("weight_map")
-    if not isinstance(weight_map, dict) or not weight_map:
-        return [
-            BundleFailure(
-                code="artifact_index",
-                path=relative,
-                message="merged-model shard index requires a non-empty weight_map",
-            )
-        ]
-    if any(not isinstance(value, str) or not value for value in weight_map.values()):
-        return [
-            BundleFailure(
-                code="artifact_index",
-                path=relative,
-                message="merged-model weight_map shard paths must be strings",
-            )
-        ]
+    weight_map = _weight_map(relative, loaded.get("weight_map"))
+    if isinstance(weight_map, BundleFailure):
+        return [weight_map]
     return _missing_shard_failures(check, weight_map, names)
+
+
+def _weight_map(relative: str, weight_map: Any) -> dict[str, Any] | BundleFailure:
+    if not isinstance(weight_map, dict) or not weight_map:
+        return BundleFailure(
+            code="artifact_index",
+            path=relative,
+            message="merged-model shard index requires a non-empty weight_map",
+        )
+    if any(not isinstance(value, str) or not value for value in weight_map.values()):
+        return BundleFailure(
+            code="artifact_index",
+            path=relative,
+            message="merged-model weight_map shard paths must be strings",
+        )
+    return weight_map
 
 
 def _missing_shard_failures(
