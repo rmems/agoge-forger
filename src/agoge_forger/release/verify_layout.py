@@ -81,17 +81,15 @@ def _adapter_config_failures(
     loaded = load_object(check.root, relative, "adapter config")
     if isinstance(loaded, BundleFailure):
         return [loaded]
-    failures: list[BundleFailure] = []
-    for field in ("peft_type", "base_model_name_or_path"):
-        value = loaded.get(field)
-        if not isinstance(value, str) or not value:
-            failures.append(
-                BundleFailure(
-                    code="artifact_index",
-                    path=relative,
-                    message=f"adapter_config.json requires non-empty {field}",
-                )
-            )
+    failures = [
+        BundleFailure(
+            code="artifact_index",
+            path=relative,
+            message=f"adapter_config.json requires non-empty {field}",
+        )
+        for field in ("peft_type", "base_model_name_or_path")
+        if not isinstance(loaded.get(field), str) or not loaded.get(field)
+    ]
     if provenance is not None:
         failures.extend(_adapter_identity_failures(relative, loaded, provenance))
     return failures
@@ -189,6 +187,14 @@ def _shard_failures(check: ArtifactCheck, names: set[str]) -> list[BundleFailure
                 message="merged-model weight_map shard paths must be strings",
             )
         ]
+    return _missing_shard_failures(check, weight_map, names)
+
+
+def _missing_shard_failures(
+    check: ArtifactCheck,
+    weight_map: dict[str, Any],
+    names: set[str],
+) -> list[BundleFailure]:
     missing = sorted(set(weight_map.values()) - names)
     if missing:
         return [

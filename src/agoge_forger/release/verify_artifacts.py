@@ -11,6 +11,7 @@ from .._strict_json import decode_json_object
 from ..config import ExperimentConfig
 from ..eval import (
     ArtifactIndex,
+    ArtifactIndexEntry,
     ArtifactProducerProvenance,
     EntryIdentity,
     portable_artifact_path,
@@ -146,31 +147,37 @@ def _canonical_entry_paths(
     return portable
 
 
+def _digest_failure(
+    check: ArtifactCheck,
+    parent: Path,
+    entry: ArtifactIndexEntry,
+) -> BundleFailure | None:
+    relative = parent / entry.file
+    display = PurePosixPath(check.index_path).parent / entry.file
+    try:
+        portable = relative.relative_to(check.root).as_posix()
+        size, digest = hash_relative(check.root, PurePosixPath(portable))
+    except (OSError, ValueError) as exc:
+        return classify_io_error(exc, f"{display}")
+    if size != entry.size_bytes or digest != entry.sha256:
+        return BundleFailure(
+            code="modified_file",
+            path=portable,
+            message=(
+                "artifact index digest does not match the file: "
+                f"expected {entry.sha256}, found {digest}"
+            ),
+        )
+    return None
+
+
 def _digest_failures(check: ArtifactCheck, index: ArtifactIndex) -> list[BundleFailure]:
-    failures: list[BundleFailure] = []
     parent = (check.root / check.index_path).parent
-    for entry in index.artifacts:
-        relative = parent / entry.file
-        try:
-            portable = relative.relative_to(check.root).as_posix()
-            size, digest = hash_relative(check.root, PurePosixPath(portable))
-        except (OSError, ValueError) as exc:
-            failures.append(
-                classify_io_error(exc, f"{PurePosixPath(check.index_path).parent / entry.file}")
-            )
-            continue
-        if size != entry.size_bytes or digest != entry.sha256:
-            failures.append(
-                BundleFailure(
-                    code="modified_file",
-                    path=portable,
-                    message=(
-                        "artifact index digest does not match the file: "
-                        f"expected {entry.sha256}, found {digest}"
-                    ),
-                )
-            )
-    return failures
+    return [
+        failure
+        for entry in index.artifacts
+        if (failure := _digest_failure(check, parent, entry)) is not None
+    ]
 
 
 def _provenance_failures(check: ArtifactCheck, index: ArtifactIndex) -> list[BundleFailure]:
@@ -183,6 +190,17 @@ def _provenance_failures(check: ArtifactCheck, index: ArtifactIndex) -> list[Bun
                 message="artifact index requires producer_provenance",
             )
         ]
+    failures = _provenance_split_failures(check, provenance)
+    locked = load_object(check.root, check.locked_path, "locked config")
+    if isinstance(locked, dict):
+        failures.extend(_provenance_config_failures(check.index_path, provenance, locked))
+    return failures
+
+
+def _provenance_split_failures(
+    check: ArtifactCheck,
+    provenance: ArtifactProducerProvenance,
+) -> list[BundleFailure]:
     failures: list[BundleFailure] = []
     if (
         check.split_digest is not None
@@ -205,9 +223,6 @@ def _provenance_failures(check: ArtifactCheck, index: ArtifactIndex) -> list[Bun
                     message="artifact producer provenance does not match the frozen train split",
                 )
             )
-    locked = load_object(check.root, check.locked_path, "locked config")
-    if isinstance(locked, dict):
-        failures.extend(_provenance_config_failures(check.index_path, provenance, locked))
     return failures
 
 

@@ -2,6 +2,7 @@
 
 from ._artifact_schema import (
     ArtifactIndex,
+    ArtifactIndexEntry,
     ArtifactIndexReference,
     ArtifactProducerProvenance,
     FrozenEvaluationModel,
@@ -35,6 +36,7 @@ from .score import OBJECTIVE_SCORING_VERSION
 __all__ = [
     "OBJECTIVE_SCORING_VERSION",
     "ArtifactIndex",
+    "ArtifactIndexEntry",
     "ArtifactIndexReference",
     "ArtifactProducerProvenance",
     "DecodingContract",
