@@ -157,6 +157,21 @@ def test_failed_marker_reset_does_not_publish_stale_artifact(tmp_path, monkeypat
     assert stale.read_text() == '{"old": true}\n'
 
 
+def test_telemetry_directory_collision_degrades_without_aborting(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    telemetry_path = tmp_path / "runs/collision/telemetry"
+    telemetry_path.parent.mkdir(parents=True)
+    telemetry_path.write_text("not a directory\n")
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="collision")
+
+    session = open_training_session(config)
+
+    assert session.manifest_entry()["markers"] is None
+    assert session.manifest_entry()["profile_window_request"] is None
+
+
 def test_disabled_markers_do_not_publish_stale_marker_path(tmp_path, monkeypatch):
     dataset = tmp_path / "data.jsonl"
     dataset.write_text("{}\n")

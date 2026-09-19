@@ -39,6 +39,25 @@ def test_unstarted_window_does_not_emit_end(tmp_path, monkeypatch):
     assert "profile_window_end" not in events
 
 
+def test_aggregate_training_log_is_not_emitted_as_step_end(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "aggregate-log",
+        ProfileWindowConfig(enabled=False),
+    )
+
+    callback.on_log(
+        None,
+        SimpleNamespace(global_step=3),
+        None,
+        logs={"train_runtime": 1.5, "train_loss": 0.25},
+    )
+
+    rows = [json.loads(line) for line in session.markers_path.read_text().splitlines()]
+    assert [row["event"] for row in rows] == ["run_start"]
+
+
 def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
     session, callback = _callback_session(
         tmp_path,

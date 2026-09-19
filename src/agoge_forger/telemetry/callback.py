@@ -90,13 +90,18 @@ class TrainingCorrelationCallback(TrainerCallback):
 
     def _emit_log(self, state: Any, logs: Any) -> None:
         step = int(state.global_step)
+        if _is_evaluation_log(logs):
+            phase = "eval"
+        elif _is_training_step_log(logs):
+            phase = TRAIN_PHASE
+        else:
+            return
         extras = {
             "loss": loss_measurement(logs),
             "tokens_accepted": getattr(state, "num_input_tokens_seen", None),
         }
         if window_covers_step(self._session.window, step):
             extras["profile_window_ref"] = self._session.window_id
-        phase = "eval" if logs and any(key.startswith("eval_") for key in logs) else TRAIN_PHASE
         event = "eval_log" if phase == "eval" else "step_end"
         self._session.emit(event, phase=phase, global_step=step, extras=extras)
 
@@ -260,3 +265,11 @@ class TrainingCorrelationCallback(TrainerCallback):
 def _synchronize_profiled_device() -> None:
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+
+
+def _is_evaluation_log(logs: Any) -> bool:
+    return bool(logs and any(key.startswith("eval_") for key in logs))
+
+
+def _is_training_step_log(logs: Any) -> bool:
+    return bool(logs and "loss" in logs)

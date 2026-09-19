@@ -166,6 +166,9 @@ def test_programmatic_session_resolves_environment_once(tmp_path, monkeypatch):
     assert session.run_id == "env-run"
     assert session.window.start_step == 2
     assert session.window.end_step == 3
+    assert config.telemetry.run_id == "env-run"
+    assert config.telemetry.profile_window.start_step == 2
+    assert config.telemetry.environment_resolved is True
 
 
 def test_external_resolution_sentinel_cannot_bypass_environment(tmp_path, monkeypatch):

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
-from ..config import ExperimentConfig, ProfileWindowConfig
+from ..config import ExperimentConfig, ProfileWindowConfig, TelemetryConfig
 from ..logging import logger
 from ..split_schema import sha256_file
 from .backends import probe_profiler_backends, requested_backend_status
@@ -189,13 +189,31 @@ class TelemetrySession:
 
 
 def open_training_session(config: ExperimentConfig) -> TelemetrySession:
-    telemetry = config.telemetry
-    if not telemetry.environment_resolved:
-        telemetry = overlay_telemetry_env(telemetry, os.environ)
-    run_id = telemetry.run_id or config.run_name
+    telemetry = _resolved_telemetry(config)
     run_dir = Path("runs") / config.run_name
     telemetry_dir = run_dir / "telemetry"
-    telemetry_dir.mkdir(parents=True, exist_ok=True)
+    storage_available = _prepare_telemetry_directory(telemetry_dir)
+    session = _build_training_session(config, telemetry, telemetry_dir, storage_available)
+    _initialize_session_artifacts(session, storage_available)
+    return session
+
+
+def _resolved_telemetry(config: ExperimentConfig) -> TelemetryConfig:
+    telemetry = config.telemetry
+    if telemetry.environment_resolved:
+        return telemetry
+    telemetry = overlay_telemetry_env(telemetry, os.environ)
+    config.telemetry = telemetry
+    return telemetry
+
+
+def _build_training_session(
+    config: ExperimentConfig,
+    telemetry: TelemetryConfig,
+    telemetry_dir: Path,
+    storage_available: bool,
+) -> TelemetrySession:
+    run_id = telemetry.run_id or config.run_name
     probes = probe_profiler_backends()
     window = telemetry.profile_window
     window_id = profile_window_id(run_id, window) if window.enabled else None
@@ -210,9 +228,9 @@ def open_training_session(config: ExperimentConfig) -> TelemetrySession:
         dataset=_dataset_ref(config),
     )
     primary = _is_primary_rank()
-    session = TelemetrySession(
+    return TelemetrySession(
         run_id=run_id,
-        run_dir=run_dir,
+        run_dir=telemetry_dir.parent,
         telemetry_dir=telemetry_dir,
         markers_path=telemetry_dir / "agoge-markers.jsonl",
         request_path=telemetry_dir / "profile-window-request.json",
@@ -221,15 +239,27 @@ def open_training_session(config: ExperimentConfig) -> TelemetrySession:
         window=window,
         backend_probes=probes,
         window_id=window_id,
-        emit_markers=telemetry.emit_markers and primary,
+        emit_markers=telemetry.emit_markers and primary and storage_available,
         primary_rank=primary,
     )
+
+
+def _initialize_session_artifacts(session: TelemetrySession, storage_available: bool) -> None:
     if session.emit_markers:
         _reset_marker_artifact(session)
-    if primary:
+    if session.primary_rank and storage_available:
         _write_request(session)
+    if session.primary_rank:
         session.emit("run_start", phase="setup", global_step=0)
-    return session
+
+
+def _prepare_telemetry_directory(telemetry_dir: Path) -> bool:
+    try:
+        telemetry_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        logger.warning(f"telemetry directory unavailable: {error}")
+        return False
+    return True
 
 
 def _reset_marker_artifact(session: TelemetrySession) -> None:
