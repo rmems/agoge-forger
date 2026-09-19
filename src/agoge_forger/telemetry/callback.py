@@ -107,7 +107,11 @@ class TrainingCorrelationCallback(TrainerCallback):
             "loss": loss_measurement(logs),
             "tokens_accepted": tokens_accepted,
         }
-        if self._window_started and window_covers_step(self._session.window, step):
+        if (
+            phase == TRAIN_PHASE
+            and self._window_started
+            and window_covers_step(self._session.window, step)
+        ):
             extras["profile_window_ref"] = self._session.window_id
         event = "eval_log" if phase == "eval" else "step_end"
         self._session.emit(event, phase=phase, global_step=step, extras=extras)
@@ -263,7 +267,7 @@ class TrainingCorrelationCallback(TrainerCallback):
 
     def _synchronize_timed_step(self) -> None:
         window = self._session.window
-        if window.enabled and window.backend == TORCH_BACKEND:
+        if self._session.primary_rank and window.enabled and window.backend == TORCH_BACKEND:
             self._synchronize_profiled_device()
 
     def _record_profiler_error(self, error: Exception) -> None:

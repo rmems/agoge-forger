@@ -51,8 +51,8 @@ def row_from_average(item: Any) -> dict[str, Any]:
     count = int(getattr(item, "count", 1) or 1)
     cuda_us = _positive_float(item, "device_time_total") or _positive_float(item, "cuda_time_total")
     cpu_us = float(getattr(item, "cpu_time_total", 0.0) or 0.0)
-    device = "cuda" if cuda_us is not None else "cpu"
-    duration = cuda_us if cuda_us is not None else cpu_us
+    device = _device_kind(item)
+    duration = cuda_us if device == "cuda" and cuda_us is not None else cpu_us
     return {
         "name": name,
         "family": classify_name(name),

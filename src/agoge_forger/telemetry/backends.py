@@ -44,6 +44,19 @@ def torch_profiler_activities() -> list[ProfilerActivity]:
 
 def _probe_torch() -> dict[str, Any]:
     cuda = torch.cuda.is_available()
+    device_count = torch.cuda.device_count() if cuda else 0
+    if device_count > 1:
+        return {
+            "status": "unsupported",
+            "reason": (
+                "torch profiler profile windows require a single CUDA device; "
+                f"detected {device_count}"
+            ),
+            "version": torch.__version__,
+            "cuda_available": cuda,
+            "cuda_kernels": "unavailable",
+            "activities": ["cpu", "cuda"],
+        }
     return {
         "status": "ok",
         "version": torch.__version__,

@@ -9,7 +9,7 @@ from agoge_forger.config import ExperimentConfig
 from agoge_forger.telemetry.backends import probe_profiler_backends, requested_backend_status
 from agoge_forger.telemetry.join import join_profile_window, join_samples, load_jsonl
 from agoge_forger.telemetry.markers import MarkerWriter
-from agoge_forger.telemetry.schema import SCHEMA_VERSION
+from agoge_forger.telemetry.schema import SCHEMA_VERSION, TORCH_BACKEND
 from agoge_forger.telemetry.session import open_training_session
 from agoge_forger.telemetry.summarize import (
     classify_name,
@@ -124,6 +124,16 @@ def test_unknown_backend_is_unsupported_not_guessed():
     status = requested_backend_status("made_up", probes)
     assert status["status"] == "unsupported"
     assert "not guessed" in status["reason"]
+
+
+def test_torch_profile_window_is_unsupported_with_multiple_cuda_devices(monkeypatch):
+    monkeypatch.setattr("agoge_forger.telemetry.backends.torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr("agoge_forger.telemetry.backends.torch.cuda.device_count", lambda: 2)
+
+    status = probe_profiler_backends()[TORCH_BACKEND]
+
+    assert status["status"] == "unsupported"
+    assert "single CUDA device" in status["reason"]
 
 
 def test_classify_kernel_families():

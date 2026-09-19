@@ -81,18 +81,21 @@ def test_key_average_summaries_weight_each_invocation():
                 count=3,
                 device_time_total=30.0,
                 cpu_time_total=0.0,
+                device_type=SimpleNamespace(name="CUDA"),
             ),
             SimpleNamespace(
                 key="MemcpyDtoH",
                 count=1,
                 device_time_total=20.0,
                 cpu_time_total=0.0,
+                device_type=SimpleNamespace(name="CUDA"),
             ),
             SimpleNamespace(
                 key="aten::add",
                 count=4,
                 device_time_total=0.0,
                 cpu_time_total=8.0,
+                device_type=SimpleNamespace(name="CPU"),
             ),
         ],
     )
@@ -107,6 +110,27 @@ def test_key_average_summaries_weight_each_invocation():
     assert summary["transfers"]["h2d_us"]["sum"] == pytest.approx(30.0)
     assert summary["transfers"]["d2h_us"]["count"] == 1
     assert summary["cpu_ops"][0]["count"] == 4
+    assert summary["cpu_ops"][0]["duration_us"]["sum"] == pytest.approx(8.0)
+
+
+def test_key_averages_keep_cpu_operators_with_device_time_out_of_kernel_rows():
+    fake = SimpleNamespace(
+        events=list,
+        key_averages=lambda: [
+            SimpleNamespace(
+                key="aten::add",
+                count=2,
+                device_time_total=40.0,
+                cpu_time_total=8.0,
+                device_type=SimpleNamespace(name="CPU"),
+            ),
+        ],
+    )
+
+    summary = summarize_profiler(fake, cuda_kernel_status="ok")
+
+    assert summary["kernels"] == []
+    assert summary["cpu_ops"][0]["name"] == "aten::add"
     assert summary["cpu_ops"][0]["duration_us"]["sum"] == pytest.approx(8.0)
 
 

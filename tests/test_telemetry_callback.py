@@ -114,6 +114,42 @@ def test_secondary_rank_skips_profiler_start(tmp_path, monkeypatch):
     assert starts == []
 
 
+def test_evaluation_log_inside_train_window_has_no_window_reference(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "eval-not-train",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=1),
+    )
+    callback._window_started = True
+
+    callback.on_log(None, SimpleNamespace(global_step=1), None, logs={"eval_loss": 0.25})
+
+    row = json.loads(session.markers_path.read_text().splitlines()[-1])
+    assert row["event"] == "eval_log"
+    assert "profile_window_ref" not in row
+
+
+def test_secondary_rank_skips_window_timing_synchronization(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "rank-timing",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=2),
+    )
+    session.primary_rank = False
+    synchronizations = []
+    monkeypatch.setattr(
+        callback,
+        "_synchronize_profiled_device",
+        lambda: synchronizations.append("called"),
+    )
+
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+
+    assert synchronizations == []
+
+
 def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
     session, callback = _callback_session(
         tmp_path,
