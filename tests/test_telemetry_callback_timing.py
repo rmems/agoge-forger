@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from agoge_forger.config import ExperimentConfig, ProfileWindowConfig
 from agoge_forger.telemetry.callback import TrainingCorrelationCallback
 from agoge_forger.telemetry.session import open_training_session
@@ -134,5 +136,5 @@ def test_summary_waits_for_later_unprofiled_baseline(tmp_path, monkeypatch):
 
     summary = json.loads(session.summary_path.read_text())
     assert summary["overhead"]["status"] == "ok"
-    assert summary["overhead"]["profiled_step_mean_s"] == 2.0
-    assert summary["overhead"]["unprofiled_step_mean_s"] == 1.0
+    assert summary["overhead"]["profiled_step_mean_s"] == pytest.approx(2.0)
+    assert summary["overhead"]["unprofiled_step_mean_s"] == pytest.approx(1.0)
