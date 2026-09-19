@@ -69,24 +69,12 @@ class TelemetrySession:
     def write_profile_summary(
         self,
         *,
-        events: dict[str, Any] | None,
-        overhead: Mapping[str, Any],
-        start_ns: int | None,
-        end_ns: int | None,
-        actual_end_step: int | None,
-        complete: bool,
+        summary: Mapping[str, Any],
     ) -> None:
         if not self._can_write_summary():
             return
         try:
-            self._write_summary(
-                events,
-                overhead,
-                start_ns,
-                end_ns,
-                actual_end_step,
-                complete,
-            )
+            self._write_summary(summary)
             self._summary_written = True
         except OSError as error:
             logger.warning(f"profile window summary write failed: {error}")
@@ -99,15 +87,17 @@ class TelemetrySession:
         self._closed = True
         if self.window.enabled and not self._summary_written:
             self.write_profile_summary(
-                events=None,
-                overhead={
-                    "status": "unavailable",
-                    "reason": "profile window start step was not reached",
+                summary={
+                    "events": None,
+                    "overhead": {
+                        "status": "unavailable",
+                        "reason": "profile window start step was not reached",
+                    },
+                    "start_ns": None,
+                    "end_ns": None,
+                    "actual_end_step": None,
+                    "complete": False,
                 },
-                start_ns=None,
-                end_ns=None,
-                actual_end_step=None,
-                complete=False,
             )
 
     def manifest_entry(self) -> dict[str, Any]:
@@ -119,15 +109,10 @@ class TelemetrySession:
             "profile_window_id": self.window_id,
         }
 
-    def _write_summary(
-        self,
-        events: dict[str, Any] | None,
-        overhead: Mapping[str, Any],
-        start_ns: int | None,
-        end_ns: int | None,
-        actual_end_step: int | None,
-        complete: bool,
-    ) -> None:
+    def _write_summary(self, summary: Mapping[str, Any]) -> None:
+        events = summary["events"]
+        start_ns = summary["start_ns"]
+        end_ns = summary["end_ns"]
         stamp_utc, monotonic_ns = self.writer.stamp()
         backend = requested_backend_status(self.window.backend, self.backend_probes)
         record = envelope(
@@ -142,14 +127,14 @@ class TelemetrySession:
                 "phase": self.window.phase,
                 "start_step": self.window.start_step,
                 "end_step": self.window.end_step,
-                "actual_end_step": actual_end_step,
-                "complete": complete,
+                "actual_end_step": summary["actual_end_step"],
+                "complete": summary["complete"],
                 "monotonic_ns_start": start_ns,
                 "monotonic_ns_end": end_ns,
                 "backend": self.window.backend,
                 "backend_status": backend,
                 "profiler_error": self.profiler_error,
-                "overhead": dict(overhead),
+                "overhead": dict(summary["overhead"]),
                 **_unavailable_profile_metrics(),
             }
         )
@@ -184,7 +169,11 @@ class TelemetrySession:
         return str(self.summary_path)
 
     def _published_markers_path(self) -> str | None:
-        if not self.emit_markers or not self.writer.published or not self.markers_path.exists():
+        if not self.emit_markers:
+            return None
+        if not self.writer.published:
+            return None
+        if not self.markers_path.exists():
             return None
         return str(self.markers_path)
 

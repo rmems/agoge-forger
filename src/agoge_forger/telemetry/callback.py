@@ -195,12 +195,14 @@ class TrainingCorrelationCallback(TrainerCallback):
             self._record_step_duration(profiled=record_profiled)
         if self._session.window.enabled:
             self._session.write_profile_summary(
-                events=summary_events,
-                overhead=overhead_from_step_times(self._profiled_s, self._unprofiled_s),
-                start_ns=self._window_start_ns,
-                end_ns=self._window_end_ns,
-                actual_end_step=actual_step,
-                complete=complete,
+                summary={
+                    "events": summary_events,
+                    "overhead": overhead_from_step_times(self._profiled_s, self._unprofiled_s),
+                    "start_ns": self._window_start_ns,
+                    "end_ns": self._window_end_ns,
+                    "actual_end_step": actual_step,
+                    "complete": complete,
+                },
             )
             if actual_step is not None:
                 self._session.emit(
