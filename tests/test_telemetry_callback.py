@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from agoge_forger.config import ExperimentConfig, ProfileWindowConfig
 from agoge_forger.telemetry.callback import TrainingCorrelationCallback
 from agoge_forger.telemetry.session import open_training_session
@@ -76,7 +78,8 @@ def test_aggregate_training_log_is_not_emitted_as_step_end(tmp_path, monkeypatch
     assert [row["event"] for row in rows] == ["run_start"]
 
 
-def test_tokens_are_null_when_trainer_counter_is_disabled(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("mode", "counter"), [(False, 128), ("no", 0)])
+def test_tokens_are_null_when_trainer_counter_is_disabled(tmp_path, monkeypatch, mode, counter):
     session, callback = _callback_session(
         tmp_path,
         monkeypatch,
@@ -85,24 +88,8 @@ def test_tokens_are_null_when_trainer_counter_is_disabled(tmp_path, monkeypatch)
     )
 
     callback.on_log(
-        SimpleNamespace(include_num_input_tokens_seen=False),
-        SimpleNamespace(global_step=3, num_input_tokens_seen=128),
-        None,
-        logs={"loss": 0.25},
-    )
-
-    row = json.loads(session.markers_path.read_text().splitlines()[-1])
-    assert row["tokens_accepted"] is None
-
-
-def test_tokens_are_null_when_trainer_counter_mode_is_no(tmp_path, monkeypatch):
-    session, callback = _callback_session(
-        tmp_path, monkeypatch, "tokens-no", ProfileWindowConfig(enabled=False)
-    )
-
-    callback.on_log(
-        SimpleNamespace(include_num_input_tokens_seen="no"),
-        SimpleNamespace(global_step=3, num_input_tokens_seen=0),
+        SimpleNamespace(include_num_input_tokens_seen=mode),
+        SimpleNamespace(global_step=3, num_input_tokens_seen=counter),
         None,
         logs={"loss": 0.25},
     )
