@@ -100,18 +100,26 @@ def test_secondary_rank_skips_profiler_start(tmp_path, monkeypatch):
         tmp_path,
         monkeypatch,
         "rank-profile",
-        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=1),
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=2),
     )
     session.primary_rank = False
     starts = []
+    synchronizations = []
     monkeypatch.setattr(
         "agoge_forger.telemetry.callback.profile",
         lambda **kwargs: starts.append(kwargs),
     )
+    monkeypatch.setattr(
+        callback,
+        "_synchronize_profiled_device",
+        lambda: synchronizations.append("called"),
+    )
 
     callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
 
     assert starts == []
+    assert synchronizations == []
 
 
 def test_evaluation_log_inside_train_window_has_no_window_reference(tmp_path, monkeypatch):
@@ -128,26 +136,6 @@ def test_evaluation_log_inside_train_window_has_no_window_reference(tmp_path, mo
     row = json.loads(session.markers_path.read_text().splitlines()[-1])
     assert row["event"] == "eval_log"
     assert "profile_window_ref" not in row
-
-
-def test_secondary_rank_skips_window_timing_synchronization(tmp_path, monkeypatch):
-    session, callback = _callback_session(
-        tmp_path,
-        monkeypatch,
-        "rank-timing",
-        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=2),
-    )
-    session.primary_rank = False
-    synchronizations = []
-    monkeypatch.setattr(
-        callback,
-        "_synchronize_profiled_device",
-        lambda: synchronizations.append("called"),
-    )
-
-    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
-
-    assert synchronizations == []
 
 
 def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
