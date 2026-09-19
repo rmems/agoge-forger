@@ -28,7 +28,14 @@ runs/<run_name>/manifest.json
       "allocated_vram_gb": 12.5,
       "bf16_supported": true
     },
-    "artifact_index": "adapters/my-run/artifact_index.json"
+    "artifact_index": "adapters/my-run/artifact_index.json",
+    "telemetry": {
+      "agoge_run_id": "my-run",
+      "markers": "runs/my-run/telemetry/agoge-markers.jsonl",
+      "profile_window_request": "runs/my-run/telemetry/profile-window-request.json",
+      "profile_window": null,
+      "profile_window_id": null
+    }
   },
   "environment": {
     "python_version": "3.12.0",
@@ -63,6 +70,12 @@ runs/<run_name>/manifest.json
 | `metrics.max_vram_gb` | float | No   | Peak VRAM usage in binary GiB (`1024**3`; training only)  |
 | `metrics.gpu_report`  | object | No   | GPU hardware report (training only)                     |
 | `metrics.artifact_index` | str | No | Path to `artifact_index.json` (training only)           |
+| `metrics.telemetry` | object | No | Optional F0 correlation paths (`agoge_run_id`, marker JSONL, profile window) |
+| `metrics.telemetry.agoge_run_id` | str | No | Stable run identity used to correlate Agoge and BKL records |
+| `metrics.telemetry.markers` | str \| null | No | Path to current-session `agoge-markers.jsonl`; `null` when marker emission is disabled or no marker artifact was published |
+| `metrics.telemetry.profile_window_request` | str \| null | No | Path to the current-session `profile-window-request.json`; `null` when the request artifact was not published |
+| `metrics.telemetry.profile_window` | str \| null | No | Path to the published `profile-window.json`; `null` when no window summary was published |
+| `metrics.telemetry.profile_window_id` | str \| null | No | `{run_id}:{phase}:{start}-{end}` for an enabled request; `null` when profiling is disabled |
 | `environment`     | object | No       | Present for training manifests; omitted for inference smoke tests |
 | `environment.python_version` | str | No | Python version string (training manifests)         |
 | `environment.torch_version` | str | No | PyTorch version string (training manifests)       |

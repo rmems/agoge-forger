@@ -15,4 +15,8 @@ Start there:
   the ownership rule: kernels and engine-CUDA measurement live there,
   training stays here.
 
+Agoge can emit correlation markers and an opt-in torch.profiler window
+(see [`docs/cuda_profiling_windows.md`](../docs/cuda_profiling_windows.md)).
+It does not add a first-party CUDA tree or launch Nsight.
+
 Do not copy `.cu` files into this directory to "fix" this stub.

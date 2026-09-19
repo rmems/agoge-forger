@@ -78,6 +78,10 @@ datasets/samples/*.jsonl
 *.pt
 *.gguf
 
+# Local profiler chrome / kineto dumps if written outside runs/
+*.chrome.json
+profiler_traces/
+
 
 # Ignore cursor AI rules
 .cursor/rules/codacy.mdc
