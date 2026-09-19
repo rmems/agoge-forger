@@ -35,6 +35,17 @@ def _writer(tmp_path: Path, clock: list[int] | None = None) -> MarkerWriter:
     )
 
 
+def _fail_path_writes(monkeypatch, target_name: str, message: str) -> None:
+    original_write_text = Path.write_text
+
+    def fail_target(path, *args, **kwargs):
+        if path.name == target_name:
+            raise OSError(message)
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_target)
+
+
 def test_cli_profile_window_flag(tmp_path, monkeypatch):
     dataset = tmp_path / "data.jsonl"
     dataset.write_text("{}\n")
@@ -132,28 +143,42 @@ def test_reused_run_resets_marker_artifact_for_current_session(tmp_path, monkeyp
     assert second.manifest_entry()["markers"] == str(second.markers_path)
 
 
-def test_failed_marker_reset_does_not_publish_stale_artifact(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "run_name": "reset-failure",
+            "artifact_name": "agoge-markers.jsonl",
+            "manifest_key": "markers",
+            "error_message": "reset failed",
+        },
+        {
+            "run_name": "stale-request",
+            "artifact_name": "profile-window-request.json",
+            "manifest_key": "profile_window_request",
+            "error_message": "request failed",
+        },
+    ],
+)
+def test_failed_telemetry_artifact_write_does_not_publish_stale_path(
+    tmp_path,
+    monkeypatch,
+    case,
+):
     dataset = tmp_path / "data.jsonl"
     dataset.write_text("{}\n")
     monkeypatch.chdir(tmp_path)
-    stale = tmp_path / "runs/reset-failure/telemetry/agoge-markers.jsonl"
+    stale = tmp_path / f"runs/{case['run_name']}/telemetry/{case['artifact_name']}"
     stale.parent.mkdir(parents=True)
     stale.write_text('{"old": true}\n')
-    original_write_text = Path.write_text
-
-    def fail_marker_reset(path, *args, **kwargs):
-        if path.name == "agoge-markers.jsonl":
-            raise OSError("reset failed")
-        return original_write_text(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "write_text", fail_marker_reset)
+    _fail_path_writes(monkeypatch, case["artifact_name"], case["error_message"])
     config = ExperimentConfig(
-        model_id="org/model", dataset_path=str(dataset), run_name="reset-failure"
+        model_id="org/model", dataset_path=str(dataset), run_name=case["run_name"]
     )
 
     session = open_training_session(config)
 
-    assert session.manifest_entry()["markers"] is None
+    assert session.manifest_entry()[case["manifest_key"]] is None
     assert stale.read_text() == '{"old": true}\n'
 
 
@@ -205,30 +230,6 @@ def test_failed_current_marker_write_does_not_publish_stale_path(tmp_path, monke
     session = open_training_session(config)
 
     assert session.manifest_entry()["markers"] is None
-
-
-def test_failed_current_request_write_does_not_publish_stale_path(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    stale = tmp_path / "runs/stale-request/telemetry/profile-window-request.json"
-    stale.parent.mkdir(parents=True)
-    stale.write_text('{"old": true}\n')
-    original_write_text = Path.write_text
-
-    def fail_request(path, *args, **kwargs):
-        if path.name == "profile-window-request.json":
-            raise OSError("request failed")
-        return original_write_text(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "write_text", fail_request)
-    config = ExperimentConfig(
-        model_id="org/model", dataset_path=str(dataset), run_name="stale-request"
-    )
-
-    session = open_training_session(config)
-
-    assert session.manifest_entry()["profile_window_request"] is None
 
 
 def test_secondary_rank_does_not_write_markers(tmp_path, monkeypatch):
