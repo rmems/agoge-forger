@@ -1,0 +1,21 @@
+src/agoge_forger/telemetry/callback.py
+  s_341bff81dd5a3a::t_92c9084fbed790 198-205
+src/agoge_forger/telemetry/session.py
+  s_341bff81dd5a3a::t_92c9084fbed790 72,77,90-99,112-115,130-131,137,172-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d3ff2bd2e1989e056dd941dbc376e1bb4d15dd2b",
+  "prompts": {},
+  "sessions": {
+    "s_341bff81dd5a3a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b991-cbcd-7782-9d3c-2cc8b05c137f",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
