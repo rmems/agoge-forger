@@ -1,9 +1,11 @@
 """Opt-in bounded CUDA/torch.profiler window. Off for ordinary training."""
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class ProfileWindowConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = False
     phase: str = "train"
     start_step: int = 1

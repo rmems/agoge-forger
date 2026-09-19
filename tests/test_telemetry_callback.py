@@ -58,6 +58,44 @@ def test_aggregate_training_log_is_not_emitted_as_step_end(tmp_path, monkeypatch
     assert [row["event"] for row in rows] == ["run_start"]
 
 
+def test_tokens_are_null_when_trainer_counter_is_disabled(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "tokens-disabled",
+        ProfileWindowConfig(enabled=False),
+    )
+
+    callback.on_log(
+        SimpleNamespace(include_num_input_tokens_seen=False),
+        SimpleNamespace(global_step=3, num_input_tokens_seen=128),
+        None,
+        logs={"loss": 0.25},
+    )
+
+    row = json.loads(session.markers_path.read_text().splitlines()[-1])
+    assert row["tokens_accepted"] is None
+
+
+def test_secondary_rank_skips_profiler_start(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "rank-profile",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=1),
+    )
+    session.primary_rank = False
+    starts = []
+    monkeypatch.setattr(
+        "agoge_forger.telemetry.callback.profile",
+        lambda **kwargs: starts.append(kwargs),
+    )
+
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+
+    assert starts == []
+
+
 def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
     session, callback = _callback_session(
         tmp_path,
@@ -73,6 +111,7 @@ def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
     assert "step_begin" in events
     assert "profile_window_start" in events
     assert "profile_window_end" in events
+    callback.on_train_end(None, SimpleNamespace(global_step=1), None)
     summary = json.loads(session.summary_path.read_text())
     assert summary["overhead"]["status"] == "unavailable"
     assert summary["monotonic_ns_start"] is not None

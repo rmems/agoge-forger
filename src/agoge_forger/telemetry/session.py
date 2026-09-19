@@ -46,6 +46,7 @@ class TelemetrySession:
     profiler_error: str | None = None
     _closed: bool = field(default=False, init=False)
     _summary_written: bool = field(default=False, init=False)
+    _pending_summary: dict[str, Any] | None = field(default=None, init=False, repr=False)
     _request_written: bool = field(default=False, init=False)
     callback: Any = field(default=None, init=False, repr=False)
 
@@ -75,9 +76,11 @@ class TelemetrySession:
     ) -> None:
         if not self._can_write_summary():
             return
+        self._pending_summary = dict(summary)
         try:
-            self._write_summary(summary)
+            self._write_summary(self._pending_summary)
             self._summary_written = True
+            self._pending_summary = None
         except OSError as error:
             logger.warning(f"profile window summary write failed: {error}")
 
@@ -87,7 +90,9 @@ class TelemetrySession:
         if self.callback is not None:
             self.callback.finalize()
         self._closed = True
-        if self.window.enabled and not self._summary_written:
+        if self._pending_summary is not None:
+            self.write_profile_summary(summary=self._pending_summary)
+        elif self.window.enabled and not self._summary_written:
             self.write_profile_summary(
                 summary={
                     "events": None,

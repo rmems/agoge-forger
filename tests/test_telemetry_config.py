@@ -205,3 +205,21 @@ def test_yaml_telemetry_section(tmp_path):
     assert config.telemetry.run_id == "yaml-run"
     assert config.telemetry.profile_window.enabled is True
     assert config.telemetry.profile_window.end_step == 1
+
+
+def test_yaml_profile_window_rejects_unknown_fields(tmp_path):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    config_path = tmp_path / "exp.yaml"
+    config_path.write_text(
+        "model_id: org/model\n"
+        "dataset_path: data.jsonl\n"
+        "telemetry:\n"
+        "  profile_window:\n"
+        "    enabled: true\n"
+        "    start_stpe: 5\n"
+        "    end_step: 5\n"
+    )
+
+    with pytest.raises(ValueError, match="start_stpe"):
+        load_config(str(config_path))

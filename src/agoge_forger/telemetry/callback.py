@@ -27,6 +27,9 @@ class TrainingCorrelationCallback(TrainerCallback):
         self._unprofiled_s: list[float] = []
         self._window_start_ns: int | None = None
         self._window_end_ns: int | None = None
+        self._summary_events: dict[str, Any] | None = None
+        self._summary_actual_step: int | None = None
+        self._summary_complete = False
         self._last_step = 0
         self._finalized = False
 
@@ -49,7 +52,7 @@ class TrainingCorrelationCallback(TrainerCallback):
             self._record_step_duration(profiled=was_profiled)
 
     def on_log(self, args, state, control, **kwargs):
-        self._emit_log(state, kwargs.get("logs"))
+        self._emit_log(args, state, kwargs.get("logs"))
 
     def on_save(self, args, state, control, **kwargs):
         self._session.emit(
@@ -72,6 +75,7 @@ class TrainingCorrelationCallback(TrainerCallback):
             actual_step=actual_step,
             complete=(actual_step is not None and actual_step >= self._session.window.end_step),
         )
+        self._write_final_summary()
 
     @property
     def last_completed_step(self) -> int:
@@ -88,7 +92,7 @@ class TrainingCorrelationCallback(TrainerCallback):
             extras["profile_window_ref"] = self._session.window_id
         self._session.emit("step_begin", phase=TRAIN_PHASE, global_step=upcoming, extras=extras)
 
-    def _emit_log(self, state: Any, logs: Any) -> None:
+    def _emit_log(self, args: Any, state: Any, logs: Any) -> None:
         step = int(state.global_step)
         if _is_evaluation_log(logs):
             phase = "eval"
@@ -96,9 +100,12 @@ class TrainingCorrelationCallback(TrainerCallback):
             phase = TRAIN_PHASE
         else:
             return
+        tokens_accepted = None
+        if getattr(args, "include_num_input_tokens_seen", False):
+            tokens_accepted = getattr(state, "num_input_tokens_seen", None)
         extras = {
             "loss": loss_measurement(logs),
-            "tokens_accepted": getattr(state, "num_input_tokens_seen", None),
+            "tokens_accepted": tokens_accepted,
         }
         if window_covers_step(self._session.window, step):
             extras["profile_window_ref"] = self._session.window_id
@@ -160,6 +167,9 @@ class TrainingCorrelationCallback(TrainerCallback):
         self._launch_torch_profiler()
 
     def _torch_backend_ready(self) -> bool:
+        if not self._session.primary_rank:
+            logger.info("not starting torch.profiler on a non-primary rank")
+            return False
         probes = self._session.backend_probes
         status = requested_backend_status(self._session.window.backend, probes)
         if self._session.window.backend == TORCH_BACKEND and status.get("status") == "ok":
@@ -200,27 +210,32 @@ class TrainingCorrelationCallback(TrainerCallback):
         if self._profiler_active:
             self._synchronize_profiled_device()
         self._window_end_ns = self._session.writer.next_monotonic()
-        summary_events = self._collect_summary()
+        self._summary_events = self._collect_summary()
+        self._summary_actual_step = actual_step
+        self._summary_complete = complete
         if record_profiled is not None:
             self._record_step_duration(profiled=record_profiled)
-        if self._session.window.enabled:
-            self._session.write_profile_summary(
-                summary={
-                    "events": summary_events,
-                    "overhead": overhead_from_step_times(self._profiled_s, self._unprofiled_s),
-                    "start_ns": self._window_start_ns,
-                    "end_ns": self._window_end_ns,
-                    "actual_end_step": actual_step,
-                    "complete": complete,
-                },
+        if self._session.window.enabled and actual_step is not None:
+            self._session.emit(
+                "profile_window_end",
+                phase=self._session.window.phase,
+                global_step=actual_step,
+                extras={"profile_window_ref": self._session.window_id},
             )
-            if actual_step is not None:
-                self._session.emit(
-                    "profile_window_end",
-                    phase=self._session.window.phase,
-                    global_step=actual_step,
-                    extras={"profile_window_ref": self._session.window_id},
-                )
+
+    def _write_final_summary(self) -> None:
+        if not self._session.window.enabled or self._window_end_ns is None:
+            return
+        self._session.write_profile_summary(
+            summary={
+                "events": self._summary_events,
+                "overhead": overhead_from_step_times(self._profiled_s, self._unprofiled_s),
+                "start_ns": self._window_start_ns,
+                "end_ns": self._window_end_ns,
+                "actual_end_step": self._summary_actual_step,
+                "complete": self._summary_complete,
+            },
+        )
 
     def _collect_summary(self) -> dict[str, Any] | None:
         if self._profiler is None:

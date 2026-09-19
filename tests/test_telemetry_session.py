@@ -243,3 +243,41 @@ def test_secondary_rank_does_not_write_markers(tmp_path, monkeypatch):
     assert session.primary_rank is False
     assert not session.markers_path.exists()
     assert not session.request_path.exists()
+
+
+def test_close_retries_the_captured_summary_after_transient_write_failure(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="retry")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=2
+    )
+    session = open_training_session(config)
+    summary = {
+        "events": None,
+        "overhead": {"status": "unavailable", "reason": "test"},
+        "start_ns": 10,
+        "end_ns": 20,
+        "actual_end_step": 2,
+        "complete": True,
+    }
+    original_write = session._write_summary
+    attempts = {"count": 0}
+
+    def fail_once(value):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise OSError("transient")
+        original_write(value)
+
+    monkeypatch.setattr(session, "_write_summary", fail_once)
+
+    session.write_profile_summary(summary=summary)
+    session.close()
+
+    record = json.loads(session.summary_path.read_text())
+    assert attempts["count"] == 2
+    assert record["actual_end_step"] == 2
+    assert record["complete"] is True
+    assert record["monotonic_ns_start"] == 10

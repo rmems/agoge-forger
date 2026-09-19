@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from agoge_forger.config import ExperimentConfig, ProfileWindowConfig
@@ -93,3 +94,45 @@ def test_unprofiled_baseline_waits_for_cuda_before_recording(tmp_path, monkeypat
     callback.on_step_end(None, SimpleNamespace(global_step=1), None)
 
     assert callback._unprofiled_s == [2.0]
+
+
+def test_summary_waits_for_later_unprofiled_baseline(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "late-baseline",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=1),
+    )
+    clock = iter([1.0, 3.0, 4.0, 5.0])
+    monkeypatch.setattr("agoge_forger.telemetry.callback.time.perf_counter", lambda: next(clock))
+
+    class Profiler:
+        def start(self):
+            return None
+
+        def step(self):
+            return None
+
+        def stop(self):
+            return None
+
+        def events(self):
+            return []
+
+        def key_averages(self):
+            return []
+
+    monkeypatch.setattr("agoge_forger.telemetry.callback.profile", lambda **kwargs: Profiler())
+
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+    assert not session.summary_path.exists()
+
+    callback.on_step_begin(None, SimpleNamespace(global_step=1), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=2), None)
+    callback.on_train_end(None, SimpleNamespace(global_step=2), None)
+
+    summary = json.loads(session.summary_path.read_text())
+    assert summary["overhead"]["status"] == "ok"
+    assert summary["overhead"]["profiled_step_mean_s"] == 2.0
+    assert summary["overhead"]["unprofiled_step_mean_s"] == 1.0
