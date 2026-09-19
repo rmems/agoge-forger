@@ -1,0 +1,61 @@
+docs/contracts/metrics_schema.md
+  s_341bff81dd5a3a::t_0272d3602b56d8 45
+  s_341bff81dd5a3a::t_4cf16d3b7a6a0f 18-25,43-44,46-47
+docs/contracts/f0_correlation_markers.md
+  s_341bff81dd5a3a::t_4cf16d3b7a6a0f 14,18-21
+  s_341bff81dd5a3a::t_0272d3602b56d8 51-54,84-91
+src/agoge_forger/telemetry/summarize_families.py
+  s_341bff81dd5a3a::t_d9153fb97c6174 73-74
+  s_341bff81dd5a3a::t_e33e56b5eaf0d5 13-14,17,22,24,29-30,37,42,48,55-59,67,83-86,95,99-100,102-106,144,148,151-152,155-160,166,168-172,174-177,179,183-192,194-200
+  s_341bff81dd5a3a::t_9c43c2dd5fda2f 63-66,68-70,78-82
+  s_341bff81dd5a3a::t_ef77a2fbb73e3d 149-150,153-154,161-165,167
+src/agoge_forger/profile_window.py
+  s_341bff81dd5a3a::t_c61b3870862914 21-22,38-39
+docs/contracts/run_manifest.md
+  s_341bff81dd5a3a::t_4cf16d3b7a6a0f 31-38,74-75,77-78
+  s_341bff81dd5a3a::t_0272d3602b56d8 76
+src/agoge_forger/telemetry/session.py
+  s_341bff81dd5a3a::t_2c6b80728d726c 49-50,97-98,103-106,117,145,195,198-202,216,256-258,301
+  s_341bff81dd5a3a::t_0d8f6c3aca05a7 76-77,82-89,109-110,116,128-129,146,194,196-197,214
+  s_341bff81dd5a3a::t_4a0760fc08326c 65-66,215
+src/agoge_forger/config.py
+  s_341bff81dd5a3a::t_4a0760fc08326c 4,73
+tests/test_telemetry.py
+  s_341bff81dd5a3a::t_ccf993fba21e8d 14,28,184-198,774-827
+  s_341bff81dd5a3a::t_8cfa38d5779e83 22-26,69-80,111-121,285-303,333-368,370,382,388-422,511-518,540,543,569,610-625,628-656,696-719
+  s_341bff81dd5a3a::t_ca19df1ebfbe68 657-695
+  s_341bff81dd5a3a::t_a7eaf66287892b 6,27,149-183,199-200,369,371-381,383-387,519-539,541-542,544-567,626-627,720-773
+src/agoge_forger/telemetry/join_window.py
+  s_341bff81dd5a3a::t_c61b3870862914 36,38-40
+src/agoge_forger/telemetry/markers.py
+  s_341bff81dd5a3a::t_2c6b80728d726c 28,47
+src/agoge_forger/telemetry/summarize_overhead.py
+  s_341bff81dd5a3a::t_c61b3870862914 27-35
+src/agoge_forger/telemetry/summarize_names.py
+  s_341bff81dd5a3a::t_c61b3870862914 25,28,32-34
+src/agoge_forger/telemetry/window.py
+  s_341bff81dd5a3a::t_4a0760fc08326c 61,67-68,86
+  s_341bff81dd5a3a::t_c61b3870862914 118,169-179
+  s_341bff81dd5a3a::t_2c6b80728d726c 51,53,56,62-66
+src/agoge_forger/telemetry/callback.py
+  s_341bff81dd5a3a::t_4210f66b5e5c99 47-48,115,117-123,181-183,185-187,194-195
+  s_341bff81dd5a3a::t_4a0760fc08326c 69,71-72,75-79,176,184,205-211
+  s_341bff81dd5a3a::t_a7d3f5878af08b 30-31,38,44,60-61,65-68,70,73,133,239-248
+  s_341bff81dd5a3a::t_cb2c4852b0759b 45,59,62,98,103,126-128,130-132,134-135,190-191,202-203,230-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "772e7f2425e43762d0010c24c7ad359611dad47b",
+  "prompts": {},
+  "sessions": {
+    "s_341bff81dd5a3a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b991-cbcd-7782-9d3c-2cc8b05c137f",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
