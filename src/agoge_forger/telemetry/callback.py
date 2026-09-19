@@ -101,7 +101,7 @@ class TrainingCorrelationCallback(TrainerCallback):
         else:
             return
         tokens_accepted = None
-        if getattr(args, "include_num_input_tokens_seen", False):
+        if getattr(args, "include_num_input_tokens_seen", False) not in (False, "no"):
             tokens_accepted = getattr(state, "num_input_tokens_seen", None)
         extras = {
             "loss": loss_measurement(logs),

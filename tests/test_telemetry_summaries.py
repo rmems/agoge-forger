@@ -205,6 +205,7 @@ def test_summarize_prefers_device_time_and_memory_counters():
                 device_type=SimpleNamespace(name="CUDA"),
                 cpu_memory_usage=128.0,
                 device_memory_usage=256.0,
+                self_device_memory_usage=128.0,
             ),
         ],
         key_averages=list,
@@ -213,4 +214,4 @@ def test_summarize_prefers_device_time_and_memory_counters():
     assert summary["kernel_duration"]["status"] == "ok"
     assert int(summary["kernels"][0]["duration_us"]["sum"]) == 40
     assert summary["memory"]["status"] == "ok"
-    assert int(summary["memory"]["device_bytes"]["sum"]) == 256
+    assert int(summary["memory"]["device_bytes"]["sum"]) == 128

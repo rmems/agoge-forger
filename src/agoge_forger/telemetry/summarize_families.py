@@ -115,9 +115,9 @@ def memory_block(events: list[dict[str, Any]], profiler: Any) -> dict[str, Any]:
 
 def memory_counters(profiler: Any) -> dict[str, Any]:
     raw = _profiler_memory_table(profiler)
-    cpu_hits = _memory_hits(raw, ("cpu_memory_usage", "self_cpu_memory_usage"))
+    cpu_hits = _memory_hits(raw, ("self_cpu_memory_usage", "cpu_memory_usage"))
     device_hits = _memory_hits(
-        raw, ("device_memory_usage", "cuda_memory_usage", "self_device_memory_usage")
+        raw, ("self_device_memory_usage", "device_memory_usage", "cuda_memory_usage")
     )
     if not cpu_hits and not device_hits:
         return {"status": "unavailable", "count": 0, "duration_us": None}

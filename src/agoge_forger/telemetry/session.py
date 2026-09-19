@@ -147,7 +147,7 @@ class TelemetrySession:
         )
         if events:
             record.update(events)
-        if self.window.backend != TORCH_BACKEND:
+        if self.window.backend != TORCH_BACKEND or backend.get("status") != "ok":
             record.update(_unsupported_profile_metrics())
         self.summary_path.parent.mkdir(parents=True, exist_ok=True)
         self.summary_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")

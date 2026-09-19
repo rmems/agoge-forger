@@ -95,6 +95,22 @@ def test_tokens_are_null_when_trainer_counter_is_disabled(tmp_path, monkeypatch)
     assert row["tokens_accepted"] is None
 
 
+def test_tokens_are_null_when_trainer_counter_mode_is_no(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path, monkeypatch, "tokens-no", ProfileWindowConfig(enabled=False)
+    )
+
+    callback.on_log(
+        SimpleNamespace(include_num_input_tokens_seen="no"),
+        SimpleNamespace(global_step=3, num_input_tokens_seen=0),
+        None,
+        logs={"loss": 0.25},
+    )
+
+    row = json.loads(session.markers_path.read_text().splitlines()[-1])
+    assert row["tokens_accepted"] is None
+
+
 def test_secondary_rank_skips_profiler_start(tmp_path, monkeypatch):
     session, callback = _callback_session(
         tmp_path,
@@ -159,6 +175,25 @@ def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
     assert summary["monotonic_ns_start"] is not None
     assert summary["monotonic_ns_end"] is not None
     assert summary["monotonic_ns"] > summary["monotonic_ns_end"]
+    assert summary["kernel_duration"]["status"] == "unsupported"
+    assert summary["sync"]["status"] == "unsupported"
+    assert summary["transfers"]["status"] == "unsupported"
+
+
+def test_unsupported_torch_probe_marks_summary_metrics_unsupported(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "unsupported-torch",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=1),
+    )
+    session.backend_probes["torch"] = {"status": "unsupported", "cuda_kernels": "unavailable"}
+
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+    callback.on_train_end(None, SimpleNamespace(global_step=1), None)
+
+    summary = json.loads(session.summary_path.read_text())
     assert summary["kernel_duration"]["status"] == "unsupported"
     assert summary["sync"]["status"] == "unsupported"
     assert summary["transfers"]["status"] == "unsupported"
