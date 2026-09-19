@@ -224,10 +224,20 @@ def open_training_session(config: ExperimentConfig) -> TelemetrySession:
         emit_markers=telemetry.emit_markers and primary,
         primary_rank=primary,
     )
+    if session.emit_markers:
+        _reset_marker_artifact(session)
     if primary:
         _write_request(session)
         session.emit("run_start", phase="setup", global_step=0)
     return session
+
+
+def _reset_marker_artifact(session: TelemetrySession) -> None:
+    try:
+        session.markers_path.write_text("", encoding="utf-8")
+    except OSError as error:
+        logger.warning(f"telemetry marker reset failed: {error}")
+        session.emit_markers = False
 
 
 def _unavailable_profile_metrics() -> dict[str, Any]:

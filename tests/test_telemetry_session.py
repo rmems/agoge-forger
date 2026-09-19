@@ -115,6 +115,48 @@ def test_disabled_window_does_not_publish_stale_summary(tmp_path, monkeypatch):
     assert entry["profile_window"] is None
 
 
+def test_reused_run_resets_marker_artifact_for_current_session(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="reused")
+    config.telemetry.run_id = "same-run-id"
+
+    first = open_training_session(config)
+    first.emit("step_end", phase="train", global_step=1)
+    second = open_training_session(config)
+
+    rows = [json.loads(line) for line in second.markers_path.read_text().splitlines()]
+    assert [row["event"] for row in rows] == ["run_start"]
+    assert rows[0]["agoge_run_id"] == "same-run-id"
+    assert second.manifest_entry()["markers"] == str(second.markers_path)
+
+
+def test_failed_marker_reset_does_not_publish_stale_artifact(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    stale = tmp_path / "runs/reset-failure/telemetry/agoge-markers.jsonl"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"old": true}\n')
+    original_write_text = Path.write_text
+
+    def fail_marker_reset(path, *args, **kwargs):
+        if path.name == "agoge-markers.jsonl":
+            raise OSError("reset failed")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_marker_reset)
+    config = ExperimentConfig(
+        model_id="org/model", dataset_path=str(dataset), run_name="reset-failure"
+    )
+
+    session = open_training_session(config)
+
+    assert session.manifest_entry()["markers"] is None
+    assert stale.read_text() == '{"old": true}\n'
+
+
 def test_disabled_markers_do_not_publish_stale_marker_path(tmp_path, monkeypatch):
     dataset = tmp_path / "data.jsonl"
     dataset.write_text("{}\n")

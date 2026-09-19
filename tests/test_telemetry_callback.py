@@ -11,6 +11,8 @@ from agoge_forger.telemetry.session import open_training_session
 
 
 def _callback_session(tmp_path, monkeypatch, run_name, window):
+    for key in ("AGOGE_PROFILE_WINDOW", "AGOGE_PROFILE_BACKEND", "AGOGE_RUN_ID"):
+        monkeypatch.delenv(key, raising=False)
     dataset = tmp_path / "data.jsonl"
     dataset.write_text("{}\n")
     monkeypatch.chdir(tmp_path)
