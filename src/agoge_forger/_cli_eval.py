@@ -16,7 +16,7 @@ from .eval.contract import (
     held_out_task_ids,
     logical_task_set_sha256,
 )
-from .eval.harness import HeldOutEvalRuntime, run_g0_base_eval, run_held_out_eval
+from .eval.harness import G0BaseEvalSpec, HeldOutEvalRuntime, run_g0_base_eval, run_held_out_eval
 from .eval.score import OBJECTIVE_SCORING_VERSION
 from .eval.serializers import code_repair_prompt
 from .logging import logger
@@ -240,10 +240,12 @@ def _run_g0_held_out_eval_command(request: _G0HeldOutEvalRequest) -> None:
             )
         )
         published = run_g0_base_eval(
-            manifest_path=manifest_path,
-            output_dir=destination,
-            experiment_id=request.experiment_id,
-            base=base,
+            G0BaseEvalSpec(
+                manifest_path=manifest_path,
+                output_dir=destination,
+                experiment_id=request.experiment_id,
+                base=base,
+            ),
             runtime=HeldOutEvalRuntime(
                 tokenizer=tokenizer,
                 trust_remote_code=request.trust_remote_code,

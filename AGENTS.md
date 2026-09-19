@@ -31,7 +31,7 @@ Agoge Forger is a Python/PyTorch training, evaluation, and release project.
 - Granite 4.1 3B base is cached at `~/.models/ibm-granite/granite-4.1-3b-base`.
 - Code-repair training exports come from sibling repo `rmems/synthetic-factory`.
 - The flagship measured comparison is G0 (untouched Granite 4.1 3B base) versus G1 (same pinned base plus one frozen code-repair SFT); other arms stay parked until that result is publishable.
-- Frozen split membership must not be re-split; measured runs pin dataset and split by immutable digest.
-- Shipped configs such as `configs/granite_4_1_flagship.yaml` must not contain host-specific paths.
-- Measured SFT uses completion-only loss and must evaluate G0 before G1 training.
+- Frozen split membership should stay frozen; measured runs pin dataset and split by immutable digest.
+- Shipped configs such as `configs/granite_4_1_flagship.yaml` should avoid host-specific paths.
+- Measured SFT uses completion-only loss and should evaluate G0 before G1 training.
 - R2E-Gym SFT datasets are already downloaded locally for Hugging Face training.

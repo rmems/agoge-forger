@@ -6,12 +6,13 @@ import pytest
 
 from agoge_forger.eval.experiment_contract import (
     ExperimentContract,
+    SplitPolicyPin,
     build_experiment_contract,
     load_experiment_contract,
     split_pin_from_manifest,
     validate_experiment_contract,
 )
-from agoge_forger.eval.harness import HeldOutEvalRuntime, run_g0_base_eval
+from agoge_forger.eval.harness import G0BaseEvalSpec, HeldOutEvalRuntime, run_g0_base_eval
 from agoge_forger.eval.score import OBJECTIVE_SCORING_VERSION
 from agoge_forger.eval.serializers import (
     code_repair_prompt,
@@ -36,11 +37,13 @@ def _experiment_contract(tmp_path: Path, manifest_path: Path) -> ExperimentContr
     split = split_pin_from_manifest(
         manifest_path,
         contract_anchor=anchor,
-        split_seed=99,
-        split_salt="paired-evaluation-v1",
-        train_weight=6,
-        validation_weight=2,
-        held_out_weight=2,
+        policy=SplitPolicyPin(
+            split_seed=99,
+            split_salt="paired-evaluation-v1",
+            train_weight=6,
+            validation_weight=2,
+            held_out_weight=2,
+        ),
     )
     return ExperimentContract(
         experiment_id="test-experiment",
@@ -90,7 +93,7 @@ def test_experiment_contract_rejects_host_absolute_split_path(tmp_path):
     broken = contract.model_copy(
         update={
             "split": contract.split.model_copy(
-                update={"split_manifest_path": "/tmp/split_manifest.json"}
+                update={"split_manifest_path": "/var/nonexistent/agoge-split-manifest.json"}
             )
         }
     )
@@ -112,10 +115,12 @@ def test_g0_only_bundle_without_sft_artifact(tmp_path):
     manifest_path, _manifest, base, _sft = canary_evaluation_case(tmp_path)
     output = tmp_path / "g0-bundle"
     published = run_g0_base_eval(
-        manifest_path=manifest_path,
-        output_dir=output,
-        experiment_id="canary-g0",
-        base=base,
+        G0BaseEvalSpec(
+            manifest_path=manifest_path,
+            output_dir=output,
+            experiment_id="canary-g0",
+            base=base,
+        ),
         runtime=HeldOutEvalRuntime(generator=scripted_generator("all-correct")),
     )
     assert published == output

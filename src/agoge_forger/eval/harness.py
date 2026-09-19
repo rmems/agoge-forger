@@ -41,26 +41,33 @@ class HeldOutEvalRuntime:
     device_map: str = "auto"
 
 
+@dataclass(frozen=True)
+class G0BaseEvalSpec:
+    """Pinned inputs for a G0-only held-out evaluation."""
+
+    manifest_path: str | Path
+    output_dir: str | Path
+    experiment_id: str
+    base: EvaluationArm
+
+
 def run_g0_base_eval(
+    spec: G0BaseEvalSpec,
     *,
-    manifest_path: str | Path,
-    output_dir: str | Path,
-    experiment_id: str,
-    base: EvaluationArm,
     runtime: HeldOutEvalRuntime | None = None,
 ) -> Path:
     """Evaluate the pinned base model on frozen held-out membership before SFT exists."""
 
     options = runtime or HeldOutEvalRuntime()
-    destination = Path(output_dir).expanduser()
+    destination = Path(spec.output_dir).expanduser()
     contract = compose_g0_evaluation_contract(
-        manifest_path=manifest_path,
+        manifest_path=spec.manifest_path,
         contract_path=destination / "g0-contract.json",
-        experiment_id=experiment_id,
-        base=base,
+        experiment_id=spec.experiment_id,
+        base=spec.base,
     )
     _require_g0_contract(contract)
-    tasks = _prepare_g0_held_out(manifest_path, contract, options.tokenizer)
+    tasks = _prepare_g0_held_out(spec.manifest_path, contract, options.tokenizer)
     generate = options.generator or _transformers_generator(
         destination,
         trust_remote_code=options.trust_remote_code,

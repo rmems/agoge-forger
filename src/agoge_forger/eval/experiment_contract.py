@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, NamedTuple
 
 from pydantic import Field, field_validator, model_validator
 
@@ -25,6 +25,21 @@ EXPERIMENT_CONTRACT_VERSION: Literal["agoge.experiment-contract.v1"] = (
 )
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 _REVISION_PATTERN = r"^[0-9a-f]{40,64}$"
+_SPLIT_NAMES: tuple[Literal["train", "validation", "held_out"], ...] = (
+    "train",
+    "validation",
+    "held_out",
+)
+
+
+class SplitPolicyPin(NamedTuple):
+    """Seed, salt, and weights used when pinning a frozen split."""
+
+    split_seed: int
+    split_salt: str
+    train_weight: int
+    validation_weight: int
+    held_out_weight: int
 
 
 class DatasetProvenance(FrozenEvaluationModel):
@@ -242,11 +257,7 @@ def split_pin_from_manifest(
     manifest_path: str | Path,
     *,
     contract_anchor: Path,
-    split_seed: int,
-    split_salt: str,
-    train_weight: int,
-    validation_weight: int,
-    held_out_weight: int,
+    policy: SplitPolicyPin,
 ) -> SplitPin:
     manifest_file = Path(manifest_path).expanduser().resolve(strict=True)
     manifest = validate_split_manifest_snapshot(manifest_file, manifest_file.read_bytes())
@@ -259,11 +270,11 @@ def split_pin_from_manifest(
         train_record_count=manifest.splits["train"].record_count,
         validation_record_count=manifest.splits["validation"].record_count,
         held_out_record_count=manifest.splits["held_out"].record_count,
-        split_seed=split_seed,
-        split_salt=split_salt,
-        train_weight=train_weight,
-        validation_weight=validation_weight,
-        held_out_weight=held_out_weight,
+        split_seed=policy.split_seed,
+        split_salt=policy.split_salt,
+        train_weight=policy.train_weight,
+        validation_weight=policy.validation_weight,
+        held_out_weight=policy.held_out_weight,
     )
 
 
@@ -273,18 +284,17 @@ def _validate_split_pin(contract_path: Path, split: SplitPin) -> SplitManifest:
     if sha256_bytes(manifest_snapshot) != split.split_manifest_sha256:
         raise ValueError("experiment contract split-manifest SHA-256 mismatch")
     manifest = validate_split_manifest_snapshot(manifest_path, manifest_snapshot)
-    for name in ("train", "validation", "held_out"):
+    for name in _SPLIT_NAMES:
         digest = getattr(split, f"{name}_split_sha256")
-        if manifest.splits[cast(Literal["train", "validation", "held_out"], name)].sha256 != digest:
+        if manifest.splits[name].sha256 != digest:
             raise ValueError(f"experiment contract {name} split SHA-256 mismatch")
     return manifest
 
 
 def _validate_held_out_counts(contract: ExperimentContract, manifest: SplitManifest) -> None:
-    for name in ("train", "validation", "held_out"):
+    for name in _SPLIT_NAMES:
         expected = getattr(contract.split, f"{name}_record_count")
-        split_name = cast(Literal["train", "validation", "held_out"], name)
-        if manifest.splits[split_name].record_count != expected:
+        if manifest.splits[name].record_count != expected:
             raise ValueError(f"experiment contract {name} record count mismatch")
 
 
