@@ -3,46 +3,32 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 from agoge_forger.config import ExperimentConfig, ProfileWindowConfig
 from agoge_forger.telemetry.callback import TrainingCorrelationCallback
-from agoge_forger.telemetry.markers import MarkerWriter
 from agoge_forger.telemetry.session import open_training_session
 
-FIXTURES = Path("tests/fixtures/f0-correlation")
 
-
-def _writer(tmp_path: Path, clock: list[int] | None = None) -> MarkerWriter:
-    ticks = clock or [10, 20, 30, 40]
-
-    def _clock() -> int:
-        return ticks.pop(0)
-
-    return MarkerWriter(
-        path=tmp_path / "agoge-markers.jsonl",
-        run_id="run_test",
-        hostname="testhost",
-        gpu={"uuid": "GPU-test", "pci_bus_id": None, "name": None, "compute_capability": None},
-        collector_version="test",
-        model_id="org/model",
-        model_revision=None,
-        dataset={"id": "tiny.jsonl", "split": "train", "config_digest": None},
-        _clock=_clock,
-    )
-
-
-def test_unstarted_window_does_not_emit_end(tmp_path, monkeypatch):
+def _callback_session(tmp_path, monkeypatch, run_name, window):
     dataset = tmp_path / "data.jsonl"
     dataset.write_text("{}\n")
     monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="missed")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=5, end_step=5
-    )
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name=run_name)
+    config.telemetry.profile_window = window
     session = open_training_session(config)
     callback = TrainingCorrelationCallback(session)
+    session.callback = callback
+    return session, callback
+
+
+def test_unstarted_window_does_not_emit_end(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "missed",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=5, end_step=5),
+    )
     state = SimpleNamespace(global_step=1)
     callback.on_step_end(None, state, None)
     callback.on_train_end(None, state, None)
@@ -52,15 +38,14 @@ def test_unstarted_window_does_not_emit_end(tmp_path, monkeypatch):
 
 
 def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="nsight")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=1, end_step=1, backend="nsight_systems"
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "nsight",
+        ProfileWindowConfig(
+            enabled=True, phase="train", start_step=1, end_step=1, backend="nsight_systems"
+        ),
     )
-    session = open_training_session(config)
-    callback = TrainingCorrelationCallback(session)
     callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
     callback.on_step_end(None, SimpleNamespace(global_step=1), None)
     events = [json.loads(line)["event"] for line in session.markers_path.read_text().splitlines()]
@@ -74,15 +59,14 @@ def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
 
 
 def test_partial_window_records_actual_end_step(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="partial")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=1, end_step=3, backend="nsight_systems"
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "partial",
+        ProfileWindowConfig(
+            enabled=True, phase="train", start_step=1, end_step=3, backend="nsight_systems"
+        ),
     )
-    session = open_training_session(config)
-    callback = TrainingCorrelationCallback(session)
     callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
     callback.on_step_end(None, SimpleNamespace(global_step=1), None)
     callback.on_train_end(None, SimpleNamespace(global_step=1), None)
@@ -98,15 +82,12 @@ def test_partial_window_records_actual_end_step(tmp_path, monkeypatch):
 
 
 def test_profiler_advance_failure_is_nonfatal_and_recorded(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="advance")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=1, end_step=2
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "advance",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=2),
     )
-    session = open_training_session(config)
-    callback = TrainingCorrelationCallback(session)
 
     class BrokenProfiler:
         def step(self):
@@ -121,15 +102,12 @@ def test_profiler_advance_failure_is_nonfatal_and_recorded(tmp_path, monkeypatch
 
 
 def test_profiler_synchronization_failure_is_nonfatal_and_recorded(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="sync")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=1, end_step=1
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "sync",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=1),
     )
-    session = open_training_session(config)
-    callback = TrainingCorrelationCallback(session)
 
     class Profiler:
         def step(self):
@@ -160,15 +138,12 @@ def test_profiler_synchronization_failure_is_nonfatal_and_recorded(tmp_path, mon
 
 
 def test_profiled_step_duration_includes_profiler_lifecycle(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="timing")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=1, end_step=2
+    _, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "timing",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=2),
     )
-    session = open_training_session(config)
-    callback = TrainingCorrelationCallback(session)
     clock = {"now": 1.0}
     monkeypatch.setattr("agoge_forger.telemetry.callback.time.perf_counter", lambda: clock["now"])
 
@@ -186,15 +161,12 @@ def test_profiled_step_duration_includes_profiler_lifecycle(tmp_path, monkeypatc
 
 
 def test_profiled_step_duration_includes_profiler_startup(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="startup")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=1, end_step=2
+    _, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "startup",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=2),
     )
-    session = open_training_session(config)
-    callback = TrainingCorrelationCallback(session)
     clock = {"now": 1.0}
     monkeypatch.setattr("agoge_forger.telemetry.callback.time.perf_counter", lambda: clock["now"])
 
@@ -217,16 +189,14 @@ def test_profiled_step_duration_includes_profiler_startup(tmp_path, monkeypatch)
 
 
 def test_session_close_finalizes_active_window_after_training_error(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="failed")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=1, end_step=3, backend="nsight_systems"
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "failed",
+        ProfileWindowConfig(
+            enabled=True, phase="train", start_step=1, end_step=3, backend="nsight_systems"
+        ),
     )
-    session = open_training_session(config)
-    callback = TrainingCorrelationCallback(session)
-    session.callback = callback
     callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
     callback.on_step_end(None, SimpleNamespace(global_step=1), None)
 
@@ -240,16 +210,14 @@ def test_session_close_finalizes_active_window_after_training_error(tmp_path, mo
 
 
 def test_failure_before_first_window_step_has_no_false_end_marker(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="midstep")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=1, end_step=3, backend="nsight_systems"
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "midstep",
+        ProfileWindowConfig(
+            enabled=True, phase="train", start_step=1, end_step=3, backend="nsight_systems"
+        ),
     )
-    session = open_training_session(config)
-    callback = TrainingCorrelationCallback(session)
-    session.callback = callback
     callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
 
     session.record_failure()
@@ -264,15 +232,12 @@ def test_failure_before_first_window_step_has_no_false_end_marker(tmp_path, monk
 
 
 def test_profiler_start_failure_attempts_cleanup(tmp_path, monkeypatch):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text("{}\n")
-    monkeypatch.chdir(tmp_path)
-    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="startfail")
-    config.telemetry.profile_window = ProfileWindowConfig(
-        enabled=True, phase="train", start_step=1, end_step=1
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "startfail",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=1),
     )
-    session = open_training_session(config)
-    callback = TrainingCorrelationCallback(session)
     cleaned = {"value": False}
 
     class FailingProfiler:
