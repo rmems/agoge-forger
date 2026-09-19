@@ -46,12 +46,10 @@ def duration_block(events: list[dict[str, Any]], device: str, status: str) -> di
 
 def family_block(events: list[dict[str, Any]], family: str, status: str) -> dict[str, Any]:
     durations = _weighted_observations(event for event in events if event["family"] == family)
+    if status != "ok":
+        return {"status": status, "count": 0, "duration_us": None}
     if not durations:
-        return {
-            "status": "unavailable" if status == "ok" else status,
-            "count": 0,
-            "duration_us": None,
-        }
+        return {"status": "unavailable", "count": 0, "duration_us": None}
     return {
         "status": "ok",
         "count": _weighted_count(durations),

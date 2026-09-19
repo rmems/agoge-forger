@@ -63,3 +63,19 @@ def test_failure_before_first_window_step_has_no_false_end_marker(tmp_path, monk
     events = [json.loads(line)["event"] for line in session.markers_path.read_text().splitlines()]
     assert "profile_window_end" not in events
     assert events[-1] == "run_failed"
+
+
+def test_failure_marker_preserves_last_completed_step(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "failed-after-step",
+        ProfileWindowConfig(enabled=False),
+    )
+    callback.on_step_end(None, SimpleNamespace(global_step=3), None)
+
+    session.record_failure()
+
+    rows = [json.loads(line) for line in session.markers_path.read_text().splitlines()]
+    assert rows[-1]["event"] == "run_failed"
+    assert rows[-1]["global_step"] == 3

@@ -70,3 +70,24 @@ def test_profiled_step_duration_includes_profiler_startup(tmp_path, monkeypatch)
     callback.on_step_end(None, SimpleNamespace(global_step=1), None)
 
     assert callback._profiled_s == [2.0]
+
+
+def test_unprofiled_baseline_waits_for_cuda_before_recording(tmp_path, monkeypatch):
+    _, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "baseline",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=2, end_step=2),
+    )
+    clock = {"now": 1.0}
+    monkeypatch.setattr("agoge_forger.telemetry.callback.time.perf_counter", lambda: clock["now"])
+    monkeypatch.setattr("agoge_forger.telemetry.callback.torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr(
+        "agoge_forger.telemetry.callback.torch.cuda.synchronize",
+        lambda: clock.update(now=3.0),
+    )
+
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+
+    assert callback._unprofiled_s == [2.0]

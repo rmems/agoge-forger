@@ -54,6 +54,24 @@ def test_summarize_records_cuda_unavailable_without_inventing_kernels():
     assert summary["cpu_ops"][0]["name"] == "aten::mm"
 
 
+def test_summarize_does_not_report_cpu_sync_as_cuda_evidence():
+    fake = SimpleNamespace(
+        events=lambda: [
+            SimpleNamespace(
+                name="cudaDeviceSynchronize",
+                duration=12.0,
+                device_type=SimpleNamespace(name="CPU"),
+            ),
+        ],
+        key_averages=list,
+    )
+
+    summary = summarize_profiler(fake, cuda_kernel_status="unavailable")
+
+    assert summary["sync"]["status"] == "unavailable"
+    assert summary["sync"]["count"] == 0
+
+
 def test_key_average_summaries_weight_each_invocation():
     fake = SimpleNamespace(
         events=list,

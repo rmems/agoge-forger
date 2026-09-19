@@ -56,6 +56,10 @@ def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
     assert summary["overhead"]["status"] == "unavailable"
     assert summary["monotonic_ns_start"] is not None
     assert summary["monotonic_ns_end"] is not None
+    assert summary["monotonic_ns"] > summary["monotonic_ns_end"]
+    assert summary["kernel_duration"]["status"] == "unsupported"
+    assert summary["sync"]["status"] == "unsupported"
+    assert summary["transfers"]["status"] == "unsupported"
 
 
 def test_partial_window_records_actual_end_step(tmp_path, monkeypatch):

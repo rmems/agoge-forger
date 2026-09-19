@@ -62,9 +62,11 @@ class TelemetrySession:
         self.writer.emit(event, phase=phase, global_step=global_step, extras=extras)
 
     def record_failure(self) -> None:
+        global_step = 0
         if self.callback is not None:
             self.callback.finalize()
-        self.emit("run_failed", phase="failed", global_step=0)
+            global_step = self.callback.last_completed_step
+        self.emit("run_failed", phase="failed", global_step=global_step)
 
     def write_profile_summary(
         self,
@@ -118,7 +120,7 @@ class TelemetrySession:
         record = envelope(
             record_kind=RECORD_PROFILE_WINDOW,
             identity=self.envelope_identity(),
-            monotonic_ns=end_ns if end_ns is not None else monotonic_ns,
+            monotonic_ns=monotonic_ns,
         )
         record.update(
             {
@@ -141,12 +143,7 @@ class TelemetrySession:
         if events:
             record.update(events)
         if self.window.backend != TORCH_BACKEND:
-            record["kernel_duration"] = {
-                "status": "unsupported",
-                "value": None,
-                "unit": "us",
-                "count": 0,
-            }
+            record.update(_unsupported_profile_metrics())
         self.summary_path.parent.mkdir(parents=True, exist_ok=True)
         self.summary_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
@@ -244,6 +241,19 @@ def _unavailable_profile_metrics() -> dict[str, Any]:
         },
         "sync": {"status": "unavailable", "count": 0, "duration_us": None},
         "transfers": {"status": "unavailable", "h2d_us": None, "d2h_us": None},
+    }
+
+
+def _unsupported_profile_metrics() -> dict[str, Any]:
+    return {
+        "kernel_duration": {
+            "status": "unsupported",
+            "value": None,
+            "unit": "us",
+            "count": 0,
+        },
+        "sync": {"status": "unsupported", "count": 0, "duration_us": None},
+        "transfers": {"status": "unsupported", "h2d_us": None, "d2h_us": None},
     }
 
 

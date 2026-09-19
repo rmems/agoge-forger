@@ -45,6 +45,7 @@ class TrainingCorrelationCallback(TrainerCallback):
         was_profiled = self._profiler_active and window_covers_step(self._session.window, step)
         self._advance_profiler()
         if not self._maybe_stop_window(step, profiled=was_profiled):
+            self._synchronize_timed_step()
             self._record_step_duration(profiled=was_profiled)
 
     def on_log(self, args, state, control, **kwargs):
@@ -71,6 +72,10 @@ class TrainingCorrelationCallback(TrainerCallback):
             actual_step=actual_step,
             complete=(actual_step is not None and actual_step >= self._session.window.end_step),
         )
+
+    @property
+    def last_completed_step(self) -> int:
+        return self._last_step
 
     def _completed_window_step(self) -> int | None:
         if self._last_step < self._session.window.start_step:
@@ -235,6 +240,11 @@ class TrainingCorrelationCallback(TrainerCallback):
         except (RuntimeError, OSError, ValueError, AttributeError) as error:
             logger.warning(f"torch.profiler synchronization failed: {error}")
             self._record_profiler_error(error)
+
+    def _synchronize_timed_step(self) -> None:
+        window = self._session.window
+        if window.enabled and window.backend == TORCH_BACKEND:
+            self._synchronize_profiled_device()
 
     def _record_profiler_error(self, error: Exception) -> None:
         self._session.profiler_error = str(error)
