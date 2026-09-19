@@ -64,7 +64,7 @@ def overlay_telemetry_env(
             "profile_window": window,
         }
     )
-    updated._environment_resolved = True
+    updated.mark_environment_resolved()
     return updated
 
 
@@ -83,7 +83,7 @@ def overlay_cli_telemetry(
         updated = updated.model_copy(
             update={"profile_window": parse_profile_window(profile_window)}
         )
-    updated._environment_resolved = True
+    updated.mark_environment_resolved()
     return updated
 
 

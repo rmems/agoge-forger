@@ -241,11 +241,8 @@ class TrainingCorrelationCallback(TrainerCallback):
 
     @staticmethod
     def _best_effort_stop(profiler: Any) -> None:
-        stop = getattr(profiler, "stop", None)
-        if not callable(stop):
-            return
         try:
-            stop()
+            profiler.stop()
         except (RuntimeError, OSError, ValueError, AttributeError) as error:
             logger.warning(f"torch.profiler cleanup after advancement failure failed: {error}")
 

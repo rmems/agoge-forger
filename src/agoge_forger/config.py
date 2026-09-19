@@ -72,6 +72,13 @@ class TelemetryConfig(BaseModel):
     profile_window: ProfileWindowConfig = Field(default_factory=ProfileWindowConfig)
     _environment_resolved: bool = PrivateAttr(default=False)
 
+    @property
+    def environment_resolved(self) -> bool:
+        return self._environment_resolved
+
+    def mark_environment_resolved(self) -> None:
+        self._environment_resolved = True
+
 
 class ExperimentConfig(BaseModel):
     model_id: str

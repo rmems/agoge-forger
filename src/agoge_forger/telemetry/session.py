@@ -193,7 +193,7 @@ class TelemetrySession:
 
 def open_training_session(config: ExperimentConfig) -> TelemetrySession:
     telemetry = config.telemetry
-    if not telemetry._environment_resolved:
+    if not telemetry.environment_resolved:
         telemetry = overlay_telemetry_env(telemetry, os.environ)
     run_id = telemetry.run_id or config.run_name
     run_dir = Path("runs") / config.run_name
