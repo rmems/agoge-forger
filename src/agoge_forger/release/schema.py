@@ -9,14 +9,12 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .._atomic_file import publish_bytes_replace  # noinspection PyProtectedMember
-from ..eval._artifact_schema import (  # noinspection PyProtectedMember
+from .._atomic_file import publish_bytes_replace
+from ..eval import (
     FrozenEvaluationModel,
-    portable_artifact_path,
-)
-from ..eval._descriptor_bundle import (  # noinspection PyProtectedMember
     hash_relative_file,
     open_bundle,
+    portable_artifact_path,
     scan_bundle,
 )
 from ..split_schema import canonical_json_bytes

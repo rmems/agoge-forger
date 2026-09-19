@@ -9,16 +9,14 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .._strict_json import decode_json_object  # noinspection PyProtectedMember
+from .._strict_json import decode_json_object
 from ..artifacts.safetensors_io import UNSAFE_WEIGHT_PATTERNS
 from ..config import ExperimentConfig
-from ..eval._artifact_schema import (  # noinspection PyProtectedMember
+from ..eval import (
     ArtifactIndex,
     ArtifactProducerProvenance,
-    portable_artifact_path,
-)
-from ..eval._descriptor_bundle import (  # noinspection PyProtectedMember
     EntryIdentity,
+    portable_artifact_path,
     scan_bundle,
 )
 from ..split_schema import SplitManifest

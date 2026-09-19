@@ -6,13 +6,11 @@ import errno
 import os
 from pathlib import Path, PurePosixPath
 
-from .._strict_json import decode_json_object  # noinspection PyProtectedMember
-from ..eval._artifact_schema import (  # noinspection PyProtectedMember
-    portable_contract_reference,
-)
-from ..eval._descriptor_bundle import (  # noinspection PyProtectedMember
+from .._strict_json import decode_json_object
+from ..eval import (
     hash_relative_file,
     open_bundle,
+    portable_contract_reference,
     read_relative_file,
 )
 from .report import BundleFailure

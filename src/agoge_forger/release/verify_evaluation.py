@@ -8,11 +8,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .._strict_json import decode_json_object  # noinspection PyProtectedMember
-from ..eval._artifact_schema import (  # noinspection PyProtectedMember
-    ArtifactIndex,
-    ArtifactIndexReference,
-)
+from .._strict_json import decode_json_object
+from ..eval import ArtifactIndex, ArtifactIndexReference
 from ..eval.contract import (
     PairedEvaluationContract,
     held_out_task_ids,

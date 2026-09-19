@@ -115,7 +115,7 @@ def _member_failures(
             BundleFailure(
                 code="split_identity",
                 path=relative,
-                message=(f"{name} split records do not match the manifest member digests"),
+                message=f"{name} split records do not match the manifest member digests",
             )
         ]
     return []

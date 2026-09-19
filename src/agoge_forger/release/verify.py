@@ -9,11 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 
-from ..eval._descriptor_bundle import (  # noinspection PyProtectedMember
-    EntryIdentity,
-    require_descriptor_support,
-    scan_bundle,
-)
+from ..eval import EntryIdentity, require_descriptor_support, scan_bundle
 from ..path_safety import resolve_existing_path
 from .report import BundleFailure, BundleVerificationReport
 from .schema import ReproducibilityBundle
