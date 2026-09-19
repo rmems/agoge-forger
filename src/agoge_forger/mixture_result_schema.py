@@ -128,25 +128,43 @@ def _require_fill_invariants(source: MixtureSourceResult) -> None:
 
 
 def _require_manifest_membership(manifest: MixtureManifest) -> None:
+    source_ids = _require_unique_source_ids(manifest)
+    _require_selected_membership(manifest, source_ids)
+    selected_tokens = _require_selected_token_totals(manifest)
+    _require_attributed_source_tokens(manifest, source_ids)
+    _require_unique((member.canonical_id for member in manifest.selected), "canonical IDs")
+    _require_budget_alignment(manifest, selected_tokens)
+
+
+def _require_unique_source_ids(manifest: MixtureManifest) -> tuple[str, ...]:
     source_ids = tuple(source.source_id for source in manifest.sources)
     if len(source_ids) != len(set(source_ids)):
         raise ValueError("mixture source_id values must be unique")
+    return source_ids
+
+
+def _require_selected_membership(manifest: MixtureManifest, source_ids: tuple[str, ...]) -> None:
     declared = set(source_ids)
     if any(member.source_id not in declared for member in manifest.selected):
         raise ValueError("selected members must belong to a declared mixture source")
     if manifest.artifact.record_count != len(manifest.selected):
         raise ValueError("mixture record_count does not match selected members")
+
+
+def _require_selected_token_totals(manifest: MixtureManifest) -> int:
     selected_tokens = sum(member.accepted_tokens for member in manifest.selected)
     if selected_tokens != manifest.artifact.accepted_tokens:
         raise ValueError("mixture accepted tokens do not match selected members")
     if selected_tokens != sum(source.accepted_tokens for source in manifest.sources):
         raise ValueError("mixture accepted tokens do not match per-source totals")
-    _require_attributed_source_tokens(manifest, source_ids)
-    _require_unique((member.canonical_id for member in manifest.selected), "canonical IDs")
+    return selected_tokens
+
+
+def _require_budget_alignment(manifest: MixtureManifest, selected_tokens: int) -> None:
     budget = manifest.policy.accepted_token_budget
     if sum(source.quota_tokens for source in manifest.sources) != budget:
         raise ValueError("source quotas must sum to the accepted-token budget")
-    if manifest.artifact.accepted_tokens > budget:
+    if selected_tokens > budget:
         raise ValueError("mixture accepted tokens cannot exceed the accepted-token budget")
 
 

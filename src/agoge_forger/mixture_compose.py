@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from ._atomic_directory import require_rename_noreplace_support
@@ -38,6 +39,15 @@ from .split_materialize import (
 from .split_schema import sha256_file
 
 
+@dataclass(frozen=True)
+class _MixturePublication:
+    destination: Path
+    spec: MixtureCompositionSpec
+    tokenizer: MixtureTokenizerPin
+    loaded: Sequence[LoadedSource]
+    selections: Sequence[SourceSelection]
+
+
 def compose_mixture(
     spec: MixtureCompositionSpec,
     output_dir: str | Path,
@@ -58,16 +68,12 @@ def compose_mixture(
     selections = tuple(
         _select_source(source, quotas[source.spec.source_id], spec) for source in loaded
     )
-    return _publish_mixture(destination, spec, tokenizer, loaded, selections)
+    publication = _MixturePublication(destination, spec, tokenizer, loaded, selections)
+    return _publish_mixture(publication)
 
 
-def _publish_mixture(
-    destination: Path,
-    spec: MixtureCompositionSpec,
-    tokenizer: MixtureTokenizerPin,
-    loaded: Sequence[LoadedSource],
-    selections: Sequence[SourceSelection],
-) -> MixtureManifest:
+def _publish_mixture(publication: _MixturePublication) -> MixtureManifest:
+    destination = publication.destination
     staging_parent = nearest_existing_output_ancestor(destination)
     require_rename_noreplace_support(staging_parent)
     with tempfile.TemporaryDirectory(
@@ -76,8 +82,14 @@ def _publish_mixture(
     ) as staging_dir:
         staged_destination = Path(staging_dir) / "snapshot"
         staged_destination.mkdir()
-        artifact = _write_mixture_artifact(staged_destination, selections)
-        manifest = _build_manifest(spec, tokenizer, loaded, selections, artifact)
+        artifact = _write_mixture_artifact(staged_destination, publication.selections)
+        manifest = _build_manifest(
+            publication.spec,
+            publication.tokenizer,
+            publication.loaded,
+            publication.selections,
+            artifact,
+        )
         exclusive_write(staged_destination / "mixture_manifest.json", manifest_bytes(manifest))
         exclusive_write(
             staged_destination / "mixture_report.md",

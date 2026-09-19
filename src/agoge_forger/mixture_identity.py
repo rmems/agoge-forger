@@ -6,6 +6,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+
+@dataclass(frozen=True)
+class _IdentityObservation:
+    source_id: str
+    split: SplitName
+    arm: str
+
+
 from .mixture_allocate import SelectableRecord
 from .mixture_load import LoadedSource
 from .mixture_schema import MixtureCompositionSpec
@@ -32,7 +40,8 @@ def require_lineage_isolation(
     for source in sources:
         for split in SPLIT_NAMES:
             for member in source.manifest.splits[split].members:
-                _observe_identity(owners, source.spec.source_id, split, arm, member)
+                observation = _IdentityObservation(source.spec.source_id, split, arm)
+                _observe_identity(owners, member, observation)
     reject_reserved_identities(sources, spec)
 
 
@@ -72,10 +81,8 @@ def reject_reserved_record(
 
 def _observe_identity(
     owners: _IdentityOwners,
-    source_id: str,
-    split: SplitName,
-    arm: str,
     member: Any,
+    observation: _IdentityObservation,
 ) -> None:
     values = {
         "lineage": member.lineage_id,
@@ -83,14 +90,15 @@ def _observe_identity(
         "content": member.content_sha256,
         "group": member.group_id,
     }
+    current = (observation.source_id, observation.split, observation.arm)
     for kind, value in values.items():
         if value is None:
             continue
         previous = owners.owners[kind].get(value)
         if previous is None:
-            owners.owners[kind][value] = (source_id, split, arm)
+            owners.owners[kind][value] = current
             continue
-        _reject_identity_collision(kind, value, previous, (source_id, split, arm))
+        _reject_identity_collision(kind, value, previous, current)
 
 
 def _reject_identity_collision(

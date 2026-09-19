@@ -58,26 +58,56 @@ def allocate_token_quotas(
 ) -> dict[str, int]:
     """Allocate an exact integer budget with largest-remainder (Hamilton) rounding."""
 
+    _validate_quota_inputs(budget, weights, source_ids)
+    total_weight = sum(weights[source_id] for source_id in source_ids)
+    floors = _floor_quotas(budget, weights, source_ids, total_weight)
+    quotas = _apply_quota_remainders(budget, floors, source_ids, weights, total_weight)
+    if sum(quotas.values()) != budget:
+        raise ValueError("source quotas must sum to the accepted-token budget")
+    return quotas
+
+
+def _validate_quota_inputs(
+    budget: int, weights: Mapping[str, int], source_ids: Sequence[str]
+) -> None:
     if budget < 1:
         raise ValueError("accepted-token budget must be positive")
     if set(weights) != set(source_ids):
         raise ValueError("quota weights must cover each source_id exactly once")
     if any(weights[source_id] <= 0 for source_id in source_ids):
         raise ValueError("all source weights must be positive")
-    total_weight = sum(weights[source_id] for source_id in source_ids)
-    floors: dict[str, int] = {}
-    remainders: list[tuple[int, str]] = []
-    for source_id in source_ids:
-        floor, remainder = divmod(budget * weights[source_id], total_weight)
-        floors[source_id] = floor
-        remainders.append((remainder, source_id))
-    leftover = budget - sum(floors.values())
-    remainders.sort(key=lambda item: (-item[0], item[1]))
-    for source_id in (item[1] for item in remainders[:leftover]):
-        floors[source_id] += 1
-    if sum(floors.values()) != budget:
-        raise ValueError("source quotas must sum to the accepted-token budget")
-    return floors
+
+
+def _floor_quotas(
+    budget: int,
+    weights: Mapping[str, int],
+    source_ids: Sequence[str],
+    total_weight: int,
+) -> dict[str, int]:
+    return {
+        source_id: divmod(budget * weights[source_id], total_weight)[0] for source_id in source_ids
+    }
+
+
+def _apply_quota_remainders(
+    budget: int,
+    floors: dict[str, int],
+    source_ids: Sequence[str],
+    weights: Mapping[str, int],
+    total_weight: int,
+) -> dict[str, int]:
+    quotas = dict(floors)
+    remainders = sorted(
+        (
+            (divmod(budget * weights[source_id], total_weight)[1], source_id)
+            for source_id in source_ids
+        ),
+        key=lambda item: (-item[0], item[1]),
+    )
+    leftover = budget - sum(quotas.values())
+    for _, bonus_source_id in remainders[:leftover]:
+        quotas[bonus_source_id] += 1
+    return quotas
 
 
 def select_groups_for_quota(
@@ -88,7 +118,10 @@ def select_groups_for_quota(
 ) -> SourceSelection:
     ordered = sorted(
         groups,
-        key=lambda group: (_selection_digest(policy, source_id, group.anchor), group.anchor),
+        key=lambda mixture_group: (
+            _selection_digest(policy, source_id, mixture_group.anchor),
+            mixture_group.anchor,
+        ),
     )
     selected: list[MixtureGroup] = []
     exclusions: list[MixtureExclusion] = []

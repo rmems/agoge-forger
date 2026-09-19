@@ -74,27 +74,35 @@ def ledger_bytes(ledger: TokenLedger) -> bytes:
 
 
 def require_ledger_matches_statistics(ledger: TokenLedger, statistics: TokenStatistics) -> None:
+    _require_ledger_manifest_identity(ledger, statistics)
+    _require_matching_tokenizer(ledger, statistics)
+    for split in SPLIT_NAMES:
+        _require_ledger_split_statistics(ledger, statistics, split)
+
+
+def _require_ledger_manifest_identity(ledger: TokenLedger, statistics: TokenStatistics) -> None:
     if ledger.split_manifest_sha256 != statistics.split_manifest_sha256:
         raise ValueError("token ledger split-manifest digest does not match token statistics")
     if ledger.source_split_sha256 != statistics.source_split_sha256:
         raise ValueError("token ledger source-split digests do not match token statistics")
-    _require_matching_tokenizer(ledger, statistics)
-    for split in SPLIT_NAMES:
-        split_records = tuple(record for record in ledger.records if record.split == split)
-        stats = statistics.splits[split]
-        if len(split_records) != stats.record_count:
-            raise ValueError(f"token ledger {split} record count does not match token statistics")
-        total = sum(record.accepted_tokens for record in split_records)
-        truncated = sum(record.truncated for record in split_records)
-        if total != stats.total_tokens:
-            raise ValueError(f"token ledger {split} token total does not match token statistics")
-        if truncated != stats.truncated_records:
-            raise ValueError(
-                f"token ledger {split} truncated count does not match token statistics"
-            )
-        lengths = tuple(record.accepted_tokens for record in split_records)
-        if min(lengths) != stats.minimum_tokens or max(lengths) != stats.maximum_tokens:
-            raise ValueError(f"token ledger {split} token bounds do not match token statistics")
+
+
+def _require_ledger_split_statistics(
+    ledger: TokenLedger, statistics: TokenStatistics, split: SplitName
+) -> None:
+    split_records = tuple(record for record in ledger.records if record.split == split)
+    stats = statistics.splits[split]
+    if len(split_records) != stats.record_count:
+        raise ValueError(f"token ledger {split} record count does not match token statistics")
+    total = sum(record.accepted_tokens for record in split_records)
+    truncated = sum(record.truncated for record in split_records)
+    if total != stats.total_tokens:
+        raise ValueError(f"token ledger {split} token total does not match token statistics")
+    if truncated != stats.truncated_records:
+        raise ValueError(f"token ledger {split} truncated count does not match token statistics")
+    lengths = tuple(record.accepted_tokens for record in split_records)
+    if min(lengths) != stats.minimum_tokens or max(lengths) != stats.maximum_tokens:
+        raise ValueError(f"token ledger {split} token bounds do not match token statistics")
 
 
 def _ledger_record(

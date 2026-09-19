@@ -98,17 +98,25 @@ def require_sidecar_identity(
     statistics: TokenStatistics,
     ledger: TokenLedger,
 ) -> None:
-    if statistics.split_manifest_sha256 != manifest_sha256:
-        raise ValueError(
-            "token statistics split-manifest digest does not match the frozen manifest"
-        )
-    if ledger.split_manifest_sha256 != manifest_sha256:
-        raise ValueError("token ledger split-manifest digest does not match the frozen manifest")
+    _require_sidecar_manifest_digest(
+        statistics.split_manifest_sha256, manifest_sha256, "statistics"
+    )
+    _require_sidecar_manifest_digest(ledger.split_manifest_sha256, manifest_sha256, "ledger")
     expected = {split: manifest.splits[split].sha256 for split in SPLIT_NAMES}
-    if statistics.source_split_sha256 != expected:
-        raise ValueError("token statistics source-split digests do not match the frozen manifest")
-    if ledger.source_split_sha256 != expected:
-        raise ValueError("token ledger source-split digests do not match the frozen manifest")
+    _require_sidecar_split_digests(statistics.source_split_sha256, expected, "statistics")
+    _require_sidecar_split_digests(ledger.source_split_sha256, expected, "ledger")
+
+
+def _require_sidecar_manifest_digest(actual: str, expected: str, label: str) -> None:
+    if actual != expected:
+        raise ValueError(f"token {label} split-manifest digest does not match the frozen manifest")
+
+
+def _require_sidecar_split_digests(
+    actual: dict[SplitName, str], expected: dict[SplitName, str], label: str
+) -> None:
+    if actual != expected:
+        raise ValueError(f"token {label} source-split digests do not match the frozen manifest")
 
 
 def consumed_records(
