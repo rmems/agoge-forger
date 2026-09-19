@@ -10,69 +10,78 @@ from typing import Any
 from .summarize_events import profiler_table
 from .summarize_names import transfer_direction
 
+WeightedDurations = list[tuple[float, int]]
+
 
 def group_cuda_kernels(events: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    buckets: dict[str, list[float]] = defaultdict(list)
+    buckets: dict[str, WeightedDurations] = defaultdict(list)
     families: dict[str, str] = {}
     for event in events:
         if event["device"] != "cuda":
             continue
-        buckets[str(event["name"])].extend([float(event["duration_us"])] * int(event["count"]))
+        buckets[str(event["name"])].append(_weighted_observation(event))
         families[str(event["name"])] = str(event["family"])
-    ranked = sorted(buckets.items(), key=lambda item: -sum(item[1]))
+    ranked = sorted(buckets.items(), key=lambda item: -_weighted_sum(item[1]))
     return [
         {
             "name": name,
             "family": families[name],
-            "count": len(durations),
-            "duration_us": percentiles(durations),
+            "count": _weighted_count(durations),
+            "duration_us": _weighted_stats(durations, "us"),
         }
         for name, durations in ranked[:32]
     ]
 
 
 def duration_block(events: list[dict[str, Any]], device: str, status: str) -> dict[str, Any]:
-    durations = [float(event["duration_us"]) for event in events if event["device"] == device]
+    durations = _weighted_observations(event for event in events if event["device"] == device)
     if status != "ok":
         return {"status": status, "value": None, "unit": "us", "count": 0}
     if not durations:
         return {"status": "unavailable", "value": None, "unit": "us", "count": 0}
-    stats = percentiles(durations)
+    stats = _weighted_stats(durations, "us")
     stats["status"] = "ok"
-    stats["count"] = len(durations)
     return stats
 
 
 def family_block(events: list[dict[str, Any]], family: str, status: str) -> dict[str, Any]:
-    durations = [float(event["duration_us"]) for event in events if event["family"] == family]
+    durations = _weighted_observations(event for event in events if event["family"] == family)
     if not durations:
         return {
             "status": "unavailable" if status == "ok" else status,
             "count": 0,
             "duration_us": None,
         }
-    return {"status": "ok", "count": len(durations), "duration_us": percentiles(durations)}
+    return {
+        "status": "ok",
+        "count": _weighted_count(durations),
+        "duration_us": _weighted_stats(durations, "us"),
+    }
 
 
 def transfer_block(events: list[dict[str, Any]], cuda_status: str) -> dict[str, Any]:
-    h2d: list[float] = []
-    d2h: list[float] = []
-    for event in events:
-        if event["family"] != "transfer":
-            continue
-        bucket = d2h if transfer_direction(str(event["name"])) == "d2h" else h2d
-        bucket.append(float(event["duration_us"]))
-    if not h2d and not d2h:
-        return {
-            "status": "unavailable" if cuda_status == "ok" else cuda_status,
-            "h2d_us": None,
-            "d2h_us": None,
-        }
+    return _transfer_result(_transfer_durations(events), cuda_status)
+
+
+def _transfer_result(
+    directions: Mapping[str, WeightedDurations], cuda_status: str
+) -> dict[str, Any]:
+    if not any(directions.values()):
+        return _unavailable_transfer(cuda_status)
     return {
         "status": "ok",
-        "h2d_us": percentiles(h2d) if h2d else None,
-        "d2h_us": percentiles(d2h) if d2h else None,
+        "h2d_us": _optional_weighted_stats(directions["h2d"]),
+        "d2h_us": _optional_weighted_stats(directions["d2h"]),
     }
+
+
+def _unavailable_transfer(cuda_status: str) -> dict[str, Any]:
+    status = "unavailable" if cuda_status == "ok" else cuda_status
+    return {"status": status, "h2d_us": None, "d2h_us": None}
+
+
+def _optional_weighted_stats(durations: WeightedDurations) -> dict[str, Any] | None:
+    return _weighted_stats(durations, "us") if durations else None
 
 
 def observable_path(events: list[dict[str, Any]], family: str) -> dict[str, Any]:
@@ -83,14 +92,18 @@ def observable_path(events: list[dict[str, Any]], family: str) -> dict[str, Any]
 
 
 def top_cpu(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    buckets: dict[str, list[float]] = defaultdict(list)
+    buckets: dict[str, WeightedDurations] = defaultdict(list)
     for event in events:
         if event["device"] != "cpu":
             continue
-        buckets[str(event["name"])].append(float(event["duration_us"]))
-    ranked = sorted(buckets.items(), key=lambda item: -sum(item[1]))
+        buckets[str(event["name"])].append(_weighted_observation(event))
+    ranked = sorted(buckets.items(), key=lambda item: -_weighted_sum(item[1]))
     return [
-        {"name": name, "count": len(durations), "duration_us": percentiles(durations)}
+        {
+            "name": name,
+            "count": _weighted_count(durations),
+            "duration_us": _weighted_stats(durations, "us"),
+        }
         for name, durations in ranked[:16]
     ]
 
@@ -128,25 +141,63 @@ def _memory_hits(raw: Any, names: tuple[str, ...]) -> list[float]:
 
 
 def percentiles(values: list[float]) -> dict[str, Any]:
-    return _stats(values, "us")
+    return _weighted_stats([(value, 1) for value in values], "us")
 
 
 def _stats(values: list[float], unit: str) -> dict[str, Any]:
-    ordered = sorted(values)
+    return _weighted_stats([(value, 1) for value in values], unit)
+
+
+def _weighted_observations(events: Iterable[Mapping[str, Any]]) -> WeightedDurations:
+    return [_weighted_observation(event) for event in events]
+
+
+def _weighted_observation(event: Mapping[str, Any]) -> tuple[float, int]:
+    return float(event["duration_us"]), max(1, int(event.get("count", 1)))
+
+
+def _transfer_durations(events: Iterable[Mapping[str, Any]]) -> dict[str, WeightedDurations]:
+    directions: dict[str, WeightedDurations] = {"h2d": [], "d2h": []}
+    for event in events:
+        if event["family"] != "transfer" or event["device"] != "cuda":
+            continue
+        direction = transfer_direction(str(event["name"]))
+        if direction is not None:
+            directions[direction].append(_weighted_observation(event))
+    return directions
+
+
+def _weighted_stats(values: WeightedDurations, unit: str) -> dict[str, Any]:
+    count = _weighted_count(values)
+    total = _weighted_sum(values)
     return {
-        "sum": float(sum(ordered)),
-        "mean": float(sum(ordered) / len(ordered)),
-        "p50": _quantile(ordered, 0.50),
-        "p95": _quantile(ordered, 0.95),
+        "sum": total,
+        "mean": total / count,
+        "p50": _weighted_quantile(values, 0.50),
+        "p95": _weighted_quantile(values, 0.95),
         "unit": unit,
+        "count": count,
     }
 
 
-def _quantile(ordered: list[float], q: float) -> float:
-    if not ordered:
+def _weighted_count(values: WeightedDurations) -> int:
+    return sum(count for _, count in values)
+
+
+def _weighted_sum(values: WeightedDurations) -> float:
+    return float(sum(value * count for value, count in values))
+
+
+def _weighted_quantile(values: WeightedDurations, q: float) -> float:
+    if not values:
         return 0.0
-    index = min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))
-    return float(ordered[index])
+    target = max(1, math.ceil(q * _weighted_count(values)))
+    cumulative = 0
+    for value, count in sorted(values):
+        cumulative += count
+        if cumulative >= target:
+            return float(value)
+    return float(max(value for value, _ in values))
 
 
 def _memory_value(item: Any, names: tuple[str, ...]) -> float | None:

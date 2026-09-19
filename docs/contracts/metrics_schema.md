@@ -15,7 +15,14 @@ Metrics are currently embedded within `manifest.json` under the `metrics` key. T
       "allocated_vram_gb": 12.5,
       "bf16_supported": true
     },
-    "artifact_index": "adapters/my-run/artifact_index.json"
+    "artifact_index": "adapters/my-run/artifact_index.json",
+    "telemetry": {
+      "agoge_run_id": "my-run",
+      "markers": "runs/my-run/telemetry/agoge-markers.jsonl",
+      "profile_window_request": "runs/my-run/telemetry/profile-window-request.json",
+      "profile_window": null,
+      "profile_window_id": null
+    }
   }
 }
 ```
@@ -33,6 +40,11 @@ Metrics are currently embedded within `manifest.json` under the `metrics` key. T
 | `gpu_report.bf16_supported` | bool  | Whether BF16 is supported             |
 | `artifact_index`          | str    | Path to artifact_index.json             |
 | `telemetry`               | object | Optional F0 marker/profile-window paths; see `docs/contracts/f0_correlation_markers.md` |
+| `telemetry.agoge_run_id`  | str | Stable run identity used for Agoge/BKL correlation |
+| `telemetry.markers`       | str \| null | Current-session marker JSONL path, or `null` when markers are disabled or unpublished |
+| `telemetry.profile_window_request` | str \| null | Current-session profile-window request path, or `null` when it was not published |
+| `telemetry.profile_window` | str \| null | Published profile-window summary path, or `null` when no summary was published |
+| `telemetry.profile_window_id` | str \| null | Enabled window identity, or `null` when profiling is disabled |
 
 ## Planned CSV/Parquet Format
 

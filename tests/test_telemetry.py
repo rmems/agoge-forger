@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tracemalloc
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,7 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from agoge_forger.cli import app
-from agoge_forger.config import ExperimentConfig, ProfileWindowConfig, load_config
+from agoge_forger.config import ExperimentConfig, ProfileWindowConfig, TelemetryConfig, load_config
 from agoge_forger.telemetry.backends import probe_profiler_backends, requested_backend_status
 from agoge_forger.telemetry.callback import TrainingCorrelationCallback
 from agoge_forger.telemetry.join import join_profile_window, join_samples, load_jsonl
@@ -18,7 +19,13 @@ from agoge_forger.telemetry.markers import MarkerWriter
 from agoge_forger.telemetry.overhead import measure_torch_profiler_overhead
 from agoge_forger.telemetry.schema import SCHEMA_VERSION
 from agoge_forger.telemetry.session import open_training_session
-from agoge_forger.telemetry.summarize import classify_name, summarize_profiler
+from agoge_forger.telemetry.summarize import (
+    classify_name,
+    overhead_from_step_times,
+    summarize_profiler,
+)
+from agoge_forger.telemetry.summarize_families import duration_block
+from agoge_forger.telemetry.summarize_names import transfer_direction
 from agoge_forger.telemetry.window import (
     overlay_cli_telemetry,
     overlay_telemetry_env,
@@ -59,6 +66,18 @@ def test_parse_compact_and_kv_windows():
     assert kv.end_step == 3
 
 
+def test_parse_kv_window_honors_strict_disabled_value():
+    disabled = parse_profile_window("enabled=false,phase=train,start_step=1,end_step=1")
+    assert disabled.enabled is False
+    with pytest.raises(ValueError, match="must be true or false"):
+        parse_profile_window("enabled=maybe,phase=train,start_step=1,end_step=1")
+
+
+def test_parse_window_rejects_zero_start_step():
+    with pytest.raises(ValueError, match=">= 1"):
+        parse_profile_window("train:0-1")
+
+
 def test_parse_window_rejects_garbage():
     with pytest.raises(ValueError):
         parse_profile_window("not-a-window")
@@ -89,6 +108,19 @@ def test_cli_window_skips_malformed_environment(monkeypatch):
     assert updated.profile_window.end_step == 3
 
 
+def test_open_session_does_not_reapply_environment_over_cli_window(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGOGE_PROFILE_BACKEND", "nsight_systems")
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="cli")
+    config.telemetry = overlay_cli_telemetry(config.telemetry, None, "train:1-1")
+
+    session = open_training_session(config)
+
+    assert session.window.backend == "torch"
+
+
 def test_non_mapping_telemetry_is_usage_error(tmp_path):
     dataset = tmp_path / "data.jsonl"
     dataset.write_text("{}\n")
@@ -112,6 +144,58 @@ def test_env_enables_window_yaml_left_off():
     assert updated.run_id == "rid"
     assert updated.profile_window.enabled is True
     assert profile_window_id("rid", updated.profile_window) == "rid:train:1-1"
+
+
+def test_environment_overrides_nondefault_yaml_telemetry():
+    telemetry = ExperimentConfig(model_id="m", dataset_path="x").telemetry
+    telemetry.run_id = "yaml-run"
+    telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=1, backend="torch"
+    )
+
+    updated = overlay_telemetry_env(
+        telemetry,
+        {
+            "AGOGE_RUN_ID": "env-run",
+            "AGOGE_PROFILE_WINDOW": "train:3-4",
+            "AGOGE_PROFILE_BACKEND": "nsight_systems",
+        },
+    )
+
+    assert updated.run_id == "env-run"
+    assert updated.profile_window.start_step == 3
+    assert updated.profile_window.end_step == 4
+    assert updated.profile_window.backend == "nsight_systems"
+
+
+def test_programmatic_session_resolves_environment_once(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGOGE_RUN_ID", "env-run")
+    monkeypatch.setenv("AGOGE_PROFILE_WINDOW", "train:2-3")
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="api")
+
+    session = open_training_session(config)
+
+    assert session.run_id == "env-run"
+    assert session.window.start_step == 2
+    assert session.window.end_step == 3
+
+
+def test_external_resolution_sentinel_cannot_bypass_environment(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGOGE_RUN_ID", "env-run")
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="api")
+    config.telemetry = TelemetryConfig.model_validate(
+        {"run_id": "yaml-run", "environment_resolved": True}
+    )
+
+    session = open_training_session(config)
+
+    assert session.run_id == "env-run"
 
 
 def test_yaml_telemetry_section(tmp_path):
@@ -198,6 +282,25 @@ def test_join_markers_to_gpu_samples_and_profile_window():
     assert join_profile_window(summary, [other_host, other_gpu]) == []
 
 
+def test_join_profile_window_rejects_missing_interval_bounds():
+    summary = {
+        "agoge_run_id": "run_test",
+        "host": {"hostname": "testhost"},
+        "gpu": {"uuid": "GPU-test"},
+        "profile_window_id": "run_test:train:5-5",
+        "monotonic_ns_start": None,
+        "monotonic_ns_end": None,
+    }
+    sample = {
+        "agoge_run_id": "run_test",
+        "host": {"hostname": "testhost"},
+        "gpu": {"uuid": "GPU-test"},
+        "profile_window_ref": None,
+        "monotonic_ns": 25,
+    }
+    assert join_profile_window(summary, [sample]) == []
+
+
 def test_unknown_backend_is_unsupported_not_guessed():
     probes = probe_profiler_backends()
     status = requested_backend_status("made_up", probes)
@@ -225,6 +328,96 @@ def test_summarize_records_cuda_unavailable_without_inventing_kernels():
     assert summary["kernel_duration"]["status"] == "unavailable"
     assert summary["kernel_duration"]["value"] is None
     assert summary["cpu_ops"][0]["name"] == "aten::mm"
+
+
+def test_key_average_summaries_weight_each_invocation():
+    fake = SimpleNamespace(
+        events=list,
+        key_averages=lambda: [
+            SimpleNamespace(
+                key="MemcpyHtoD",
+                count=3,
+                device_time_total=30.0,
+                cpu_time_total=0.0,
+            ),
+            SimpleNamespace(
+                key="MemcpyDtoH",
+                count=1,
+                device_time_total=20.0,
+                cpu_time_total=0.0,
+            ),
+            SimpleNamespace(
+                key="aten::add",
+                count=4,
+                device_time_total=0.0,
+                cpu_time_total=8.0,
+            ),
+        ],
+    )
+
+    summary = summarize_profiler(fake, cuda_kernel_status="ok")
+
+    assert summary["kernel_duration"]["count"] == 4
+    assert summary["kernel_duration"]["sum"] == 50.0
+    assert summary["kernel_duration"]["p50"] == 10.0
+    assert summary["kernel_duration"]["p95"] == 20.0
+    assert summary["transfers"]["h2d_us"]["count"] == 3
+    assert summary["transfers"]["h2d_us"]["sum"] == 30.0
+    assert summary["transfers"]["d2h_us"]["count"] == 1
+    assert summary["cpu_ops"][0]["count"] == 4
+    assert summary["cpu_ops"][0]["duration_us"]["sum"] == 8.0
+
+
+def test_weighted_summary_memory_is_bounded_by_rows_not_invocations():
+    tracemalloc.start()
+    try:
+        result = duration_block(
+            [{"device": "cuda", "duration_us": 2.0, "count": 1_000_000}],
+            "cuda",
+            "ok",
+        )
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert result["count"] == 1_000_000
+    assert result["sum"] == 2_000_000.0
+    assert peak < 1_000_000
+
+
+def test_transfer_evidence_requires_cuda_and_explicit_direction():
+    fake = SimpleNamespace(
+        events=lambda: [
+            SimpleNamespace(
+                name="MemcpyDtoD",
+                duration=7.0,
+                device_type=SimpleNamespace(name="CUDA"),
+            ),
+            SimpleNamespace(
+                name="copy_kernel",
+                duration=11.0,
+                device_type=SimpleNamespace(name="CPU"),
+            ),
+        ],
+        key_averages=list,
+    )
+
+    summary = summarize_profiler(fake, cuda_kernel_status="ok")
+
+    assert transfer_direction("MemcpyDtoD") is None
+    assert transfer_direction("copy_kernel") is None
+    assert summary["transfers"] == {
+        "status": "unavailable",
+        "h2d_us": None,
+        "d2h_us": None,
+    }
+
+
+def test_overhead_is_unavailable_for_nonpositive_baseline():
+    result = overhead_from_step_times([2.0], [0.0])
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "unprofiled optimizer-step mean is not positive"
+    assert result["ratio"] is None
 
 
 def test_overhead_microbenchmark_is_finite():
@@ -315,6 +508,65 @@ def test_disabled_window_does_not_publish_stale_summary(tmp_path, monkeypatch):
     assert entry["profile_window"] is None
 
 
+def test_disabled_markers_do_not_publish_stale_marker_path(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="quiet")
+    config.telemetry.emit_markers = False
+    session = open_training_session(config)
+    session.markers_path.write_text('{"stale": true}\n', encoding="utf-8")
+
+    assert session.manifest_entry()["markers"] is None
+
+
+def test_failed_current_marker_write_does_not_publish_stale_path(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    stale = tmp_path / "runs/stale-marker/telemetry/agoge-markers.jsonl"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"old": true}\n')
+    monkeypatch.setattr(
+        MarkerWriter,
+        "_write",
+        lambda self, event, phase, global_step, extras: (_ for _ in ()).throw(
+            OSError("marker failed")
+        ),
+    )
+    config = ExperimentConfig(
+        model_id="org/model", dataset_path=str(dataset), run_name="stale-marker"
+    )
+
+    session = open_training_session(config)
+
+    assert session.manifest_entry()["markers"] is None
+
+
+def test_failed_current_request_write_does_not_publish_stale_path(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    stale = tmp_path / "runs/stale-request/telemetry/profile-window-request.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"old": true}\n')
+    original_write_text = Path.write_text
+
+    def fail_request(path, *args, **kwargs):
+        if path.name == "profile-window-request.json":
+            raise OSError("request failed")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_request)
+    config = ExperimentConfig(
+        model_id="org/model", dataset_path=str(dataset), run_name="stale-request"
+    )
+
+    session = open_training_session(config)
+
+    assert session.manifest_entry()["profile_window_request"] is None
+
+
 def test_unstarted_window_does_not_emit_end(tmp_path, monkeypatch):
     dataset = tmp_path / "data.jsonl"
     dataset.write_text("{}\n")
@@ -353,6 +605,226 @@ def test_unsupported_backend_closes_at_end_step(tmp_path, monkeypatch):
     assert summary["overhead"]["status"] == "unavailable"
     assert summary["monotonic_ns_start"] is not None
     assert summary["monotonic_ns_end"] is not None
+
+
+def test_partial_window_records_actual_end_step(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="partial")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=3, backend="nsight_systems"
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+    callback.on_train_end(None, SimpleNamespace(global_step=1), None)
+
+    summary = json.loads(session.summary_path.read_text())
+    assert summary["start_step"] == 1
+    assert summary["end_step"] == 3
+    assert summary["actual_end_step"] == 1
+    assert summary["complete"] is False
+    markers = [json.loads(line) for line in session.markers_path.read_text().splitlines()]
+    end = next(row for row in markers if row["event"] == "profile_window_end")
+    assert end["global_step"] == 1
+
+
+def test_profiler_advance_failure_is_nonfatal_and_recorded(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="advance")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=2
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+
+    class BrokenProfiler:
+        def step(self):
+            raise RuntimeError("step failed")
+
+    callback._profiler = BrokenProfiler()
+    callback._profiler_active = True
+    callback._window_started = True
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+
+    assert session.profiler_error == "step failed"
+
+
+def test_profiler_synchronization_failure_is_nonfatal_and_recorded(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="sync")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=1
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+
+    class Profiler:
+        def step(self):
+            return None
+
+        def stop(self):
+            return None
+
+        def events(self):
+            return []
+
+        def key_averages(self):
+            return []
+
+    callback._profiler = Profiler()
+    callback._profiler_active = True
+    callback._window_started = True
+    callback._window_start_ns = 1
+    monkeypatch.setattr("agoge_forger.telemetry.callback.torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr(
+        "agoge_forger.telemetry.callback.torch.cuda.synchronize",
+        lambda: (_ for _ in ()).throw(RuntimeError("sync failed")),
+    )
+
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+
+    assert session.profiler_error == "sync failed"
+
+
+def test_profiled_step_duration_includes_profiler_lifecycle(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="timing")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=2
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+    clock = {"now": 1.0}
+    monkeypatch.setattr("agoge_forger.telemetry.callback.time.perf_counter", lambda: clock["now"])
+
+    class AdvancingProfiler:
+        def step(self):
+            clock["now"] = 3.0
+
+    callback._profiler = AdvancingProfiler()
+    callback._profiler_active = True
+    callback._window_started = True
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+
+    assert callback._profiled_s == [2.0]
+
+
+def test_profiled_step_duration_includes_profiler_startup(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="startup")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=2
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+    clock = {"now": 1.0}
+    monkeypatch.setattr("agoge_forger.telemetry.callback.time.perf_counter", lambda: clock["now"])
+
+    class StartingProfiler:
+        def start(self):
+            clock["now"] = 3.0
+
+        def step(self):
+            return None
+
+    monkeypatch.setattr(
+        "agoge_forger.telemetry.callback.profile",
+        lambda **kwargs: StartingProfiler(),
+    )
+
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+
+    assert callback._profiled_s == [2.0]
+
+
+def test_session_close_finalizes_active_window_after_training_error(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="failed")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=3, backend="nsight_systems"
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+    session.callback = callback
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+    callback.on_step_end(None, SimpleNamespace(global_step=1), None)
+
+    session.close()
+
+    summary = json.loads(session.summary_path.read_text())
+    assert summary["complete"] is False
+    assert summary["actual_end_step"] == 1
+    events = [json.loads(line)["event"] for line in session.markers_path.read_text().splitlines()]
+    assert "profile_window_end" in events
+
+
+def test_failure_before_first_window_step_has_no_false_end_marker(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="midstep")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=3, backend="nsight_systems"
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+    session.callback = callback
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+
+    session.record_failure()
+    session.close()
+
+    summary = json.loads(session.summary_path.read_text())
+    assert summary["complete"] is False
+    assert summary["actual_end_step"] is None
+    events = [json.loads(line)["event"] for line in session.markers_path.read_text().splitlines()]
+    assert "profile_window_end" not in events
+    assert events[-1] == "run_failed"
+
+
+def test_profiler_start_failure_attempts_cleanup(tmp_path, monkeypatch):
+    dataset = tmp_path / "data.jsonl"
+    dataset.write_text("{}\n")
+    monkeypatch.chdir(tmp_path)
+    config = ExperimentConfig(model_id="org/model", dataset_path=str(dataset), run_name="startfail")
+    config.telemetry.profile_window = ProfileWindowConfig(
+        enabled=True, phase="train", start_step=1, end_step=1
+    )
+    session = open_training_session(config)
+    callback = TrainingCorrelationCallback(session)
+    cleaned = {"value": False}
+
+    class FailingProfiler:
+        def start(self):
+            raise RuntimeError("start failed")
+
+        def stop(self):
+            cleaned["value"] = True
+
+    monkeypatch.setattr(
+        "agoge_forger.telemetry.callback.profile",
+        lambda **kwargs: FailingProfiler(),
+    )
+
+    callback.on_step_begin(None, SimpleNamespace(global_step=0), None)
+
+    assert cleaned["value"] is True
+    assert session.profiler_error == "start failed"
 
 
 def test_summarize_prefers_device_time_and_memory_counters():

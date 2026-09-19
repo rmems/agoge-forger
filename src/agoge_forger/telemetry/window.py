@@ -48,17 +48,24 @@ def upcoming_step_starts_window(window: ProfileWindowConfig, upcoming: int) -> b
 def overlay_telemetry_env(
     telemetry: TelemetryConfig, environ: Mapping[str, str]
 ) -> TelemetryConfig:
-    """YAML first; env can fill a missing run id and enable a window that YAML left off."""
+    """Apply environment values over YAML/default telemetry exactly once."""
 
-    run_id = telemetry.run_id or _nonempty(environ.get(_ENV_RUN_ID))
+    run_id = _nonempty(environ.get(_ENV_RUN_ID)) or telemetry.run_id
     window = telemetry.profile_window
     env_window = _nonempty(environ.get(_ENV_WINDOW))
-    if not window.enabled and env_window is not None:
+    if env_window is not None:
         window = parse_profile_window(env_window)
     backend = _nonempty(environ.get(_ENV_BACKEND))
     if backend is not None:
         window = window.model_copy(update={"backend": backend})
-    return telemetry.model_copy(update={"run_id": run_id, "profile_window": window})
+    updated = telemetry.model_copy(
+        update={
+            "run_id": run_id,
+            "profile_window": window,
+        }
+    )
+    updated._environment_resolved = True
+    return updated
 
 
 def overlay_cli_telemetry(
@@ -76,6 +83,7 @@ def overlay_cli_telemetry(
         updated = updated.model_copy(
             update={"profile_window": parse_profile_window(profile_window)}
         )
+    updated._environment_resolved = True
     return updated
 
 
@@ -107,7 +115,7 @@ def _parse_kv_window(raw: str) -> ProfileWindowConfig:
     end_step = _optional_int(fields, "end_step", start_step)
     return ProfileWindowConfig.model_validate(
         {
-            "enabled": True,
+            "enabled": _optional_bool(fields, "enabled", True),
             "phase": fields.get("phase", TRAIN_PHASE),
             "start_step": start_step,
             "end_step": end_step,
@@ -158,3 +166,14 @@ def _require_int(raw: str, label: str) -> int:
         return int(raw)
     except ValueError as error:
         raise ValueError(f"profile window {label} must be an integer") from error
+
+
+def _optional_bool(fields: Mapping[str, str], key: str, default: bool) -> bool:
+    if key not in fields:
+        return default
+    normalized = fields[key].casefold()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"profile window {key} must be true or false")

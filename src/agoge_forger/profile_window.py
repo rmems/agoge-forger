@@ -18,8 +18,8 @@ class ProfileWindowConfig(BaseModel):
 
 
 def _require_window_steps(start_step: int, end_step: int) -> None:
-    if not _nonneg(start_step) or not _nonneg(end_step):
-        raise ValueError("profile window steps must be >= 0")
+    if not _positive(start_step) or not _positive(end_step):
+        raise ValueError("profile window steps must be >= 1")
     if end_step < start_step:
         raise ValueError("profile window end_step must be >= start_step")
 
@@ -35,5 +35,5 @@ def _require_train_phase(phase: str) -> str:
     return stripped
 
 
-def _nonneg(step: int) -> bool:
-    return step >= 0
+def _positive(step: int) -> bool:
+    return step >= 1

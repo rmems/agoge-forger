@@ -46,6 +46,8 @@ class TelemetrySession:
     profiler_error: str | None = None
     _closed: bool = field(default=False, init=False)
     _summary_written: bool = field(default=False, init=False)
+    _request_written: bool = field(default=False, init=False)
+    callback: Any = field(default=None, init=False, repr=False)
 
     def emit(
         self,
@@ -60,6 +62,8 @@ class TelemetrySession:
         self.writer.emit(event, phase=phase, global_step=global_step, extras=extras)
 
     def record_failure(self) -> None:
+        if self.callback is not None:
+            self.callback.finalize()
         self.emit("run_failed", phase="failed", global_step=0)
 
     def write_profile_summary(
@@ -69,11 +73,20 @@ class TelemetrySession:
         overhead: Mapping[str, Any],
         start_ns: int | None,
         end_ns: int | None,
+        actual_end_step: int | None,
+        complete: bool,
     ) -> None:
         if not self._can_write_summary():
             return
         try:
-            self._write_summary(events, overhead, start_ns, end_ns)
+            self._write_summary(
+                events,
+                overhead,
+                start_ns,
+                end_ns,
+                actual_end_step,
+                complete,
+            )
             self._summary_written = True
         except OSError as error:
             logger.warning(f"profile window summary write failed: {error}")
@@ -81,20 +94,27 @@ class TelemetrySession:
     def close(self) -> None:
         if self._closed:
             return
+        if self.callback is not None:
+            self.callback.finalize()
         self._closed = True
         if self.window.enabled and not self._summary_written:
             self.write_profile_summary(
                 events=None,
-                overhead={"status": "unavailable", "reason": "profiler never started"},
+                overhead={
+                    "status": "unavailable",
+                    "reason": "profile window start step was not reached",
+                },
                 start_ns=None,
                 end_ns=None,
+                actual_end_step=None,
+                complete=False,
             )
 
     def manifest_entry(self) -> dict[str, Any]:
         return {
             "agoge_run_id": self.run_id,
-            "markers": str(self.markers_path),
-            "profile_window_request": str(self.request_path),
+            "markers": self._published_markers_path(),
+            "profile_window_request": self._published_request_path(),
             "profile_window": self._published_summary_path(),
             "profile_window_id": self.window_id,
         }
@@ -105,6 +125,8 @@ class TelemetrySession:
         overhead: Mapping[str, Any],
         start_ns: int | None,
         end_ns: int | None,
+        actual_end_step: int | None,
+        complete: bool,
     ) -> None:
         stamp_utc, monotonic_ns = self.writer.stamp()
         backend = requested_backend_status(self.window.backend, self.backend_probes)
@@ -120,6 +142,8 @@ class TelemetrySession:
                 "phase": self.window.phase,
                 "start_step": self.window.start_step,
                 "end_step": self.window.end_step,
+                "actual_end_step": actual_end_step,
+                "complete": complete,
                 "monotonic_ns_start": start_ns,
                 "monotonic_ns_end": end_ns,
                 "backend": self.window.backend,
@@ -167,6 +191,16 @@ class TelemetrySession:
             return None
         return str(self.summary_path)
 
+    def _published_markers_path(self) -> str | None:
+        if not self.emit_markers or not self.writer.published or not self.markers_path.exists():
+            return None
+        return str(self.markers_path)
+
+    def _published_request_path(self) -> str | None:
+        if not self._request_written or not self.request_path.exists():
+            return None
+        return str(self.request_path)
+
     def envelope_identity(self) -> EnvelopeIdentity:
         return EnvelopeIdentity(
             run_id=self.run_id,
@@ -177,7 +211,9 @@ class TelemetrySession:
 
 
 def open_training_session(config: ExperimentConfig) -> TelemetrySession:
-    telemetry = overlay_telemetry_env(config.telemetry, os.environ)
+    telemetry = config.telemetry
+    if not telemetry._environment_resolved:
+        telemetry = overlay_telemetry_env(telemetry, os.environ)
     run_id = telemetry.run_id or config.run_name
     run_dir = Path("runs") / config.run_name
     telemetry_dir = run_dir / "telemetry"
@@ -217,7 +253,9 @@ def open_training_session(config: ExperimentConfig) -> TelemetrySession:
 
 
 def attach_telemetry(trainer: Any, session: TelemetrySession) -> None:
-    trainer.add_callback(TrainingCorrelationCallback(session))
+    callback = TrainingCorrelationCallback(session)
+    session.callback = callback
+    trainer.add_callback(callback)
 
 
 def _dataset_ref(config: ExperimentConfig) -> dict[str, Any]:
@@ -260,6 +298,7 @@ def _write_request(session: TelemetrySession) -> None:
     )
     try:
         session.request_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        session._request_written = True
     except OSError as error:
         logger.warning(f"profile window request write failed: {error}")
 

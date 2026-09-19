@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 from .path_safety import resolve_existing_path
 from .profile_window import ProfileWindowConfig
@@ -70,6 +70,7 @@ class TelemetryConfig(BaseModel):
     run_id: str | None = None
     emit_markers: bool = True
     profile_window: ProfileWindowConfig = Field(default_factory=ProfileWindowConfig)
+    _environment_resolved: bool = PrivateAttr(default=False)
 
 
 class ExperimentConfig(BaseModel):

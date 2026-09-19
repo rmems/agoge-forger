@@ -24,7 +24,15 @@ def overhead_from_step_times(profiled: list[float], unprofiled: list[float]) -> 
             "ratio": None,
         }
     baseline = sum(unprofiled) / len(unprofiled)
-    ratio = None if baseline <= 0 else profiled_mean / baseline
+    if baseline <= 0:
+        return {
+            "status": "unavailable",
+            "reason": "unprofiled optimizer-step mean is not positive",
+            "profiled_step_mean_s": profiled_mean,
+            "unprofiled_step_mean_s": baseline,
+            "ratio": None,
+        }
+    ratio = profiled_mean / baseline
     return {
         "status": "ok",
         "profiled_step_mean_s": profiled_mean,

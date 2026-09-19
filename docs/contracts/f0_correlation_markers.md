@@ -11,12 +11,14 @@ Written under `runs/<run_name>/telemetry/` (the `runs/` tree is gitignored):
 
 | File | Kind | When |
 | --- | --- | --- |
-| `agoge-markers.jsonl` | `agoge_marker` | Every run (cheap JSONL append). Disable with `telemetry.emit_markers: false`. |
+| `agoge-markers.jsonl` | `agoge_marker` | Runs with marker emission enabled (cheap JSONL append). Disable with `telemetry.emit_markers: false`. |
 | `profile-window-request.json` | `agoge_profile_window_request` | Every run. Records whether a window was requested and which backends are unsupported. |
 | `profile-window.json` | `agoge_profile_window` | Only when a window is enabled. Compact summary; no chrome traces in git. |
 
-`manifest.json` `metrics.telemetry` points at those paths. Marker write
-failures are logged and never abort training.
+`manifest.json` `metrics.telemetry` points only at artifacts published by the
+current session. Its `markers` and `profile_window` paths are `null` when the
+corresponding artifact is not published. Marker write failures are logged and
+never abort training.
 
 ## Envelope
 
@@ -46,8 +48,10 @@ uv run agoge train-qlora \
   --profile-window train:1-1
 ```
 
-CLI flags win over env; env can enable a window that YAML left off. Ordinary
-configs do not enable the profiler.
+Telemetry is resolved once with this precedence: CLI flags, then environment,
+then YAML, then defaults. Environment values replace YAML values even when the
+YAML value is non-default; CLI values replace both. Ordinary configs do not
+enable the profiler.
 
 YAML form (optional):
 
@@ -77,3 +81,11 @@ carry `profile_window_ref` equal to Agoge's `profile_window_id`
 (`{run_id}:{phase}:{start}-{end}`).
 
 CPU fixtures: `tests/fixtures/f0-correlation/`.
+
+## Window completion fields
+
+`profile_window_id`, `start_step`, and `end_step` retain the requested inclusive
+range. `actual_end_step` records the final captured optimizer step and is `null`
+when the requested start step was never reached. `complete` is true only when
+the requested end step was captured. The monotonic bounds are both required
+before a GPU sample can join to a window.

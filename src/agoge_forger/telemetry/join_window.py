@@ -33,9 +33,11 @@ def _inside_interval(summary: Mapping[str, Any], sample: dict[str, Any]) -> bool
         return False
     start_ns = summary.get("monotonic_ns_start")
     end_ns = summary.get("monotonic_ns_end")
-    if isinstance(start_ns, int) and sample_ns < start_ns:
+    if not isinstance(start_ns, int) or not isinstance(end_ns, int):
         return False
-    return not (isinstance(end_ns, int) and sample_ns > end_ns)
+    if sample_ns < start_ns:
+        return False
+    return sample_ns <= end_ns
 
 
 def _window_ref_ok(summary: Mapping[str, Any], sample: dict[str, Any]) -> bool:

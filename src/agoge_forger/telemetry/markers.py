@@ -25,6 +25,7 @@ class MarkerWriter:
     dataset: dict[str, Any]
     _last_monotonic_ns: int = field(default=-1, init=False)
     _clock: Any = field(default=None, repr=False)
+    published: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         if self._clock is None:
@@ -43,6 +44,7 @@ class MarkerWriter:
     ) -> None:
         try:
             self._write(event, phase, global_step, extras or {})
+            self.published = True
         except OSError as error:
             logger.warning(f"telemetry marker write failed ({event}): {error}")
 

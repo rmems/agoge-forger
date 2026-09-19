@@ -27,21 +27,25 @@ class TrainingCorrelationCallback(TrainerCallback):
         self._unprofiled_s: list[float] = []
         self._window_start_ns: int | None = None
         self._window_end_ns: int | None = None
+        self._last_step = 0
+        self._finalized = False
 
     def on_train_begin(self, args, state, control, **kwargs):
         self._session.emit("train_start", phase=TRAIN_PHASE, global_step=int(state.global_step))
 
     def on_step_begin(self, args, state, control, **kwargs):
         upcoming = int(state.global_step) + 1
+        self._step_t0 = time.perf_counter()
         self._maybe_start_window(upcoming)
         self._emit_step_begin(upcoming)
-        self._step_t0 = time.perf_counter()
 
     def on_step_end(self, args, state, control, **kwargs):
         step = int(state.global_step)
-        self._record_step_duration(step)
+        self._last_step = step
+        was_profiled = self._profiler_active and window_covers_step(self._session.window, step)
         self._advance_profiler()
-        self._maybe_stop_window(step)
+        if not self._maybe_stop_window(step, profiled=was_profiled):
+            self._record_step_duration(profiled=was_profiled)
 
     def on_log(self, args, state, control, **kwargs):
         self._emit_log(state, kwargs.get("logs"))
@@ -52,9 +56,26 @@ class TrainingCorrelationCallback(TrainerCallback):
         )
 
     def on_train_end(self, args, state, control, **kwargs):
-        self._stop_profiler()
-        self._session.emit("train_end", phase=TRAIN_PHASE, global_step=int(state.global_step))
+        actual_step = int(state.global_step)
+        self._last_step = actual_step
+        self.finalize()
+        self._session.emit("train_end", phase=TRAIN_PHASE, global_step=actual_step)
         self._session.close()
+
+    def finalize(self) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
+        actual_step = self._completed_window_step()
+        self._stop_profiler(
+            actual_step=actual_step,
+            complete=(actual_step is not None and actual_step >= self._session.window.end_step),
+        )
+
+    def _completed_window_step(self) -> int | None:
+        if self._last_step < self._session.window.start_step:
+            return None
+        return self._last_step
 
     def _emit_step_begin(self, upcoming: int) -> None:
         extras = {}
@@ -74,12 +95,12 @@ class TrainingCorrelationCallback(TrainerCallback):
         event = "eval_log" if phase == "eval" else "step_end"
         self._session.emit(event, phase=phase, global_step=step, extras=extras)
 
-    def _record_step_duration(self, step: int) -> None:
+    def _record_step_duration(self, *, profiled: bool) -> None:
         if self._step_t0 is None:
             return
         elapsed = time.perf_counter() - self._step_t0
         self._step_t0 = None
-        if self._profiler_active and window_covers_step(self._session.window, step):
+        if profiled:
             self._profiled_s.append(elapsed)
             return
         self._unprofiled_s.append(elapsed)
@@ -91,13 +112,27 @@ class TrainingCorrelationCallback(TrainerCallback):
         if upcoming_step_starts_window(window, upcoming):
             self._start_profiler()
 
-    def _maybe_stop_window(self, step: int) -> None:
+    def _maybe_stop_window(self, step: int, *, profiled: bool) -> bool:
         if self._window_started and step == self._session.window.end_step:
-            self._stop_profiler()
+            self._stop_profiler(
+                actual_step=step,
+                complete=True,
+                record_profiled=profiled,
+            )
+            return True
+        return False
 
     def _advance_profiler(self) -> None:
-        if self._profiler is not None:
+        if self._profiler is None:
+            return
+        try:
             self._profiler.step()
+        except (RuntimeError, OSError, ValueError, AttributeError) as error:
+            logger.warning(f"torch.profiler advancement failed: {error}")
+            self._record_profiler_error(error)
+            self._best_effort_stop(self._profiler)
+            self._profiler = None
+            self._profiler_active = False
 
     def _start_profiler(self) -> None:
         if self._window_started:
@@ -138,29 +173,42 @@ class TrainingCorrelationCallback(TrainerCallback):
             self._profiler_active = True
         except (RuntimeError, OSError, ValueError, AttributeError) as error:
             logger.warning(f"torch.profiler failed to start: {error}")
+            self._best_effort_stop(self._profiler)
             self._profiler = None
             self._profiler_active = False
             self._session.profiler_error = str(error)
 
-    def _stop_profiler(self) -> None:
+    def _stop_profiler(
+        self,
+        *,
+        actual_step: int | None,
+        complete: bool,
+        record_profiled: bool | None = None,
+    ) -> None:
         if self._window_end_ns is not None or not self._window_started:
             return
-        _synchronize_profiled_device()
+        if self._profiler_active:
+            self._synchronize_profiled_device()
         self._window_end_ns = self._session.writer.next_monotonic()
         summary_events = self._collect_summary()
+        if record_profiled is not None:
+            self._record_step_duration(profiled=record_profiled)
         if self._session.window.enabled:
             self._session.write_profile_summary(
                 events=summary_events,
                 overhead=overhead_from_step_times(self._profiled_s, self._unprofiled_s),
                 start_ns=self._window_start_ns,
                 end_ns=self._window_end_ns,
+                actual_end_step=actual_step,
+                complete=complete,
             )
-            self._session.emit(
-                "profile_window_end",
-                phase=self._session.window.phase,
-                global_step=self._session.window.end_step,
-                extras={"profile_window_ref": self._session.window_id},
-            )
+            if actual_step is not None:
+                self._session.emit(
+                    "profile_window_end",
+                    phase=self._session.window.phase,
+                    global_step=actual_step,
+                    extras={"profile_window_ref": self._session.window_id},
+                )
 
     def _collect_summary(self) -> dict[str, Any] | None:
         if self._profiler is None:
@@ -178,6 +226,26 @@ class TrainingCorrelationCallback(TrainerCallback):
         finally:
             self._profiler = None
             self._profiler_active = False
+
+    def _synchronize_profiled_device(self) -> None:
+        try:
+            _synchronize_profiled_device()
+        except (RuntimeError, OSError, ValueError, AttributeError) as error:
+            logger.warning(f"torch.profiler synchronization failed: {error}")
+            self._record_profiler_error(error)
+
+    def _record_profiler_error(self, error: Exception) -> None:
+        self._session.profiler_error = str(error)
+
+    @staticmethod
+    def _best_effort_stop(profiler: Any) -> None:
+        stop = getattr(profiler, "stop", None)
+        if not callable(stop):
+            return
+        try:
+            stop()
+        except (RuntimeError, OSError, ValueError, AttributeError) as error:
+            logger.warning(f"torch.profiler cleanup after advancement failure failed: {error}")
 
 
 def _synchronize_profiled_device() -> None:

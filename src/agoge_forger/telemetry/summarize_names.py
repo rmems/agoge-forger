@@ -22,13 +22,16 @@ def classify_name(name: str) -> str:
 
 
 _D2H = ("dtoh", "d2h", "device_to_host")
+_H2D = ("htod", "h2d", "host_to_device", "hto d")
 
 
-def transfer_direction(name: str) -> str:
+def transfer_direction(name: str) -> str | None:
     lowered = name.lower()
     if _is_device_to_host(lowered):
         return "d2h"
-    return "h2d"
+    if any(token in lowered for token in _H2D):
+        return "h2d"
+    return None
 
 
 def _is_device_to_host(lowered: str) -> bool:
