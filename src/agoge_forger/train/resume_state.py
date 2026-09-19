@@ -85,27 +85,40 @@ def select_resume_checkpoint(
     """Quarantine incompletes, then inspect the latest equivalent checkpoint."""
     quarantine_incomplete_checkpoints(run_dir, allow_unsafe=allow_unsafe)
     candidates = list(reversed(list_valid_checkpoints(run_dir, allow_unsafe=allow_unsafe)))
-    selected: ResumeInspection | None = None
+    selected, skipped = _first_equivalent_candidate(candidates, allow_unsafe=allow_unsafe)
+    if selected is None:
+        latest = candidates[0] if candidates else None
+        return inspect_resume_state(latest, restore=restore, allow_unsafe=allow_unsafe)
+    _quarantine_skipped_non_equivalent(run_dir, skipped)
+    if not restore:
+        return selected
+    return inspect_resume_state(selected.checkpoint, restore=True, allow_unsafe=allow_unsafe)
+
+
+def _first_equivalent_candidate(
+    candidates: list[Path],
+    *,
+    allow_unsafe: bool,
+) -> tuple[ResumeInspection | None, list[tuple[Path, ResumeInspection]]]:
     skipped: list[tuple[Path, ResumeInspection]] = []
     for checkpoint in candidates:
         inspection = inspect_resume_state(checkpoint, restore=False, allow_unsafe=allow_unsafe)
         if inspection.equivalent:
-            selected = inspection
-            break
+            return inspection, skipped
         skipped.append((Path(checkpoint), inspection))
-    if selected is not None:
-        for checkpoint, inspection in skipped:
-            quarantine_tree(
-                checkpoint,
-                reason="non_equivalent_resume",
-                run_dir=run_dir,
-                details={"missing": list(inspection.missing)},
-            )
-        if not restore:
-            return selected
-        return inspect_resume_state(selected.checkpoint, restore=True, allow_unsafe=allow_unsafe)
-    latest = candidates[0] if candidates else None
-    return inspect_resume_state(latest, restore=restore, allow_unsafe=allow_unsafe)
+    return None, skipped
+
+
+def _quarantine_skipped_non_equivalent(
+    run_dir: PathLike, skipped: list[tuple[Path, ResumeInspection]]
+) -> None:
+    for checkpoint, inspection in skipped:
+        quarantine_tree(
+            checkpoint,
+            reason="non_equivalent_resume",
+            run_dir=run_dir,
+            details={"missing": list(inspection.missing)},
+        )
 
 
 @dataclass
@@ -180,9 +193,17 @@ def _sampler_position(sidecar: dict[str, Any] | None, global_step: int | None) -
     if sidecar is None:
         return None
     sidecar_step = _nonneg_int(sidecar.get("global_step"))
-    if global_step is not None and sidecar_step is not None and sidecar_step != global_step:
+    if not _sidecar_step_matches_checkpoint(sidecar_step, global_step):
         return None
     return _nonneg_int(sidecar.get("sampler_position"))
+
+
+def _sidecar_step_matches_checkpoint(sidecar_step: int | None, global_step: int | None) -> bool:
+    if global_step is None:
+        return True
+    if sidecar_step is None:
+        return True
+    return sidecar_step == global_step
 
 
 def _adapter_weights_usable(checkpoint: Path, *, allow_unsafe: bool) -> bool:
