@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import fnmatch
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pydantic import ValidationError
 
-from .._strict_json import decode_json_object
+from .._strict_json import decode_json_object  # noinspection PyProtectedMember
+from ..artifacts.safetensors_io import UNSAFE_WEIGHT_PATTERNS
 from ..config import ExperimentConfig
-from ..eval._artifact_schema import (
+from ..eval._artifact_schema import (  # noinspection PyProtectedMember
     ArtifactIndex,
     ArtifactProducerProvenance,
     portable_artifact_path,
 )
-from ..eval._descriptor_bundle import EntryIdentity, scan_bundle
+from ..eval._descriptor_bundle import (  # noinspection PyProtectedMember
+    EntryIdentity,
+    scan_bundle,
+)
 from ..split_schema import SplitManifest
 from .report import BundleFailure
 from .schema import ReproducibilityBundle
@@ -110,10 +115,10 @@ def _membership_failures(
     index: ArtifactIndex,
     identities: dict[PurePosixPath, EntryIdentity],
 ) -> list[BundleFailure]:
-    try:
-        expected = {portable_artifact_path(entry.file) for entry in index.artifacts}
-    except ValueError as exc:
-        return [BundleFailure(code="path_escaping", path=index_path, message=str(exc))]
+    canonical = _canonical_entry_paths(index_path, index)
+    if isinstance(canonical, BundleFailure):
+        return [canonical]
+    expected = set(canonical)
     actual = {
         path
         for path, identity in identities.items()
@@ -137,6 +142,29 @@ def _membership_failures(
         for path in sorted(actual - expected, key=str)
     )
     return failures
+
+
+def _canonical_entry_paths(
+    index_path: str,
+    index: ArtifactIndex,
+) -> list[PurePosixPath] | BundleFailure:
+    try:
+        portable = [portable_artifact_path(entry.file) for entry in index.artifacts]
+    except ValueError as exc:
+        return BundleFailure(code="path_escaping", path=index_path, message=str(exc))
+    if any(path.as_posix() != entry.file for path, entry in zip(portable, index.artifacts)):
+        return BundleFailure(
+            code="path_escaping",
+            path=index_path,
+            message="artifact index paths must be canonical POSIX paths",
+        )
+    if len(set(portable)) != len(portable):
+        return BundleFailure(
+            code="duplicate_path",
+            path=index_path,
+            message="artifact index paths normalize to the same target",
+        )
+    return portable
 
 
 def _digest_failures(check: ArtifactCheck, index: ArtifactIndex) -> list[BundleFailure]:
@@ -169,38 +197,51 @@ def _digest_failures(check: ArtifactCheck, index: ArtifactIndex) -> list[BundleF
 def _layout_failures(check: ArtifactCheck, index: ArtifactIndex) -> list[BundleFailure]:
     names = {PurePosixPath(entry.file).as_posix() for entry in index.artifacts}
     if check.kind == "peft_adapter":
-        return _adapter_layout_failures(check.index_path, names, check.root)
+        return _adapter_layout_failures(check, names, index.producer_provenance)
     return _merged_layout_failures(check, names)
 
 
-def _adapter_layout_failures(index_path: str, names: set[str], root: Path) -> list[BundleFailure]:
+def _adapter_layout_failures(
+    check: ArtifactCheck,
+    names: set[str],
+    provenance: ArtifactProducerProvenance | None,
+) -> list[BundleFailure]:
     missing = sorted(_ADAPTER_FILES - names)
-    unexpected = sorted(names - _ADAPTER_FILES)
+    unsafe = sorted(
+        name
+        for name in names - _ADAPTER_FILES
+        if any(
+            fnmatch.fnmatch(PurePosixPath(name).name, pattern) for pattern in UNSAFE_WEIGHT_PATTERNS
+        )
+    )
     failures: list[BundleFailure] = []
     if missing:
         failures.append(
             BundleFailure(
                 code="artifact_index",
-                path=index_path,
+                path=check.index_path,
                 message=f"peft_adapter artifact is missing required files: {missing}",
             )
         )
-    if unexpected:
+    if unsafe:
         failures.append(
             BundleFailure(
                 code="artifact_index",
-                path=index_path,
-                message=f"peft_adapter artifact contains unexpected files: {unexpected}",
+                path=check.index_path,
+                message=f"peft_adapter artifact contains unsafe files: {unsafe}",
             )
         )
     if _ADAPTER_CONFIG in names:
-        failures.extend(_adapter_config_failures(root, index_path))
+        failures.extend(_adapter_config_failures(check, provenance))
     return failures
 
 
-def _adapter_config_failures(root: Path, index_path: str) -> list[BundleFailure]:
-    relative = f"{PurePosixPath(index_path).parent / _ADAPTER_CONFIG}"
-    loaded = load_object(root, relative, "adapter config")
+def _adapter_config_failures(
+    check: ArtifactCheck,
+    provenance: ArtifactProducerProvenance | None,
+) -> list[BundleFailure]:
+    relative = f"{PurePosixPath(check.index_path).parent / _ADAPTER_CONFIG}"
+    loaded = load_object(check.root, relative, "adapter config")
     if isinstance(loaded, BundleFailure):
         return [loaded]
     failures: list[BundleFailure] = []
@@ -214,6 +255,33 @@ def _adapter_config_failures(root: Path, index_path: str) -> list[BundleFailure]
                     message=f"adapter_config.json requires non-empty {field}",
                 )
             )
+    if provenance is not None:
+        failures.extend(_adapter_identity_failures(relative, loaded, provenance))
+    return failures
+
+
+def _adapter_identity_failures(
+    relative: str,
+    loaded: dict[str, Any],
+    provenance: ArtifactProducerProvenance,
+) -> list[BundleFailure]:
+    failures: list[BundleFailure] = []
+    if loaded.get("base_model_name_or_path") != provenance.base_model_name_or_path:
+        failures.append(
+            BundleFailure(
+                code="artifact_index",
+                path=relative,
+                message="adapter_config.json base model does not match artifact provenance",
+            )
+        )
+    if loaded.get("revision") != provenance.revision:
+        failures.append(
+            BundleFailure(
+                code="artifact_index",
+                path=relative,
+                message="adapter_config.json revision does not match artifact provenance",
+            )
+        )
     return failures
 
 
@@ -239,9 +307,27 @@ def _merged_layout_failures(check: ArtifactCheck, names: set[str]) -> list[Bundl
                 ),
             )
         ]
-    if has_single:
-        return []
-    return _shard_failures(check, names)
+    failures = _merged_config_failures(check)
+    if has_sharded:
+        failures.extend(_shard_failures(check, names))
+    return failures
+
+
+def _merged_config_failures(check: ArtifactCheck) -> list[BundleFailure]:
+    relative = f"{PurePosixPath(check.index_path).parent / _MERGED_CONFIG}"
+    loaded = load_object(check.root, relative, "merged model config")
+    if isinstance(loaded, BundleFailure):
+        return [loaded]
+    model_type = loaded.get("model_type")
+    if not isinstance(model_type, str) or not model_type:
+        return [
+            BundleFailure(
+                code="artifact_index",
+                path=relative,
+                message="merged-model config.json requires a non-empty model_type",
+            )
+        ]
+    return []
 
 
 def _shard_failures(check: ArtifactCheck, names: set[str]) -> list[BundleFailure]:
@@ -258,8 +344,7 @@ def _shard_failures(check: ArtifactCheck, names: set[str]) -> list[BundleFailure
                 message="merged-model shard index requires a non-empty weight_map",
             )
         ]
-    shards = {str(value) for value in weight_map.values() if isinstance(value, str)}
-    if len(shards) != len(weight_map) or not shards:
+    if any(not isinstance(value, str) or not value for value in weight_map.values()):
         return [
             BundleFailure(
                 code="artifact_index",
@@ -267,7 +352,7 @@ def _shard_failures(check: ArtifactCheck, names: set[str]) -> list[BundleFailure
                 message="merged-model weight_map shard paths must be strings",
             )
         ]
-    missing = sorted(shards - names)
+    missing = sorted(set(weight_map.values()) - names)
     if missing:
         return [
             BundleFailure(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,24 +40,44 @@ def run_and_config_failures(root: Path, document: ReproducibilityBundle) -> list
     return failures
 
 
+_REQUIRED_MANIFEST_FIELDS: dict[str, type] = {
+    "timestamp": str,
+    "git": dict,
+    "config": dict,
+}
+
+
 def _run_manifest_field_failures(path: str, payload: dict[str, Any]) -> list[BundleFailure]:
-    failures = [
-        BundleFailure(
-            code="run_manifest",
-            path=path,
-            message=f"run manifest is missing required field {field!r}",
-        )
-        for field in ("timestamp", "git", "config")
-        if field not in payload
-    ]
-    if "config" in payload and not isinstance(payload["config"], dict):
-        failures.append(
-            BundleFailure(
-                code="run_manifest",
-                path=path,
-                message="run manifest config must be a JSON object",
+    failures: list[BundleFailure] = []
+    for field, kind in _REQUIRED_MANIFEST_FIELDS.items():
+        if field not in payload:
+            failures.append(
+                BundleFailure(
+                    code="run_manifest",
+                    path=path,
+                    message=f"run manifest is missing required field {field!r}",
+                )
             )
-        )
+        elif not isinstance(payload[field], kind):
+            failures.append(
+                BundleFailure(
+                    code="run_manifest",
+                    path=path,
+                    message=f"run manifest field {field!r} must be a {kind.__name__}",
+                )
+            )
+    timestamp = payload.get("timestamp")
+    if isinstance(timestamp, str):
+        try:
+            datetime.fromisoformat(timestamp)
+        except ValueError:
+            failures.append(
+                BundleFailure(
+                    code="run_manifest",
+                    path=path,
+                    message="run manifest timestamp must be ISO-8601",
+                )
+            )
     return failures
 
 

@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 
-from ..eval._descriptor_bundle import EntryIdentity, require_descriptor_support, scan_bundle
+from ..eval._descriptor_bundle import (  # noinspection PyProtectedMember
+    EntryIdentity,
+    require_descriptor_support,
+    scan_bundle,
+)
 from ..path_safety import resolve_existing_path
 from .report import BundleFailure, BundleVerificationReport
 from .schema import ReproducibilityBundle
@@ -24,7 +28,7 @@ from .verify_inventory import (
     membership_failures,
     unsafe_weight_failures,
 )
-from .verify_split import load_split, split_artifact_failures
+from .verify_split import load_split, split_artifact_failures, split_membership_failures
 
 
 def verify_reproducibility_bundle(bundle_dir: str | Path) -> BundleVerificationReport:
@@ -75,6 +79,7 @@ def _component_failures(root: Path, document: ReproducibilityBundle) -> list[Bun
     else:
         split_manifest, split_digest = split
         failures.extend(split_artifact_failures(document, split_manifest))
+        failures.extend(split_membership_failures(root, document, split_manifest))
     failures.extend(run_and_config_failures(root, document))
     failures.extend(artifact_index_failures(root, document, split_digest, split_manifest))
     failures.extend(evaluation_failures(root, document, split_manifest, split_digest))

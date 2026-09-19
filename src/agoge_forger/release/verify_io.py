@@ -6,9 +6,11 @@ import errno
 import os
 from pathlib import Path, PurePosixPath
 
-from .._strict_json import decode_json_object
-from ..eval._artifact_schema import portable_artifact_path
-from ..eval._descriptor_bundle import (
+from .._strict_json import decode_json_object  # noinspection PyProtectedMember
+from ..eval._artifact_schema import (  # noinspection PyProtectedMember
+    portable_contract_reference,
+)
+from ..eval._descriptor_bundle import (  # noinspection PyProtectedMember
     hash_relative_file,
     open_bundle,
     read_relative_file,
@@ -67,8 +69,8 @@ def confine_reference(
     contract_path: str,
 ) -> Path | BundleFailure:
     try:
-        portable = portable_artifact_path(relative)
-        resolved = (anchor / Path(*portable.parts)).resolve(strict=True)
+        portable_contract_reference(relative)
+        resolved = (anchor / Path(relative)).resolve(strict=True)
         root = bundle_root.resolve(strict=True)
     except OSError as exc:
         return classify_os_error(exc, contract_path)

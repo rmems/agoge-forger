@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agoge_forger.eval.contract import PairedEvaluationContract, load_evaluation_contract
 from agoge_forger.release.report import format_verification_table
 from agoge_forger.release.verify import verify_reproducibility_bundle
@@ -47,16 +49,41 @@ def test_mutated_digest_fails(tmp_path):
     assert "modified_file" in _codes(report)
 
 
-def test_missing_evaluation_arm_fails(tmp_path):
+def _drop_sft_arm(payload: dict[str, object]) -> None:
+    del payload["sft"]
+
+
+def _downgrade_contract_version(payload: dict[str, object]) -> None:
+    payload["schema_version"] = "agoge.evaluation-contract.v1"
+
+
+def _retarget_artifact_kind(payload: dict[str, object]) -> None:
+    sft = payload["sft"]
+    assert isinstance(sft, dict)
+    artifact = sft["artifact"]
+    assert isinstance(artifact, dict)
+    artifact["kind"] = "merged_model"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code"),
+    [
+        (_drop_sft_arm, "missing_evaluation_arm"),
+        (_downgrade_contract_version, "unknown_schema_version"),
+        (_retarget_artifact_kind, "artifact_index"),
+    ],
+    ids=["missing-arm", "unknown-version", "kind-mismatch"],
+)
+def test_evaluation_contract_mutation_fails(tmp_path, mutate, code):
     bundle = write_valid_bundle(tmp_path)
     contract_path = bundle / EVAL_CONTRACT_PATH
     payload = json.loads(contract_path.read_text(encoding="utf-8"))
-    del payload["sft"]
+    mutate(payload)
     contract_path.write_bytes(canonical_json_bytes(payload) + b"\n")
     reseal_bundle(bundle)
     report = verify_reproducibility_bundle(bundle)
     assert report.verdict == "fail"
-    assert "missing_evaluation_arm" in _codes(report)
+    assert code in _codes(report)
 
 
 def test_extra_file_fails(tmp_path):
@@ -176,18 +203,6 @@ def test_verify_module_does_not_import_model_runtimes():
     assert "eval.generate" not in text
 
 
-def test_unknown_evaluation_contract_version_fails(tmp_path):
-    bundle = write_valid_bundle(tmp_path)
-    contract_path = bundle / EVAL_CONTRACT_PATH
-    payload = json.loads(contract_path.read_text(encoding="utf-8"))
-    payload["schema_version"] = "agoge.evaluation-contract.v1"
-    contract_path.write_bytes(canonical_json_bytes(payload) + b"\n")
-    reseal_bundle(bundle)
-    report = verify_reproducibility_bundle(bundle)
-    assert report.verdict == "fail"
-    assert "unknown_schema_version" in _codes(report)
-
-
 def test_deleted_listed_file_is_missing_not_crash(tmp_path):
     bundle = write_valid_bundle(tmp_path)
     (bundle / "adapter" / "adapter_model.safetensors").unlink()
@@ -237,18 +252,6 @@ def test_evaluation_model_identity_mismatch_fails(tmp_path):
     report = verify_reproducibility_bundle(bundle)
     assert report.verdict == "fail"
     assert any("model repository" in failure.message for failure in report.failures)
-
-
-def test_artifact_kind_must_match_selected_index(tmp_path):
-    bundle = write_valid_bundle(tmp_path)
-    contract_path = bundle / EVAL_CONTRACT_PATH
-    payload = json.loads(contract_path.read_text(encoding="utf-8"))
-    payload["sft"]["artifact"]["kind"] = "merged_model"
-    contract_path.write_bytes(canonical_json_bytes(payload) + b"\n")
-    reseal_bundle(bundle)
-    report = verify_reproducibility_bundle(bundle)
-    assert report.verdict == "fail"
-    assert "artifact_index" in _codes(report)
 
 
 def test_malformed_adapter_config_fails(tmp_path):
@@ -314,6 +317,92 @@ def test_table_report_escapes_control_characters(tmp_path):
     table = format_verification_table(report)
     assert "\\u000a" in table
     assert "bad\nname" not in table
+
+
+def test_adapter_index_allows_tokenizer_files(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    adapter = bundle / "adapter"
+    (adapter / "tokenizer_config.json").write_bytes(b"{}\n")
+    (adapter / "special_tokens_map.json").write_bytes(b"{}\n")
+    _rewrite_adapter_index(bundle)
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "pass"
+
+
+def test_adapter_config_identity_mismatch_fails(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    config_path = bundle / "adapter" / "adapter_config.json"
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload["base_model_name_or_path"] = "other/base-model"
+    config_path.write_bytes(canonical_json_bytes(payload) + b"\n")
+    _rewrite_adapter_index(bundle)
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert any("base model" in failure.message for failure in report.failures)
+
+
+def test_nested_contract_parent_references_pass(tmp_path):
+    bundle = write_valid_bundle(tmp_path)
+    contract_path = bundle / EVAL_CONTRACT_PATH
+    payload = json.loads(contract_path.read_text(encoding="utf-8"))
+    payload["split_manifest_path"] = "../split_manifest.json"
+    payload["sft"]["artifact"]["artifact_index_path"] = "../adapter/artifact_index.json"
+    nested_dir = bundle / "eval"
+    nested_dir.mkdir()
+    nested = nested_dir / "contract.json"
+    nested.write_bytes(canonical_json_bytes(payload) + b"\n")
+    contract_path.unlink()
+    from agoge_forger.release.schema import BundlePointers, write_reproducibility_bundle
+    from tests.reproducibility_bundle_cases import (
+        ADAPTER_INDEX_PATH,
+        LOCKED_CONFIG_PATH,
+        RUN_MANIFEST_PATH,
+        SPLIT_MANIFEST_PATH,
+    )
+
+    write_reproducibility_bundle(
+        bundle,
+        BundlePointers(
+            run_manifest_path=RUN_MANIFEST_PATH,
+            locked_config_path=LOCKED_CONFIG_PATH,
+            split_manifest_path=SPLIT_MANIFEST_PATH,
+            adapter_artifact_index_path=ADAPTER_INDEX_PATH,
+            evaluation_contract_path="eval/contract.json",
+        ),
+    )
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "pass"
+
+
+def test_split_membership_drift_fails(tmp_path):
+    from agoge_forger.split_contract import sha256_file
+    from tests.reproducibility_bundle_cases import SPLIT_MANIFEST_PATH
+
+    bundle = write_valid_bundle(tmp_path)
+    split_path = bundle / "splits" / "train.jsonl"
+    lines = split_path.read_bytes().splitlines(keepends=True)
+    row = json.loads(lines[0])
+    row["text"] = "mutated record text"
+    lines[0] = canonical_json_bytes(row) + b"\n"
+    split_path.write_bytes(b"".join(lines))
+
+    manifest_path = bundle / SPLIT_MANIFEST_PATH
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["splits"]["train"]["sha256"] = sha256_file(split_path)
+    manifest_path.write_bytes(canonical_json_bytes(manifest) + b"\n")
+
+    contract_path = bundle / EVAL_CONTRACT_PATH
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    contract["split_manifest_sha256"] = sha256_file(manifest_path)
+    contract_path.write_bytes(canonical_json_bytes(contract) + b"\n")
+    _rewrite_adapter_index(bundle)
+    reseal_bundle(bundle)
+
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert any("member" in failure.message for failure in report.failures)
 
 
 def test_read_only_bundle_still_passes(tmp_path):

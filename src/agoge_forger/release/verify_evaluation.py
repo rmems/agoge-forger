@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from pydantic import ValidationError
 
-from .._strict_json import decode_json_object
-from ..eval._artifact_schema import ArtifactIndex
+from .._strict_json import decode_json_object  # noinspection PyProtectedMember
+from ..eval._artifact_schema import (  # noinspection PyProtectedMember
+    ArtifactIndex,
+    ArtifactIndexReference,
+)
 from ..eval.contract import (
     PairedEvaluationContract,
     held_out_task_ids,
@@ -38,7 +42,8 @@ def evaluation_failures(
         contract = PairedEvaluationContract.model_validate(loaded)
     except ValidationError as exc:
         return [schema_failure(exc, relative)]
-    return _identity_failures(root, document, contract, split_manifest, split_digest)
+    context = _EvaluationContext(root, document, contract, split_manifest, split_digest)
+    return _identity_failures(context)
 
 
 def _load_evaluation_payload(root: Path, relative: str) -> dict[str, Any] | BundleFailure:
@@ -70,25 +75,38 @@ def _missing_arm_failure(path: str, payload: dict[str, Any]) -> BundleFailure | 
     )
 
 
-def _identity_failures(
-    root: Path,
-    document: ReproducibilityBundle,
-    contract: PairedEvaluationContract,
-    split_manifest: SplitManifest | None,
-    split_digest: str | None,
+@dataclass(frozen=True)
+class _EvaluationContext:
+    root: Path
+    document: ReproducibilityBundle
+    contract: PairedEvaluationContract
+    split_manifest: SplitManifest | None
+    split_digest: str | None
+
+
+def _identity_failures(context: _EvaluationContext) -> list[BundleFailure]:
+    contract_parent = (context.root / context.document.evaluation_contract_path).parent
+    failures = _split_reference_failures(context, contract_parent)
+    if context.split_manifest is not None:
+        failures.extend(_held_out_failures(context, context.split_manifest))
+    failures.extend(_artifact_failures(context, contract_parent))
+    return failures
+
+
+def _split_reference_failures(
+    context: _EvaluationContext, contract_parent: Path
 ) -> list[BundleFailure]:
-    contract_parent = (root / document.evaluation_contract_path).parent
+    contract = context.contract
+    path = context.document.evaluation_contract_path
     split_path = confine_reference(
         contract_parent,
         contract.split_manifest_path,
-        root,
-        document.evaluation_contract_path,
+        context.root,
+        path,
     )
     if isinstance(split_path, BundleFailure):
         return [split_path]
-    expected_split = resolve_existing(
-        root, document.split_manifest_path, document.evaluation_contract_path
-    )
+    expected_split = resolve_existing(context.root, context.document.split_manifest_path, path)
     if isinstance(expected_split, BundleFailure):
         return [expected_split]
     failures: list[BundleFailure] = []
@@ -96,31 +114,27 @@ def _identity_failures(
         failures.append(
             BundleFailure(
                 code="split_identity",
-                path=document.evaluation_contract_path,
+                path=path,
                 message="evaluation contract does not reference the bundled split manifest",
             )
         )
-    if split_digest is not None and contract.split_manifest_sha256 != split_digest:
+    if context.split_digest is not None and contract.split_manifest_sha256 != context.split_digest:
         failures.append(
             BundleFailure(
                 code="split_identity",
-                path=document.evaluation_contract_path,
+                path=path,
                 message="evaluation contract split-manifest SHA-256 mismatch",
             )
         )
-    if split_manifest is not None:
-        failures.extend(
-            _held_out_failures(document.evaluation_contract_path, contract, split_manifest)
-        )
-    failures.extend(_artifact_failures(root, document, contract, contract_parent))
     return failures
 
 
 def _held_out_failures(
-    path: str,
-    contract: PairedEvaluationContract,
+    context: _EvaluationContext,
     split_manifest: SplitManifest,
 ) -> list[BundleFailure]:
+    path = context.document.evaluation_contract_path
+    contract = context.contract
     failures: list[BundleFailure] = []
     if split_manifest.splits["held_out"].sha256 != contract.held_out_split_sha256:
         failures.append(
@@ -151,69 +165,82 @@ def _held_out_failures(
 
 
 def _artifact_failures(
-    root: Path,
-    document: ReproducibilityBundle,
-    contract: PairedEvaluationContract,
+    context: _EvaluationContext,
     contract_parent: Path,
 ) -> list[BundleFailure]:
-    artifact = contract.sft.artifact
+    artifact = context.contract.sft.artifact
     if artifact is None:
         return [
             BundleFailure(
                 code="missing_evaluation_arm",
-                path=document.evaluation_contract_path,
+                path=context.document.evaluation_contract_path,
                 message="causal_sft arm requires a verified artifact-index reference",
             )
         ]
     index_path = confine_reference(
         contract_parent,
         artifact.artifact_index_path,
-        root,
-        document.evaluation_contract_path,
+        context.root,
+        context.document.evaluation_contract_path,
     )
     if isinstance(index_path, BundleFailure):
         return [index_path]
-    expected = _expected_index_path(root, document, artifact.kind)
+    return _selected_index_failures(context, artifact, index_path)
+
+
+def _selected_index_failures(
+    context: _EvaluationContext,
+    artifact: ArtifactIndexReference,
+    index_path: Path,
+) -> list[BundleFailure]:
+    expected = _expected_index_path(context, artifact.kind)
     if isinstance(expected, BundleFailure):
         return [expected]
-    failures: list[BundleFailure] = []
     if index_path != expected:
-        failures.append(
+        return [
             BundleFailure(
                 code="artifact_index",
-                path=document.evaluation_contract_path,
+                path=context.document.evaluation_contract_path,
                 message="evaluation contract artifact kind does not match the selected index",
             )
-        )
-        return failures
+        ]
+    digest_failure = _index_digest_failure(context, artifact, index_path)
+    if digest_failure is not None:
+        return [digest_failure]
+    return _model_identity_failures(context, index_path)
+
+
+def _index_digest_failure(
+    context: _EvaluationContext,
+    artifact: ArtifactIndexReference,
+    index_path: Path,
+) -> BundleFailure | None:
     try:
-        _, digest = read_relative(root, PurePosixPath(index_path.relative_to(root).as_posix()))
-    except (OSError, ValueError) as exc:
-        return [classify_io_error(exc, artifact.artifact_index_path)]
-    if digest != artifact.artifact_index_sha256:
-        failures.append(
-            BundleFailure(
-                code="modified_file",
-                path=artifact.artifact_index_path,
-                message=(
-                    "evaluation contract artifact-index SHA-256 mismatch: "
-                    f"expected {artifact.artifact_index_sha256}, found {digest}"
-                ),
-            )
+        _, digest = read_relative(
+            context.root, PurePosixPath(index_path.relative_to(context.root).as_posix())
         )
-        return failures
-    failures.extend(_model_identity_failures(root, document, contract, index_path))
-    return failures
+    except (OSError, ValueError) as exc:
+        return classify_io_error(exc, artifact.artifact_index_path)
+    if digest != artifact.artifact_index_sha256:
+        return BundleFailure(
+            code="modified_file",
+            path=artifact.artifact_index_path,
+            message=(
+                "evaluation contract artifact-index SHA-256 mismatch: "
+                f"expected {artifact.artifact_index_sha256}, found {digest}"
+            ),
+        )
+    return None
 
 
 def _expected_index_path(
-    root: Path,
-    document: ReproducibilityBundle,
+    context: _EvaluationContext,
     kind: str,
 ) -> Path | BundleFailure:
+    document = context.document
     if kind == "peft_adapter":
         return resolve_existing(
-            root, document.adapter_artifact_index_path, document.evaluation_contract_path
+            context.root, document.adapter_artifact_index_path, document.evaluation_contract_path
         )
     if kind != "merged_model" or document.merged_artifact_index_path is None:
         return BundleFailure(
@@ -222,42 +249,40 @@ def _expected_index_path(
             message="evaluation contract does not reference a bundled artifact index",
         )
     return resolve_existing(
-        root, document.merged_artifact_index_path, document.evaluation_contract_path
+        context.root, document.merged_artifact_index_path, document.evaluation_contract_path
     )
 
 
 def _model_identity_failures(
-    root: Path,
-    document: ReproducibilityBundle,
-    contract: PairedEvaluationContract,
+    context: _EvaluationContext,
     index_path: Path,
 ) -> list[BundleFailure]:
     try:
         payload, _digest = read_relative(
-            root, PurePosixPath(index_path.relative_to(root).as_posix())
+            context.root, PurePosixPath(index_path.relative_to(context.root).as_posix())
         )
         index = ArtifactIndex.model_validate(
             decode_json_object(payload, str(index_path), object_label="artifact index")
         )
     except (OSError, ValueError) as exc:
-        return [classify_io_error(exc, document.evaluation_contract_path)]
+        return [classify_io_error(exc, context.document.evaluation_contract_path)]
     provenance = index.producer_provenance
     if provenance is None:
         return []
     failures: list[BundleFailure] = []
-    if contract.sft.model_repository != provenance.base_model_name_or_path:
+    if context.contract.sft.model_repository != provenance.base_model_name_or_path:
         failures.append(
             BundleFailure(
                 code="artifact_index",
-                path=document.evaluation_contract_path,
+                path=context.document.evaluation_contract_path,
                 message="evaluation SFT model repository does not match the selected artifact",
             )
         )
-    if contract.sft.model_revision != provenance.revision:
+    if context.contract.sft.model_revision != provenance.revision:
         failures.append(
             BundleFailure(
                 code="artifact_index",
-                path=document.evaluation_contract_path,
+                path=context.document.evaluation_contract_path,
                 message="evaluation SFT model revision does not match the selected artifact",
             )
         )

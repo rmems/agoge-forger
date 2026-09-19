@@ -8,9 +8,13 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import ValidationError
 
-from .._strict_json import decode_json_object
+from .._strict_json import decode_json_object  # noinspection PyProtectedMember
 from ..artifacts.safetensors_io import UNSAFE_WEIGHT_PATTERNS
-from ..eval._descriptor_bundle import EntryIdentity, hash_relative_file, open_bundle
+from ..eval._descriptor_bundle import (  # noinspection PyProtectedMember
+    EntryIdentity,
+    hash_relative_file,
+    open_bundle,
+)
 from .report import BundleFailure
 from .schema import BUNDLE_INVENTORY_NAME, BUNDLE_SCHEMA_VERSION, ReproducibilityBundle
 from .verify_errors import json_failure, schema_failure, unknown_schema

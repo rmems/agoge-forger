@@ -6,8 +6,8 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import ValidationError
 
-from .._strict_json import decode_json_object
-from ..split_schema import SplitManifest, sha256_bytes
+from .._strict_json import decode_json_object  # noinspection PyProtectedMember
+from ..split_schema import SplitArtifact, SplitManifest, sha256_bytes
 from .report import BundleFailure
 from .schema import ReproducibilityBundle
 from .verify_errors import json_failure, schema_failure, unknown_schema
@@ -43,12 +43,13 @@ def split_artifact_failures(
     listed = {entry.path: entry for entry in document.files}
     failures: list[BundleFailure] = []
     for name, artifact in manifest.splits.items():
-        entry = listed.get(artifact.path)
+        relative = _split_relative_path(document, artifact.path)
+        entry = listed.get(relative)
         if entry is None:
             failures.append(
                 BundleFailure(
                     code="missing_file",
-                    path=artifact.path,
+                    path=relative,
                     message=f"{name} split artifact is not listed in the bundle inventory",
                 )
             )
@@ -57,8 +58,64 @@ def split_artifact_failures(
             failures.append(
                 BundleFailure(
                     code="split_identity",
-                    path=artifact.path,
+                    path=relative,
                     message=f"{name} split artifact digest does not match the inventory",
                 )
             )
     return failures
+
+
+def split_membership_failures(
+    root: Path,
+    document: ReproducibilityBundle,
+    manifest: SplitManifest,
+) -> list[BundleFailure]:
+    """Recompute each bundled split's records and compare them to declared members."""
+
+    failures: list[BundleFailure] = []
+    for name, artifact in manifest.splits.items():
+        relative = _split_relative_path(document, artifact.path)
+        try:
+            payload, _digest = read_relative(root, PurePosixPath(relative))
+        except (OSError, ValueError) as exc:
+            failures.append(classify_io_error(exc, relative))
+            continue
+        failures.extend(_member_failures(relative, name, artifact, payload))
+    return failures
+
+
+def _split_relative_path(document: ReproducibilityBundle, artifact_path: str) -> str:
+    manifest_dir = PurePosixPath(document.split_manifest_path).parent
+    return (manifest_dir / artifact_path).as_posix()
+
+
+def _member_failures(
+    relative: str,
+    name: str,
+    artifact: SplitArtifact,
+    payload: bytes,
+) -> list[BundleFailure]:
+    lines = [line for line in payload.splitlines(keepends=True) if line.strip()]
+    if len(lines) != artifact.record_count:
+        return [
+            BundleFailure(
+                code="split_identity",
+                path=relative,
+                message=(
+                    f"{name} split record count differs from the manifest: "
+                    f"expected {artifact.record_count}, found {len(lines)}"
+                ),
+            )
+        ]
+    if any(
+        sha256_bytes(line) != member.raw_line_sha256
+        for line, member in zip(lines, artifact.members, strict=True)
+    ):
+        return [
+            BundleFailure(
+                code="split_identity",
+                path=relative,
+                message=(f"{name} split records do not match the manifest member digests"),
+            )
+        ]
+    return []
