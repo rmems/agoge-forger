@@ -48,37 +48,50 @@ _REQUIRED_MANIFEST_FIELDS: dict[str, type] = {
 
 
 def _run_manifest_field_failures(path: str, payload: dict[str, Any]) -> list[BundleFailure]:
-    failures: list[BundleFailure] = []
-    for field, kind in _REQUIRED_MANIFEST_FIELDS.items():
-        if field not in payload:
-            failures.append(
-                BundleFailure(
-                    code="run_manifest",
-                    path=path,
-                    message=f"run manifest is missing required field {field!r}",
-                )
-            )
-        elif not isinstance(payload[field], kind):
-            failures.append(
-                BundleFailure(
-                    code="run_manifest",
-                    path=path,
-                    message=f"run manifest field {field!r} must be a {kind.__name__}",
-                )
-            )
-    timestamp = payload.get("timestamp")
-    if isinstance(timestamp, str):
-        try:
-            datetime.fromisoformat(timestamp)
-        except ValueError:
-            failures.append(
-                BundleFailure(
-                    code="run_manifest",
-                    path=path,
-                    message="run manifest timestamp must be ISO-8601",
-                )
-            )
+    failures = [
+        failure
+        for field, kind in _REQUIRED_MANIFEST_FIELDS.items()
+        if (failure := _manifest_field_failure(path, payload, field, kind)) is not None
+    ]
+    failures.extend(_timestamp_failures(path, payload.get("timestamp")))
     return failures
+
+
+def _manifest_field_failure(
+    path: str,
+    payload: dict[str, Any],
+    field: str,
+    kind: type,
+) -> BundleFailure | None:
+    if field not in payload:
+        return BundleFailure(
+            code="run_manifest",
+            path=path,
+            message=f"run manifest is missing required field {field!r}",
+        )
+    if not isinstance(payload[field], kind):
+        return BundleFailure(
+            code="run_manifest",
+            path=path,
+            message=f"run manifest field {field!r} must be a {kind.__name__}",
+        )
+    return None
+
+
+def _timestamp_failures(path: str, timestamp: Any) -> list[BundleFailure]:
+    if not isinstance(timestamp, str):
+        return []
+    try:
+        datetime.fromisoformat(timestamp)
+    except ValueError:
+        return [
+            BundleFailure(
+                code="run_manifest",
+                path=path,
+                message="run manifest timestamp must be ISO-8601",
+            )
+        ]
+    return []
 
 
 def _locked_config_match_failures(
