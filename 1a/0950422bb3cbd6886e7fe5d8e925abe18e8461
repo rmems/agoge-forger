@@ -1,0 +1,34 @@
+tests/test_telemetry_callback_timing.py
+  s_341bff81dd5a3a::t_8fe5830e8b442a 136
+  s_341bff81dd5a3a::t_ef14bbdd99f4b6 5,97-135,137-138
+src/agoge_forger/telemetry/session.py
+  s_341bff81dd5a3a::t_9f277001b6b46b 49,79,81,83,93-95
+tests/test_telemetry_callback.py
+  s_341bff81dd5a3a::t_ef14bbdd99f4b6 61-98
+  s_341bff81dd5a3a::t_8fe5830e8b442a 114
+src/agoge_forger/profile_window.py
+  s_341bff81dd5a3a::t_9f277001b6b46b 3,7-8
+tests/test_telemetry_session.py
+  s_341bff81dd5a3a::t_ef14bbdd99f4b6 246-283
+tests/test_telemetry_config.py
+  s_341bff81dd5a3a::t_ef14bbdd99f4b6 208-225
+src/agoge_forger/telemetry/callback.py
+  s_341bff81dd5a3a::t_9f277001b6b46b 30-32,78,103-105,108,170-172,213-215,218-223,225-238
+  s_341bff81dd5a3a::t_8fe5830e8b442a 55,95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1a0950422bb3cbd6886e7fe5d8e925abe18e8461",
+  "prompts": {},
+  "sessions": {
+    "s_341bff81dd5a3a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b991-cbcd-7782-9d3c-2cc8b05c137f",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
