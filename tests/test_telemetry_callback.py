@@ -39,6 +39,24 @@ def test_unstarted_window_does_not_emit_end(tmp_path, monkeypatch):
     assert "profile_window_end" not in events
 
 
+def test_resume_inside_unstarted_window_does_not_emit_window_reference(tmp_path, monkeypatch):
+    session, callback = _callback_session(
+        tmp_path,
+        monkeypatch,
+        "resume-inside",
+        ProfileWindowConfig(enabled=True, phase="train", start_step=1, end_step=2),
+    )
+    state = SimpleNamespace(global_step=1)
+
+    callback.on_step_begin(None, state, None)
+    callback.on_log(None, SimpleNamespace(global_step=2), None, logs={"loss": 0.5})
+
+    rows = [json.loads(line) for line in session.markers_path.read_text().splitlines()]
+    correlated = [row for row in rows if row["event"] in {"step_begin", "step_end"}]
+    assert correlated
+    assert all("profile_window_ref" not in row for row in correlated)
+
+
 def test_aggregate_training_log_is_not_emitted_as_step_end(tmp_path, monkeypatch):
     session, callback = _callback_session(
         tmp_path,

@@ -88,7 +88,7 @@ class TrainingCorrelationCallback(TrainerCallback):
 
     def _emit_step_begin(self, upcoming: int) -> None:
         extras = {}
-        if window_covers_step(self._session.window, upcoming):
+        if self._window_started and window_covers_step(self._session.window, upcoming):
             extras["profile_window_ref"] = self._session.window_id
         self._session.emit("step_begin", phase=TRAIN_PHASE, global_step=upcoming, extras=extras)
 
@@ -107,7 +107,7 @@ class TrainingCorrelationCallback(TrainerCallback):
             "loss": loss_measurement(logs),
             "tokens_accepted": tokens_accepted,
         }
-        if window_covers_step(self._session.window, step):
+        if self._window_started and window_covers_step(self._session.window, step):
             extras["profile_window_ref"] = self._session.window_id
         event = "eval_log" if phase == "eval" else "step_end"
         self._session.emit(event, phase=phase, global_step=step, extras=extras)
