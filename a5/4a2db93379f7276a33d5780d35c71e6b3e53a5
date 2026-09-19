@@ -1,0 +1,21 @@
+tests/test_telemetry_callback.py
+  s_341bff81dd5a3a::t_5ab6cfa6000f40 103,107,112-116,119,122
+src/agoge_forger/telemetry/callback.py
+  s_341bff81dd5a3a::t_5ab6cfa6000f40 110-112,267-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a54a2db93379f7276a33d5780d35c71e6b3e53a5",
+  "prompts": {},
+  "sessions": {
+    "s_341bff81dd5a3a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0b991-cbcd-7782-9d3c-2cc8b05c137f",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Raul Cardenas Montoya <montoyaraul34@gmail.com>"
+    }
+  }
+}
