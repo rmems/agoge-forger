@@ -140,6 +140,7 @@ _HARNESS_EXCEPTIONS = (
     InjectedExportError,
     IncompleteCheckpointError,
     OSError,
+    ValueError,
 )
 
 
@@ -211,11 +212,11 @@ def run_fault_harness(config: HarnessConfig) -> HarnessResult:
     run_dir = Path(config.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     _seed_rng(config.seed)
-    start_step, sampler_position, optimizer, scheduler = _restore_or_initialize(config, run_dir)
     error_type: str | None = None
     export_published = False
     completed = False
     try:
+        start_step, sampler_position, optimizer, scheduler = _restore_or_initialize(config, run_dir)
         _run_steps(
             config,
             run_dir,
@@ -251,16 +252,40 @@ def _restore_or_initialize(
     config: HarnessConfig, run_dir: Path
 ) -> tuple[int, int, dict[str, Any], dict[str, Any]]:
     if not config.resume:
-        return 0, 0, _optimizer_state(step=1), _scheduler_state(step=0)
+        return _fresh_loop_state()
     inspection = select_resume_checkpoint(run_dir, restore=True)
-    start_step = inspection.global_step or 0
-    sampler_position = inspection.sampler_position or 0
-    return (
-        start_step,
-        sampler_position,
-        _load_mapping(inspection, "optimizer.pt") or _optimizer_state(step=max(start_step, 1)),
-        _load_mapping(inspection, "scheduler.pt") or _scheduler_state(step=start_step),
-    )
+    if inspection.checkpoint is None:
+        return _fresh_loop_state()
+    return _loop_state_from_inspection(inspection)
+
+
+def _fresh_loop_state() -> tuple[int, int, dict[str, Any], dict[str, Any]]:
+    return 0, 0, _optimizer_state(step=1), _scheduler_state(step=0)
+
+
+def _loop_state_from_inspection(
+    inspection: ResumeInspection,
+) -> tuple[int, int, dict[str, Any], dict[str, Any]]:
+    _require_equivalent_resume(inspection)
+    optimizer, scheduler = _require_restored_mappings(inspection)
+    return inspection.global_step or 0, inspection.sampler_position or 0, optimizer, scheduler
+
+
+def _require_equivalent_resume(inspection: ResumeInspection) -> None:
+    if inspection.equivalent:
+        return
+    reason = inspection.reason or "required trainer state is missing"
+    raise ValueError(f"cannot resume from incomplete checkpoint: {reason}")
+
+
+def _require_restored_mappings(
+    inspection: ResumeInspection,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    optimizer = _load_mapping(inspection, "optimizer.pt", require_data_record=True)
+    scheduler = _load_mapping(inspection, "scheduler.pt", require_data_record=False)
+    if optimizer is None or scheduler is None:
+        raise ValueError("cannot resume: restored optimizer or scheduler payload is missing")
+    return optimizer, scheduler
 
 
 def _run_steps(config: HarnessConfig, run_dir: Path, loop: _LoopState) -> None:
@@ -316,6 +341,10 @@ def _publish_run_root_adapter(config: HarnessConfig, run_dir: Path, staged: Path
     staged.mkdir()
     _write_adapter_files(staged)
     _raise_if_fault(config.fault, config.max_steps, "during_export")
+    for filename in _ADAPTER_FILENAMES:
+        destination = run_dir / filename
+        if os.path.lexists(destination):
+            raise FileExistsError(f"refusing to overwrite existing adapter file: {destination}")
     published: list[Path] = []
     for filename in _ADAPTER_FILENAMES:
         destination = run_dir / filename
@@ -501,10 +530,18 @@ def _advance_scheduler(state: Mapping[str, Any], step: int) -> dict[str, Any]:
     return advanced
 
 
-def _load_mapping(inspection: ResumeInspection, filename: str) -> dict[str, Any] | None:
+def _load_mapping(
+    inspection: ResumeInspection,
+    filename: str,
+    *,
+    require_data_record: bool,
+) -> dict[str, Any] | None:
     if inspection.checkpoint is None:
         return None
-    payload = torch_mapping(inspection.checkpoint / filename, require_data_record=True)
+    payload = torch_mapping(
+        inspection.checkpoint / filename,
+        require_data_record=require_data_record,
+    )
     return payload if isinstance(payload, dict) else None
 
 

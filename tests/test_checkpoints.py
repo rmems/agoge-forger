@@ -45,7 +45,9 @@ def test_find_latest_valid_checkpoint_skips_incomplete_entries(tmp_path):
 def _write_legacy_bin_checkpoint(root, step, base_model="Qwen/Qwen3.5-0.5B"):
     checkpoint_dir = root / f"checkpoint-{step}"
     checkpoint_dir.mkdir(parents=True)
-    (checkpoint_dir / "trainer_state.json").write_text("{}")
+    (checkpoint_dir / "trainer_state.json").write_text(
+        f'{{"global_step": {step}, "train_batch_size": 1}}'
+    )
     (checkpoint_dir / "adapter_model.bin").write_text("legacy")
     (checkpoint_dir / "adapter_config.json").write_text(
         f'{{"base_model_name_or_path": "{base_model}"}}'

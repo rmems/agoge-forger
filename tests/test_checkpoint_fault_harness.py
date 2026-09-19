@@ -428,8 +428,10 @@ def test_resolve_resume_checkpoint_skips_truncated_newest_weights(tmp_path: Path
     )
     newest = run_dir / "checkpoint-4"
     newest.mkdir()
-    for name in ("trainer_state.json", "adapter_config.json", ADAPTER_WEIGHT_FILES[0]):
-        (newest / name).write_bytes((run_dir / "checkpoint-2" / name).read_bytes())
+    (newest / "trainer_state.json").write_text('{"global_step": 4, "train_batch_size": 1}\n')
+    (newest / "adapter_config.json").write_bytes(
+        (run_dir / "checkpoint-2" / "adapter_config.json").read_bytes()
+    )
     (newest / ADAPTER_WEIGHT_FILES[0]).write_bytes(b"\0\0\0\0")
 
     class Runtime:
@@ -458,11 +460,80 @@ def test_select_resume_skips_malformed_newest_trainer_state(tmp_path: Path) -> N
 
     inspection = select_resume_checkpoint(run_dir)
 
-    assert is_valid_checkpoint(newest) is True
-    assert find_latest_valid_checkpoint(run_dir) == newest.resolve()
+    assert not newest.exists()
+    assert "malformed_trainer_state" in _reasons(run_dir)
     assert inspection.checkpoint == (run_dir / "checkpoint-2").resolve()
     assert inspection.equivalent is True
-    assert inspect_resume_state(newest).equivalent is False
+
+
+def test_sampler_position_rejects_sidecar_step_mismatch(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_fault_harness(
+        _config(run_dir, max_steps=2, fault=FaultSpec(step=2, point="after_save", kind="oom"))
+    )
+    sidecar = run_dir / "checkpoint-2" / RESUME_SIDECAR_FILENAME
+    payload = json.loads(sidecar.read_text())
+    payload["global_step"] = 99
+    sidecar.write_text(json.dumps(payload) + "\n")
+
+    inspection = inspect_resume_state(run_dir / "checkpoint-2")
+
+    assert inspection.equivalent is False
+    assert "sampler_position" in inspection.missing
+
+
+def test_explicit_resume_rejects_truncated_adapter_weights(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_fault_harness(
+        _config(run_dir, max_steps=2, fault=FaultSpec(step=2, point="after_save", kind="oom"))
+    )
+    checkpoint = run_dir / "checkpoint-2"
+    (checkpoint / ADAPTER_WEIGHT_FILES[0]).write_bytes(b"\0\0\0\0")
+
+    class Runtime:
+        allow_unsafe_serialization = False
+
+    class Training:
+        resume_checkpoint_path = str(checkpoint)
+        resume_from_latest_checkpoint = False
+
+    class Config:
+        runtime = Runtime()
+        training = Training()
+
+    with pytest.raises(ValueError, match="not usable \\(short_write\\)"):
+        resolve_resume_checkpoint(str(run_dir), Config())
+
+
+def test_quarantine_root_refuses_symlink(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    target = tmp_path / "outside-quarantine"
+    target.mkdir()
+    (run_dir / ".agoge-quarantine").symlink_to(target, target_is_directory=True)
+    source = run_dir / "checkpoint-3"
+    source.mkdir()
+
+    with pytest.raises(ValueError, match="symlinked path"):
+        quarantine_tree(source, reason="interrupted_save", run_dir=run_dir)
+
+    assert source.is_dir()
+    assert not (target / QUARANTINE_REASON_FILENAME).exists()
+
+
+def test_harness_refuses_resume_when_required_state_is_missing(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_fault_harness(
+        _config(run_dir, max_steps=2, fault=FaultSpec(step=2, point="after_save", kind="oom"))
+    )
+    (run_dir / "checkpoint-2" / "optimizer.pt").unlink()
+
+    result = run_fault_harness(_config(run_dir, max_steps=2))
+
+    assert result.completed is False
+    assert result.error_type == "ValueError"
+    assert result.resume.equivalent is False
+    assert "optimizer" in result.resume.missing
 
 
 def test_sampler_position_is_missing_without_sidecar(tmp_path: Path) -> None:

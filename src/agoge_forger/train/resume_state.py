@@ -20,9 +20,11 @@ from .._run_status_trainer_state import _optimizer_payload_usable, _scheduler_pa
 from .._run_status_validation import adapter_optimizer_shapes
 from .checkpoints import (
     ADAPTER_WEIGHT_FILES,
+    LEGACY_ADAPTER_WEIGHT_FILES,
     PathLike,
     list_valid_checkpoints,
     quarantine_incomplete_checkpoints,
+    quarantine_tree,
 )
 
 RESUME_SIDECAR_FILENAME = "agoge_resume.json"
@@ -83,12 +85,25 @@ def select_resume_checkpoint(
     """Quarantine incompletes, then inspect the latest equivalent checkpoint."""
     quarantine_incomplete_checkpoints(run_dir, allow_unsafe=allow_unsafe)
     candidates = list(reversed(list_valid_checkpoints(run_dir, allow_unsafe=allow_unsafe)))
+    selected: ResumeInspection | None = None
+    skipped: list[tuple[Path, ResumeInspection]] = []
     for checkpoint in candidates:
         inspection = inspect_resume_state(checkpoint, restore=False, allow_unsafe=allow_unsafe)
         if inspection.equivalent:
-            if not restore:
-                return inspection
-            return inspect_resume_state(checkpoint, restore=True, allow_unsafe=allow_unsafe)
+            selected = inspection
+            break
+        skipped.append((Path(checkpoint), inspection))
+    if selected is not None:
+        for checkpoint, inspection in skipped:
+            quarantine_tree(
+                checkpoint,
+                reason="non_equivalent_resume",
+                run_dir=run_dir,
+                details={"missing": list(inspection.missing)},
+            )
+        if not restore:
+            return selected
+        return inspect_resume_state(selected.checkpoint, restore=True, allow_unsafe=allow_unsafe)
     latest = candidates[0] if candidates else None
     return inspect_resume_state(latest, restore=restore, allow_unsafe=allow_unsafe)
 
@@ -119,7 +134,7 @@ def _resume_inventory(checkpoint: Path, *, restore: bool, allow_unsafe: bool) ->
     global_step = _trainer_state_step(checkpoint)
     _record_field("global_step", global_step is not None, restored, missing)
     sidecar = _load_sidecar(checkpoint)
-    sampler_position = _sampler_position(sidecar)
+    sampler_position = _sampler_position(sidecar, global_step)
     _record_field("sampler_position", sampler_position is not None, restored, missing)
     _record_field(
         "optimizer",
@@ -136,7 +151,7 @@ def _resume_inventory(checkpoint: Path, *, restore: bool, allow_unsafe: bool) ->
     _record_field("rng", rng_ok, restored, missing)
     _record_field(
         "adapter_weights",
-        all(safetensors_usable(checkpoint / name) for name in ADAPTER_WEIGHT_FILES),
+        _adapter_weights_usable(checkpoint, allow_unsafe=allow_unsafe),
         restored,
         missing,
     )
@@ -161,10 +176,21 @@ def _load_sidecar(checkpoint: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _sampler_position(sidecar: dict[str, Any] | None) -> int | None:
+def _sampler_position(sidecar: dict[str, Any] | None, global_step: int | None) -> int | None:
     if sidecar is None:
         return None
+    sidecar_step = _nonneg_int(sidecar.get("global_step"))
+    if global_step is not None and sidecar_step is not None and sidecar_step != global_step:
+        return None
     return _nonneg_int(sidecar.get("sampler_position"))
+
+
+def _adapter_weights_usable(checkpoint: Path, *, allow_unsafe: bool) -> bool:
+    if all(safetensors_usable(checkpoint / name) for name in ADAPTER_WEIGHT_FILES):
+        return True
+    if not allow_unsafe:
+        return False
+    return any((checkpoint / name).is_file() for name in LEGACY_ADAPTER_WEIGHT_FILES)
 
 
 def _nonneg_int(value: Any) -> int | None:

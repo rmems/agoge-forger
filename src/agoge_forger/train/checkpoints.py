@@ -9,6 +9,7 @@ from typing import Any
 
 from .._atomic_file import publish_bytes_replace
 from .._run_status_safetensors import safetensors_usable
+from .._run_status_trainer_metadata import _trainer_state_step
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..config import normalize_revision
 from ..logging import logger
@@ -153,7 +154,10 @@ def incomplete_checkpoint_reason(path: PathLike, *, allow_unsafe: bool = False) 
         return None
     if not is_valid_checkpoint(checkpoint_dir, allow_unsafe=allow_unsafe):
         return _checkpoint_gap_reason(checkpoint_dir, allow_unsafe=allow_unsafe)
-    return _unreadable_weight_reason(checkpoint_dir)
+    metadata_reason = _malformed_metadata_reason(checkpoint_dir)
+    if metadata_reason is not None:
+        return metadata_reason
+    return _unreadable_weight_reason(checkpoint_dir, allow_unsafe=allow_unsafe)
 
 
 def _is_named_checkpoint_dir(path: Path) -> bool:
@@ -179,16 +183,47 @@ def _has_adapter_weights(adapter_dir: Path, *, allow_unsafe: bool) -> bool:
     return any((adapter_dir / weight_file).is_file() for weight_file in weight_files)
 
 
-def _unreadable_weight_reason(checkpoint_dir: Path) -> str | None:
-    for name in ADAPTER_WEIGHT_FILES:
-        path = checkpoint_dir / name
-        if path.is_file() and not safetensors_usable(path):
-            return "short_write"
+def _malformed_metadata_reason(checkpoint_dir: Path) -> str | None:
+    if _trainer_state_step(checkpoint_dir) is None:
+        return "malformed_trainer_state"
     return None
 
 
+def _unreadable_weight_reason(checkpoint_dir: Path, *, allow_unsafe: bool = False) -> str | None:
+    safetensors_present = False
+    for name in ADAPTER_WEIGHT_FILES:
+        path = checkpoint_dir / name
+        if not path.is_file():
+            continue
+        safetensors_present = True
+        if not safetensors_usable(path):
+            return "short_write"
+    if safetensors_present:
+        return None
+    if allow_unsafe and any(
+        (checkpoint_dir / name).is_file() for name in LEGACY_ADAPTER_WEIGHT_FILES
+    ):
+        return None
+    return "missing_adapter_weights"
+
+
 def quarantine_root(run_dir: PathLike) -> Path:
-    return Path(run_dir) / QUARANTINE_DIRNAME
+    root = Path(run_dir) / QUARANTINE_DIRNAME
+    if root.is_symlink():
+        raise ValueError(f"Refusing to quarantine through a symlinked path: {root}")
+    return root
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _utc_path_stamp() -> str:
+    now = datetime.now(timezone.utc)
+    return (
+        f"{now.year:04d}{now.month:02d}{now.day:02d}"
+        f"T{now.hour:02d}{now.minute:02d}{now.second:02d}{now.microsecond:06d}Z"
+    )
 
 
 def list_quarantined_checkpoints(run_dir: PathLike) -> list[Path]:
@@ -225,7 +260,7 @@ def quarantine_tree(
         "schema_version": 1,
         "reason": reason,
         "original_path": str(source),
-        "quarantined_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "quarantined_at": _utc_timestamp(),
         "details": dict(details or {}),
     }
     encoded = (json.dumps(payload, indent=2) + "\n").encode()
@@ -253,7 +288,7 @@ def _refuse_quarantine_mount(source: Path) -> None:
 
 
 def _unique_quarantine_destination(run_dir: Path, original_name: str, reason: str) -> Path:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    stamp = _utc_path_stamp()
     root = quarantine_root(run_dir)
     for suffix in range(1000):
         marker = stamp if suffix == 0 else f"{stamp}-{suffix}"
@@ -313,17 +348,14 @@ def _quarantine_staging_tree(run_dir: Path, staging: Path, *, allow_unsafe: bool
 
 def resolve_resume_checkpoint(run_dir: str, config) -> str | None:
     allow_unsafe = config.runtime.allow_unsafe_serialization
-    quarantine_incomplete_checkpoints(run_dir, allow_unsafe=allow_unsafe)
 
     if config.training.resume_checkpoint_path:
-        checkpoint_path = str(
-            resolve_existing_path(config.training.resume_checkpoint_path, must_be_dir=True)
+        return _resolve_explicit_resume_checkpoint(
+            config.training.resume_checkpoint_path,
+            allow_unsafe=allow_unsafe,
         )
-        if not is_valid_checkpoint(checkpoint_path, allow_unsafe=allow_unsafe):
-            raise ValueError(f"Configured resume checkpoint is not valid: {checkpoint_path}")
-        logger.info(f"Resuming from explicit checkpoint {checkpoint_path}")
-        return checkpoint_path
 
+    quarantine_incomplete_checkpoints(run_dir, allow_unsafe=allow_unsafe)
     if not config.training.resume_from_latest_checkpoint:
         return None
 
@@ -333,6 +365,24 @@ def resolve_resume_checkpoint(run_dir: str, config) -> str | None:
         return str(latest)
     logger.info(f"No valid checkpoints found under {run_dir}; starting a fresh run.")
     return None
+
+
+def _resolve_explicit_resume_checkpoint(path: str, *, allow_unsafe: bool) -> str:
+    checkpoint_path = str(resolve_existing_path(path, must_be_dir=True))
+    if not is_valid_checkpoint(checkpoint_path, allow_unsafe=allow_unsafe):
+        raise ValueError(f"Configured resume checkpoint is not valid: {checkpoint_path}")
+    weight_reason = _unreadable_weight_reason(Path(checkpoint_path), allow_unsafe=allow_unsafe)
+    if weight_reason is not None:
+        raise ValueError(
+            f"Configured resume checkpoint is not usable ({weight_reason}): {checkpoint_path}"
+        )
+    metadata_reason = _malformed_metadata_reason(Path(checkpoint_path))
+    if metadata_reason is not None:
+        raise ValueError(
+            f"Configured resume checkpoint is not usable ({metadata_reason}): {checkpoint_path}"
+        )
+    logger.info(f"Resuming from explicit checkpoint {checkpoint_path}")
+    return checkpoint_path
 
 
 def resolve_export_source(
