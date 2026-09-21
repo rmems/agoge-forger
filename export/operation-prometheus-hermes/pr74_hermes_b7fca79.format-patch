@@ -1,0 +1,4329 @@
+From 939e80b14782fe4fe3893993090498e12a962a9c Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Mon, 21 Sep 2026 16:28:15 +0000
+Subject: [PATCH 1/2] feat(ingest): normalize verified Hermes local-agent
+ trajectories
+
+Rebuild PR #74 from locked main for RM-1348: trajectory v1.1 and Hermes
+run-manifest schemas, a local-file normalize CLI, synthetic fixtures, and
+raw-trace/reasoning custody docs. Preserve existing v0 and v1.0 behavior.
+---
+ docs/hermes-raw-trace-custody.md              |  50 +
+ docs/hermes-reasoning-retention.md            |  47 +
+ schemas/hermes_raw_trace.schema.json          |  93 ++
+ schemas/hermes_run_manifest.schema.json       | 127 +++
+ schemas/trajectory_v1_1.schema.json           | 406 +++++++
+ scripts/lib/hermes_normalize.py               | 997 ++++++++++++++++++
+ scripts/lib/hermes_sanitize.py                | 100 ++
+ scripts/normalize_hermes_trajectories.py      |  89 ++
+ scripts/validate_jsonl.py                     |  93 +-
+ .../completed_true_verifier_failed.jsonl      |   1 +
+ tests/fixtures/hermes/duplicate_keys.jsonl    |   1 +
+ tests/fixtures/hermes/duplicate_records.jsonl |   2 +
+ tests/fixtures/hermes/hidden_reasoning.jsonl  |   1 +
+ tests/fixtures/hermes/interrupted.jsonl       |   1 +
+ .../hermes/local_model_admission_v1.json      |  35 +
+ tests/fixtures/hermes/malformed.jsonl         |   1 +
+ tests/fixtures/hermes/partial.jsonl           |   1 +
+ tests/fixtures/hermes/query_secret.jsonl      |   1 +
+ tests/fixtures/hermes/secret_leak.jsonl       |   1 +
+ tests/fixtures/hermes/successful.jsonl        |   1 +
+ tests/fixtures/hermes/truncated.jsonl         |   1 +
+ tests/fixtures/hermes/unverified.jsonl        |   1 +
+ tests/hermes_fixtures.py                      | 248 +++++
+ tests/test_normalize_hermes_trajectories.py   | 677 ++++++++++++
+ tests/test_trajectory_v1_1_schema.py          | 124 +++
+ 25 files changed, 3082 insertions(+), 17 deletions(-)
+ create mode 100644 docs/hermes-raw-trace-custody.md
+ create mode 100644 docs/hermes-reasoning-retention.md
+ create mode 100644 schemas/hermes_raw_trace.schema.json
+ create mode 100644 schemas/hermes_run_manifest.schema.json
+ create mode 100644 schemas/trajectory_v1_1.schema.json
+ create mode 100644 scripts/lib/hermes_normalize.py
+ create mode 100644 scripts/lib/hermes_sanitize.py
+ create mode 100644 scripts/normalize_hermes_trajectories.py
+ create mode 100644 tests/fixtures/hermes/completed_true_verifier_failed.jsonl
+ create mode 100644 tests/fixtures/hermes/duplicate_keys.jsonl
+ create mode 100644 tests/fixtures/hermes/duplicate_records.jsonl
+ create mode 100644 tests/fixtures/hermes/hidden_reasoning.jsonl
+ create mode 100644 tests/fixtures/hermes/interrupted.jsonl
+ create mode 100644 tests/fixtures/hermes/local_model_admission_v1.json
+ create mode 100644 tests/fixtures/hermes/malformed.jsonl
+ create mode 100644 tests/fixtures/hermes/partial.jsonl
+ create mode 100644 tests/fixtures/hermes/query_secret.jsonl
+ create mode 100644 tests/fixtures/hermes/secret_leak.jsonl
+ create mode 100644 tests/fixtures/hermes/successful.jsonl
+ create mode 100644 tests/fixtures/hermes/truncated.jsonl
+ create mode 100644 tests/fixtures/hermes/unverified.jsonl
+ create mode 100644 tests/hermes_fixtures.py
+ create mode 100644 tests/test_normalize_hermes_trajectories.py
+ create mode 100644 tests/test_trajectory_v1_1_schema.py
+
+diff --git a/docs/hermes-raw-trace-custody.md b/docs/hermes-raw-trace-custody.md
+new file mode 100644
+index 0000000..4dd1c96
+--- /dev/null
++++ b/docs/hermes-raw-trace-custody.md
+@@ -0,0 +1,50 @@
++# Hermes raw-trace custody
++
++Operation Prometheus may ingest **deliberately supplied, bounded local Hermes
++agent traces**. Personal conversations, live chat history, and opportunistic
++scrapes are out of scope.
++
++## What may be committed
++
++- Small, invented synthetic fixtures under `tests/fixtures/hermes/`.
++- Canonical trajectory v1.1 JSONL produced by
++  `scripts/normalize_hermes_trajectories.py`.
++- Machine-readable accepted/quarantined/rejected decision reports from that
++  command.
++
++Raw Hermes session dumps, Ollama prompt caches, and verifier working trees stay
++**outside Git**. Prefer `$PROMETHEUS_DATA_ROOT/hermes/raw/` or an equivalent
++local path that is already gitignored.
++
++## Binding, not collection
++
++The normalizer is a local-file tool. It hashes the frozen input bytes and binds
++them onto `execution_provenance`:
++
++- Hermes producer name, version, and revision
++- nonempty run, session, task, and raw-trace identities plus the raw-trace
++  SHA-256
++- the exact admitted model identity plus the SHA-256 of the `--model-admission`
++  report (`schema_version: local_model_admission_v1`, singular `decision`,
++  `reasons`, model/runtime/rights/provider/fallback/probe evidence, and frozen
++  `input_digests`)
++- Ollama runtime identity and allowlisted, sanitized configuration
++- repository base/head revisions and isolated-workspace identity from the
++  frozen run manifest (conflicting trace values are rejected)
++- reasoning-retention policy
++- independent verifier identity, version, outcome, and artifact hashes from the
++  frozen run manifest (trace self-assertions are not authoritative; conflicts
++  are rejected)
++
++It does not start Hermes, pull models, or contact a network service. Tests
++inject a local-file replay boundary; HTTP URLs are refused.
++
++## Fail closed
++
++Duplicate JSON keys, duplicate run identities, malformed or truncated JSONL,
++empty input, file-level manifest/admission errors, secret or credential
++leakage (including structured keys, manifest-derived Ollama/provider fields,
++and credential-bearing URL paths), home-path leakage, admission-digest
++mismatch, and output/input (including hard-link) collisions never become
++accepted training rows. Unverifiable runs are quarantined rather than treated
++as successful. Canonical output is written as UTF-8 bytes with explicit LF.
+diff --git a/docs/hermes-reasoning-retention.md b/docs/hermes-reasoning-retention.md
+new file mode 100644
+index 0000000..df28fd5
+--- /dev/null
++++ b/docs/hermes-reasoning-retention.md
+@@ -0,0 +1,47 @@
++# Hermes reasoning retention and independent verification
++
++## Hidden reasoning is not a trainable view
++
++Hermes traces may contain `<think>…</think>` blocks or equivalent hidden
++reasoning fields (`reasoning`, `hidden_reasoning`, `thinking`, `thought`,
++including case variants). Those spans are producer-internal. They must not
++appear in canonical trajectory v1.1 events, software payloads, or other
++trainable surfaces.
++
++`scripts/normalize_hermes_trajectories.py` case-folds and strips hidden
++reasoning before emit and records the retention policy on
++`execution_provenance.reasoning_retention`. A record that still contains hidden
++reasoning after stripping is rejected. Manifest values are sanitized and
++scanned the same way.
++
++Raw traces that retain hidden reasoning stay outside Git (see
++[hermes-raw-trace-custody.md](hermes-raw-trace-custody.md)).
++
++## Hermes completion is not task success
++
++Hermes `completed` and `partial` flags are **execution metadata** only. They
++must be JSON booleans and are copied onto `execution.producer_completed` /
++`execution.producer_partial`. Missing, empty, or coerced values are rejected.
++
++`terminal_disposition` is set exclusively from the frozen run-manifest
++independent verifier (identity distinct from the Hermes producer, version,
++outcome, and at least one validated artifact hash):
++
++| Verifier outcome | `terminal_disposition` |
++| --- | --- |
++| pass / successful / verified | `successful` |
++| fail / failed / error | `failed` |
++| interrupted / timeout / incomplete | `interrupted` |
++| missing / null / unknown | quarantined as unverifiable |
++
++A run with `completed=true` and a failing verifier is a **failed** trajectory.
++It cannot be emitted as `successful`. Trace-embedded verifier objects that
++conflict with the manifest are rejected.
++
++## Deterministic normalization
++
++Repeated invocation on the same frozen `--input`, `--run-manifest`, and
++`--model-admission` bytes must produce byte-identical `--output` JSONL and
++`--report` JSON. Output objects are canonical sorted JSON written as UTF-8
++bytes with stable separators and explicit LF. Secret query keys are dropped
++from embedded URLs before emit; credential-bearing URL paths fail closed.
+diff --git a/schemas/hermes_raw_trace.schema.json b/schemas/hermes_raw_trace.schema.json
+new file mode 100644
+index 0000000..72beafa
+--- /dev/null
++++ b/schemas/hermes_raw_trace.schema.json
+@@ -0,0 +1,93 @@
++{
++  "$schema": "http://json-schema.org/draft-07/schema#",
++  "$id": "https://github.com/rmems/operation-prometheus/schemas/hermes_raw_trace.schema.json",
++  "title": "Raw Hermes trace record",
++  "description": "Strict per-line Hermes JSONL object accepted by the v1.1 normalizer.",
++  "definitions": {
++    "gitObjectId": {
++      "type": "string",
++      "pattern": "^[0-9a-fA-F]{3,64}$"
++    },
++    "sha256": {
++      "type": "string",
++      "pattern": "^[a-f0-9]{64}$"
++    },
++    "identity": {
++      "type": "string",
++      "minLength": 1
++    }
++  },
++  "type": "object",
++  "required": [
++    "run_id",
++    "session_id",
++    "task_id",
++    "raw_trace_id",
++    "completed",
++    "partial",
++    "messages"
++  ],
++  "additionalProperties": false,
++  "properties": {
++    "run_id": { "$ref": "#/definitions/identity" },
++    "session_id": { "$ref": "#/definitions/identity" },
++    "task_id": { "$ref": "#/definitions/identity" },
++    "raw_trace_id": { "$ref": "#/definitions/identity" },
++    "completed": { "type": "boolean" },
++    "partial": { "type": "boolean" },
++    "started_at": { "type": "string", "minLength": 1 },
++    "ended_at": { "type": "string", "minLength": 1 },
++    "issue_statement": { "type": "string" },
++    "messages": {
++      "type": "array",
++      "minItems": 1,
++      "items": {
++        "type": "object",
++        "required": ["role", "content"],
++        "properties": {
++          "role": { "type": "string", "minLength": 1 },
++          "content": { "type": "string" },
++          "name": { "type": "string" },
++          "timestamp": { "type": "string", "minLength": 1 },
++          "reasoning": true,
++          "hidden_reasoning": true,
++          "thinking": true,
++          "thought": true,
++          "thoughts": true
++        }
++      }
++    },
++    "repository": {
++      "type": "object",
++      "additionalProperties": false,
++      "properties": {
++        "owner": { "type": "string", "minLength": 1 },
++        "name": { "type": "string", "minLength": 1 },
++        "url": { "type": "string" },
++        "base_oid": { "$ref": "#/definitions/gitObjectId" },
++        "head_oid": { "$ref": "#/definitions/gitObjectId" }
++      }
++    },
++    "workspace": {
++      "type": "object",
++      "additionalProperties": false,
++      "properties": {
++        "id": { "type": "string", "minLength": 1 },
++        "kind": { "type": "string" }
++      }
++    },
++    "verifier": {
++      "type": "object",
++      "additionalProperties": false,
++      "properties": {
++        "identity": { "type": "string" },
++        "version": { "type": "string" },
++        "outcome": { "type": ["string", "null"] },
++        "artifact_sha256": {
++          "type": "array",
++          "items": { "$ref": "#/definitions/sha256" }
++        }
++      }
++    }
++  }
++}
+diff --git a/schemas/hermes_run_manifest.schema.json b/schemas/hermes_run_manifest.schema.json
+new file mode 100644
+index 0000000..8ae7570
+--- /dev/null
++++ b/schemas/hermes_run_manifest.schema.json
+@@ -0,0 +1,127 @@
++{
++  "$schema": "http://json-schema.org/draft-07/schema#",
++  "$id": "https://github.com/rmems/operation-prometheus/schemas/hermes_run_manifest.schema.json",
++  "title": "Hermes run manifest",
++  "description": "Producer, model, runtime, workspace, and independent verifier bindings for a local Hermes capture.",
++  "definitions": {
++    "sha256": {
++      "type": "string",
++      "pattern": "^[a-f0-9]{64}$"
++    },
++    "gitObjectId": {
++      "type": "string",
++      "pattern": "^[0-9a-fA-F]{3,64}$"
++    },
++    "modelDigest": {
++      "type": "string",
++      "pattern": "^sha256:[a-f0-9]{64}$"
++    },
++    "loopbackEndpoint": {
++      "type": "string",
++      "pattern": "^https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]+)?/?$"
++    }
++  },
++  "type": "object",
++  "additionalProperties": false,
++  "required": [
++    "schema_version",
++    "producer",
++    "model",
++    "admission_report_sha256",
++    "ollama",
++    "repository",
++    "workspace",
++    "reasoning_retention",
++    "verifier"
++  ],
++  "properties": {
++    "schema_version": { "const": "hermes_run_manifest_v1" },
++    "producer": {
++      "type": "object",
++      "additionalProperties": false,
++      "required": ["name", "version", "revision"],
++      "properties": {
++        "name": { "type": "string", "minLength": 1 },
++        "version": { "type": "string", "minLength": 1 },
++        "revision": { "type": "string", "minLength": 1 }
++      }
++    },
++    "model": {
++      "type": "object",
++      "additionalProperties": false,
++      "required": ["name", "tag", "ollama_digest"],
++      "properties": {
++        "name": { "type": "string", "minLength": 1 },
++        "tag": { "type": "string", "minLength": 1 },
++        "ollama_digest": { "$ref": "#/definitions/modelDigest" },
++        "quantization": { "type": "string" }
++      }
++    },
++    "admission_report_sha256": { "$ref": "#/definitions/sha256" },
++    "ollama": {
++      "type": "object",
++      "additionalProperties": false,
++      "required": ["runtime", "version", "endpoint"],
++      "properties": {
++        "runtime": { "type": "string", "minLength": 1 },
++        "version": { "type": "string", "minLength": 1 },
++        "endpoint": { "$ref": "#/definitions/loopbackEndpoint" },
++        "config": {
++          "type": "object",
++          "additionalProperties": false,
++          "properties": {
++            "num_ctx": { "type": "integer" },
++            "keep_alive": { "type": "string" }
++          }
++        }
++      }
++    },
++    "repository": {
++      "type": "object",
++      "additionalProperties": false,
++      "required": ["owner", "name", "base_oid", "head_oid"],
++      "properties": {
++        "owner": { "type": "string", "minLength": 1 },
++        "name": { "type": "string", "minLength": 1 },
++        "url": { "type": "string" },
++        "base_oid": { "$ref": "#/definitions/gitObjectId" },
++        "head_oid": { "$ref": "#/definitions/gitObjectId" }
++      }
++    },
++    "workspace": {
++      "type": "object",
++      "additionalProperties": false,
++      "required": ["id"],
++      "properties": {
++        "id": { "type": "string", "minLength": 1 },
++        "kind": { "type": "string" }
++      }
++    },
++    "reasoning_retention": {
++      "type": "object",
++      "additionalProperties": false,
++      "required": ["policy"],
++      "properties": {
++        "policy": { "const": "strip_hidden" },
++        "strip_tags": {
++          "type": "array",
++          "items": { "type": "string" }
++        }
++      }
++    },
++    "verifier": {
++      "type": "object",
++      "additionalProperties": false,
++      "required": ["identity", "version", "outcome", "artifact_sha256"],
++      "properties": {
++        "identity": { "type": "string", "minLength": 1 },
++        "version": { "type": "string", "minLength": 1 },
++        "outcome": { "type": ["string", "null"] },
++        "artifact_sha256": {
++          "type": "array",
++          "items": { "$ref": "#/definitions/sha256" }
++        }
++      }
++    }
++  }
++}
+diff --git a/schemas/trajectory_v1_1.schema.json b/schemas/trajectory_v1_1.schema.json
+new file mode 100644
+index 0000000..080a2d3
+--- /dev/null
++++ b/schemas/trajectory_v1_1.schema.json
+@@ -0,0 +1,406 @@
++{
++  "$schema": "http://json-schema.org/draft-07/schema#",
++  "$id": "https://github.com/rmems/operation-prometheus/schemas/trajectory_v1_1.schema.json",
++  "title": "Trajectory v1.1",
++  "description": "Producer-neutral trajectory v1.1 envelope with Hermes provenance bindings.",
++  "definitions": {
++    "gitObjectId": {
++      "type": "string",
++      "pattern": "^[0-9a-fA-F]{3,64}$"
++    },
++    "evidenceUrl": {
++      "type": "string",
++      "minLength": 1,
++      "format": "uri"
++    },
++    "sha256": {
++      "type": "string",
++      "pattern": "^[a-f0-9]{64}$"
++    },
++    "modelDigest": {
++      "type": "string",
++      "pattern": "^sha256:[a-f0-9]{64}$"
++    },
++    "loopbackEndpoint": {
++      "type": "string",
++      "pattern": "^https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]+)?/?$"
++    },
++    "identity": {
++      "type": "string",
++      "minLength": 1
++    }
++  },
++  "type": "object",
++  "additionalProperties": false,
++  "required": [
++    "schema_version",
++    "trajectory_id",
++    "trajectory_type",
++    "provider_id",
++    "source_id",
++    "collector_version",
++    "repository",
++    "license",
++    "collection_policy",
++    "terminal_disposition",
++    "execution",
++    "execution_provenance",
++    "events",
++    "artifacts"
++  ],
++  "properties": {
++    "schema_version": { "type": "string", "enum": ["1.1", "v1.1"] },
++    "trajectory_id": { "type": "string" },
++    "trajectory_type": { "enum": ["software", "research"] },
++    "provider_id": { "type": "string" },
++    "source_id": { "type": "string" },
++    "collector_version": { "type": "string" },
++    "repository": {
++      "type": "object",
++      "required": ["owner", "name"],
++      "properties": {
++        "owner": { "type": "string" },
++        "name": { "type": "string" },
++        "url": { "type": "string" },
++        "commit_oid": { "type": "string" },
++        "base_oid": { "type": "string" },
++        "head_oid": { "type": "string" }
++      }
++    },
++    "license": { "type": "string" },
++    "provenance": { "type": "string" },
++    "collection_policy": { "type": "string" },
++    "takedown_state": { "type": "string" },
++    "terminal_disposition": {
++      "enum": [
++        "successful",
++        "failed",
++        "reverted",
++        "falsified",
++        "null",
++        "invalid",
++        "interrupted",
++        "inconclusive"
++      ]
++    },
++    "execution": {
++      "type": "object",
++      "required": ["producer_completed", "producer_partial"],
++      "additionalProperties": false,
++      "properties": {
++        "producer_completed": { "type": "boolean" },
++        "producer_partial": { "type": "boolean" }
++      }
++    },
++    "execution_provenance": {
++      "type": "object",
++      "additionalProperties": false,
++      "required": [
++        "run_id",
++        "session_id",
++        "task_id",
++        "raw_trace_id",
++        "producer",
++        "model",
++        "ollama",
++        "workspace",
++        "reasoning_retention",
++        "verifier",
++        "input_sha256",
++        "admission_report_sha256",
++        "raw_trace_sha256",
++        "run_manifest_sha256"
++      ],
++      "properties": {
++        "run_id": { "$ref": "#/definitions/identity" },
++        "session_id": { "$ref": "#/definitions/identity" },
++        "task_id": { "$ref": "#/definitions/identity" },
++        "raw_trace_id": { "$ref": "#/definitions/identity" },
++        "producer": {
++          "type": "object",
++          "additionalProperties": false,
++          "required": ["name", "version", "revision"],
++          "properties": {
++            "name": { "type": "string", "minLength": 1 },
++            "version": { "type": "string", "minLength": 1 },
++            "revision": { "type": "string", "minLength": 1 }
++          }
++        },
++        "model": {
++          "type": "object",
++          "additionalProperties": false,
++          "required": ["name", "tag", "ollama_digest"],
++          "properties": {
++            "name": { "type": "string", "minLength": 1 },
++            "tag": { "type": "string", "minLength": 1 },
++            "ollama_digest": { "$ref": "#/definitions/modelDigest" },
++            "quantization": { "type": "string" }
++          }
++        },
++        "ollama": {
++          "type": "object",
++          "additionalProperties": false,
++          "required": ["runtime", "version", "endpoint"],
++          "properties": {
++            "runtime": { "type": "string", "minLength": 1 },
++            "version": { "type": "string", "minLength": 1 },
++            "endpoint": { "$ref": "#/definitions/loopbackEndpoint" },
++            "config": {
++              "type": "object",
++              "additionalProperties": false,
++              "properties": {
++                "num_ctx": { "type": "integer" },
++                "keep_alive": { "type": "string" }
++              }
++            }
++          }
++        },
++        "workspace": {
++          "type": "object",
++          "additionalProperties": false,
++          "required": ["id"],
++          "properties": {
++            "id": { "type": "string", "minLength": 1 },
++            "kind": { "type": "string" }
++          }
++        },
++        "reasoning_retention": {
++          "type": "object",
++          "additionalProperties": false,
++          "required": ["policy"],
++          "properties": {
++            "policy": { "const": "strip_hidden" },
++            "strip_tags": { "type": "array", "items": { "type": "string" } }
++          }
++        },
++        "verifier": {
++          "type": "object",
++          "additionalProperties": false,
++          "required": ["identity", "version", "outcome", "artifact_sha256"],
++          "properties": {
++            "identity": { "type": "string", "minLength": 1 },
++            "version": { "type": "string", "minLength": 1 },
++            "outcome": { "type": ["string", "null"] },
++            "artifact_sha256": {
++              "type": "array",
++              "items": { "$ref": "#/definitions/sha256" }
++            }
++          }
++        },
++        "input_sha256": { "$ref": "#/definitions/sha256" },
++        "admission_report_sha256": { "$ref": "#/definitions/sha256" },
++        "raw_trace_sha256": { "$ref": "#/definitions/sha256" },
++        "run_manifest_sha256": { "$ref": "#/definitions/sha256" }
++      }
++    },
++    "evidence_quality": {
++      "type": "object",
++      "properties": {
++        "signal_to_noise": { "type": "number" },
++        "reproducibility": { "type": "number" },
++        "completeness": { "type": "number" }
++      }
++    },
++    "artifacts": {
++      "type": "array",
++      "items": {
++        "type": "object",
++        "required": ["id", "sha256", "media_type", "byte_size", "availability", "reproduction_role"],
++        "properties": {
++          "id": { "type": "string" },
++          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
++          "media_type": { "type": "string" },
++          "byte_size": { "type": "integer", "minimum": 0 },
++          "availability": { "enum": ["inline", "remote", "missing"] },
++          "reproduction_role": { "type": "string" },
++          "content": { "type": "string" },
++          "uri": { "type": "string", "format": "uri" }
++        },
++        "allOf": [
++          {
++            "if": { "properties": { "availability": { "const": "remote" } } },
++            "then": { "required": ["uri"] }
++          },
++          {
++            "if": { "properties": { "availability": { "const": "inline" } } },
++            "then": { "required": ["content"] }
++          }
++        ]
++      }
++    },
++    "events": {
++      "type": "array",
++      "minItems": 1,
++      "items": {
++        "type": "object",
++        "required": ["event_id", "timestamp", "actor", "event_type"],
++        "properties": {
++          "event_id": { "type": "string" },
++          "timestamp": { "type": "string", "format": "date-time" },
++          "actor": {
++            "type": "object",
++            "required": ["type", "id"],
++            "properties": {
++              "type": { "enum": ["human", "bot", "application", "agent"] },
++              "id": { "type": "string" },
++              "disclosed_identity": { "type": "string" }
++            }
++          },
++          "event_type": { "type": "string" },
++          "code_state": {
++            "type": "object",
++            "properties": {
++              "commit_oid": { "type": "string" },
++              "base_oid": { "type": "string" },
++              "head_oid": { "type": "string" },
++              "tree_oid": { "type": "string" },
++              "before_blob": { "type": "string" },
++              "after_blob": { "type": "string" }
++            }
++          },
++          "evidence_references": {
++            "type": "array",
++            "items": { "$ref": "#/definitions/evidenceUrl" }
++          },
++          "disposition": {
++            "enum": [
++              "successful",
++              "failed",
++              "reverted",
++              "falsified",
++              "null",
++              "invalid",
++              "interrupted",
++              "inconclusive",
++              "neutral",
++              "passed"
++            ]
++          },
++          "content": { "type": "string" }
++        },
++        "anyOf": [
++          {
++            "required": ["evidence_references"],
++            "properties": {
++              "evidence_references": {
++                "type": "array",
++                "minItems": 1,
++                "items": { "$ref": "#/definitions/evidenceUrl" }
++              }
++            }
++          },
++          {
++            "required": ["code_state"],
++            "properties": {
++              "code_state": {
++                "type": "object",
++                "anyOf": [
++                  {
++                    "required": ["commit_oid"],
++                    "properties": {
++                      "commit_oid": { "$ref": "#/definitions/gitObjectId" }
++                    }
++                  },
++                  {
++                    "required": ["base_oid"],
++                    "properties": {
++                      "base_oid": { "$ref": "#/definitions/gitObjectId" }
++                    }
++                  },
++                  {
++                    "required": ["head_oid"],
++                    "properties": {
++                      "head_oid": { "$ref": "#/definitions/gitObjectId" }
++                    }
++                  },
++                  {
++                    "required": ["tree_oid"],
++                    "properties": {
++                      "tree_oid": { "$ref": "#/definitions/gitObjectId" }
++                    }
++                  },
++                  {
++                    "required": ["before_blob"],
++                    "properties": {
++                      "before_blob": { "$ref": "#/definitions/gitObjectId" }
++                    }
++                  },
++                  {
++                    "required": ["after_blob"],
++                    "properties": {
++                      "after_blob": { "$ref": "#/definitions/gitObjectId" }
++                    }
++                  }
++                ]
++              }
++            }
++          }
++        ]
++      }
++    },
++    "lineage": {
++      "type": "object",
++      "properties": {
++        "supersedes": { "type": "array", "items": { "type": "string" } },
++        "reverts": { "type": "array", "items": { "type": "string" } },
++        "multi_pr_links": { "type": "array", "items": { "type": "string" } }
++      }
++    },
++    "software_payload": {
++      "type": "object",
++      "minProperties": 1,
++      "anyOf": [
++        { "required": ["issue_statement"] },
++        { "required": ["acceptance_criteria"] },
++        { "required": ["pre_change_state"] },
++        { "required": ["implementation_patch"] },
++        { "required": ["validation_outcome"] }
++      ],
++      "properties": {
++        "issue_statement": { "type": "string", "minLength": 1 },
++        "acceptance_criteria": { "type": "string", "minLength": 1 },
++        "pre_change_state": { "type": "string", "minLength": 1 },
++        "implementation_patch": { "type": "string", "minLength": 1 },
++        "validation_outcome": { "type": "string", "minLength": 1 }
++      }
++    },
++    "research_payload": {
++      "type": "object",
++      "minProperties": 1,
++      "anyOf": [
++        { "required": ["hypothesis"] },
++        { "required": ["initial_state"] },
++        { "required": ["plan"] },
++        { "required": ["resource_budget"] },
++        { "required": ["measurements"] }
++      ],
++      "properties": {
++        "hypothesis": { "type": "string", "minLength": 1 },
++        "initial_state": { "type": "string", "minLength": 1 },
++        "plan": { "type": "string", "minLength": 1 },
++        "resource_budget": { "type": "string", "minLength": 1 },
++        "measurements": { "type": "string", "minLength": 1 }
++      }
++    }
++  },
++  "allOf": [
++    {
++      "if": {
++        "properties": { "trajectory_type": { "const": "software" } }
++      },
++      "then": {
++        "required": ["software_payload"],
++        "not": { "required": ["research_payload"] }
++      }
++    },
++    {
++      "if": {
++        "properties": { "trajectory_type": { "const": "research" } }
++      },
++      "then": {
++        "required": ["research_payload"],
++        "not": { "required": ["software_payload"] }
++      }
++    }
++  ]
++}
+diff --git a/scripts/lib/hermes_normalize.py b/scripts/lib/hermes_normalize.py
+new file mode 100644
+index 0000000..ac23bde
+--- /dev/null
++++ b/scripts/lib/hermes_normalize.py
+@@ -0,0 +1,997 @@
++"""Normalize local Hermes traces into deterministic trajectory v1.1 records."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import math
++import os
++import re
++import tempfile
++from collections.abc import Callable
++from pathlib import Path
++from typing import Any
++from urllib.parse import urlsplit
++
++from validate_jsonl import HOME_PATH_RE, load_schema
++
++from .hermes_sanitize import (
++    SECRET_QUERY_KEYS,
++    UnsafeUrlError,
++    is_hidden_key,
++    sanitize_query_secrets,
++    strip_hidden_reasoning,
++)
++from .secrets import find_secrets
++
++try:
++    import jsonschema
++except ImportError:  # pragma: no cover - exercised at CLI startup
++    jsonschema = None
++
++NORMALIZER_VERSION = "hermes-normalize/0.1.0"
++SCHEMA_VERSION = "1.1"
++REPORT_SCHEMA_VERSION = "hermes_normalize_report_v1"
++COLLECTION_POLICY = "isolated-local-hermes"
++PROVIDER_ID = "hermes-agent"
++REPO_ROOT = Path(__file__).resolve().parent.parent.parent
++V1_1_SCHEMA_PATH = REPO_ROOT / "schemas" / "trajectory_v1_1.schema.json"
++MANIFEST_SCHEMA_PATH = REPO_ROOT / "schemas" / "hermes_run_manifest.schema.json"
++RAW_SCHEMA_PATH = REPO_ROOT / "schemas" / "hermes_raw_trace.schema.json"
++SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
++ALLOWED_OLLAMA_CONFIG = frozenset({"num_ctx", "keep_alive"})
++_REPO_FIELDS = ("owner", "name", "url", "base_oid", "head_oid")
++_WORKSPACE_FIELDS = ("id", "kind")
++_VERIFIER_FIELDS = ("identity", "version", "outcome", "artifact_sha256")
++
++_SUCCESS_OUTCOMES = frozenset(
++    {"pass", "passed", "success", "successful", "verified", "ok"}
++)
++_FAILED_OUTCOMES = frozenset({"fail", "failed", "error", "falsified"})
++_INTERRUPTED_OUTCOMES = frozenset({"interrupted", "timeout", "killed", "incomplete"})
++_TERMINAL_EVIDENCE = frozenset({"successful", "failed", "interrupted"})
++_ACTOR_TYPES = {
++    "user": "human",
++    "human": "human",
++    "assistant": "agent",
++    "agent": "agent",
++    "tool": "application",
++    "application": "application",
++    "system": "application",
++}
++
++
++class LocalFileBoundary:
++    """Read-only local-file source. Tests may inject frozen bytes for replay."""
++
++    def __init__(self, opener: Callable[[Path], bytes] | None = None) -> None:
++        self._opener = opener
++
++    def read_bytes(self, path: Path | str) -> bytes:
++        raw = str(path)
++        if _is_remote(raw):
++            raise ValueError(f"refusing non-local file path: {raw}")
++        resolved = Path(raw).expanduser()
++        if self._opener is not None:
++            return self._opener(resolved)
++        return resolved.read_bytes()
++
++
++def canonical_dumps(value: Any) -> str:
++    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
++
++
++def sha256_bytes(payload: bytes) -> str:
++    return hashlib.sha256(payload).hexdigest()
++
++
++def normalize_files(
++    *,
++    input_path: Path,
++    run_manifest_path: Path,
++    model_admission_path: Path,
++    output_path: Path,
++    report_path: Path,
++    source: LocalFileBoundary | None = None,
++) -> dict[str, Any]:
++    """Normalize one Hermes JSONL file. Returns the decision report."""
++    _refuse_collisions(
++        [input_path, run_manifest_path, model_admission_path],
++        output_path,
++        report_path,
++    )
++    boundary = source or LocalFileBoundary()
++    input_bytes = boundary.read_bytes(input_path)
++    manifest_bytes = boundary.read_bytes(run_manifest_path)
++    admission_bytes = boundary.read_bytes(model_admission_path)
++    report = _normalize_bytes(
++        input_bytes=input_bytes,
++        manifest_bytes=manifest_bytes,
++        admission_bytes=admission_bytes,
++        input_path=str(input_path),
++    )
++    admitted = [row["output_line"] for row in report.pop("_admitted_lines")]
++    admitted_text = ("\n".join(admitted) + "\n") if admitted else ""
++    _atomic_write_bytes(output_path, admitted_text.encode("utf-8"))
++    _atomic_write_bytes(report_path, (canonical_dumps(report) + "\n").encode("utf-8"))
++    return report
++
++
++def _is_remote(raw: str) -> bool:
++    lowered = raw.strip().lower()
++    if lowered.startswith(("http://", "https://", "ftp://")):
++        return True
++    parsed = urlsplit(raw)
++    return bool(parsed.scheme) and parsed.scheme not in {"", "file"}
++
++
++def _same_file(left: Path, right: Path) -> bool:
++    if left.resolve() == right.resolve():
++        return True
++    try:
++        return left.exists() and right.exists() and os.path.samefile(left, right)
++    except OSError:
++        return False
++
++
++def _refuse_collisions(
++    inputs: list[Path], output_path: Path, report_path: Path
++) -> None:
++    if _same_file(output_path, report_path):
++        raise RuntimeError("output and report paths must be different")
++    for source in inputs:
++        if _same_file(source, output_path):
++            raise RuntimeError(f"refusing to overwrite source file: {source}")
++        if _same_file(source, report_path):
++            raise RuntimeError(
++                f"refusing to overwrite source file with the report: {source}"
++            )
++
++
++def _atomic_write_bytes(path: Path, data: bytes) -> None:
++    path.parent.mkdir(parents=True, exist_ok=True)
++    handle, tmp_name = tempfile.mkstemp(
++        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
++    )
++    tmp_path = Path(tmp_name)
++    try:
++        with os.fdopen(handle, "wb") as stream:
++            stream.write(data)
++        tmp_path.replace(path)
++    except Exception:
++        tmp_path.unlink(missing_ok=True)
++        raise
++
++
++def _normalize_bytes(
++    *,
++    input_bytes: bytes,
++    manifest_bytes: bytes,
++    admission_bytes: bytes,
++    input_path: str,
++) -> dict[str, Any]:
++    input_digest = sha256_bytes(input_bytes)
++    manifest_digest = sha256_bytes(manifest_bytes)
++    admission_digest = sha256_bytes(admission_bytes)
++    file_reasons: list[str] = []
++    manifest, manifest_reason = _parse_json_object(manifest_bytes)
++    admission, admission_reason = _parse_json_object(admission_bytes)
++    if manifest is None:
++        file_reasons.append(manifest_reason or "invalid_json")
++    else:
++        file_reasons.extend(_manifest_schema_errors(manifest))
++        file_reasons.extend(_safety_reasons(manifest))
++    if admission is None:
++        file_reasons.append(admission_reason or "invalid_json")
++    else:
++        file_reasons.extend(_safety_reasons(admission))
++    if manifest is not None and admission is not None:
++        file_reasons.extend(_binding_errors(manifest, admission, admission_digest))
++
++    decisions: list[dict[str, Any]] = []
++    admitted_lines: list[str] = []
++    seen_keys: dict[tuple[str, str, str, str], int] = {}
++    validator = _v1_1_validator()
++    raw_validator = _raw_validator()
++    for line_no, raw_line in _iter_jsonl_lines(input_bytes):
++        payload = raw_line.rstrip(b"\r\n")
++        if not payload.strip():
++            continue
++        decision = _normalize_line(
++            payload,
++            line_no=line_no,
++            input_path=input_path,
++            input_digest=input_digest,
++            manifest_digest=manifest_digest,
++            admission_digest=admission_digest,
++            manifest=manifest,
++            file_reasons=file_reasons,
++            seen_keys=seen_keys,
++            validator=validator,
++            raw_validator=raw_validator,
++        )
++        decisions.append(decision["report_row"])
++        if decision["output_line"] is not None:
++            admitted_lines.append(decision["output_line"])
++
++    if not decisions:
++        empty_reasons = [*file_reasons, "empty_input"]
++        decisions.append(
++            _decision(
++                line_no=0,
++                status="rejected",
++                reasons=empty_reasons,
++                source_sha256=input_digest,
++                trajectory_id=None,
++                output_line=None,
++            )["report_row"]
++        )
++
++    report = {
++        "accepted_count": sum(1 for row in decisions if row["status"] == "accepted"),
++        "admission_report_sha256": admission_digest,
++        "input_sha256": input_digest,
++        "quarantined_count": sum(
++            1 for row in decisions if row["status"] == "quarantined"
++        ),
++        "records": decisions,
++        "rejected_count": sum(1 for row in decisions if row["status"] == "rejected"),
++        "run_manifest_sha256": manifest_digest,
++        "schema_version": REPORT_SCHEMA_VERSION,
++        "_admitted_lines": [{"output_line": line} for line in admitted_lines],
++    }
++    return report
++
++
++def _is_sha256(value: Any) -> bool:
++    return isinstance(value, str) and SHA256_RE.fullmatch(value) is not None
++
++
++def _nonempty_str(value: Any) -> bool:
++    return isinstance(value, str) and bool(value.strip())
++
++
++def _object_fields(value: Any, fields: tuple[str, ...]) -> bool:
++    if not isinstance(value, dict):
++        return False
++    return all(_nonempty_str(value.get(field)) for field in fields)
++
++
++def _binding_errors(
++    manifest: dict[str, Any], admission: dict[str, Any], admission_digest: str
++) -> list[str]:
++    reasons: list[str] = []
++    expected = str(manifest.get("admission_report_sha256") or "")
++    if expected != admission_digest:
++        reasons.append("admission_digest_mismatch")
++    if admission.get("schema_version") != "local_model_admission_v1":
++        reasons.append("admission_schema")
++    if admission.get("decision") != "accepted":
++        reasons.append("admission_rejected")
++    if not isinstance(admission.get("reasons"), list):
++        reasons.append("admission_schema")
++    if admission.get("cloud_fallback_allowed") is not False:
++        reasons.append("cloud_fallback")
++    model = admission.get("model")
++    runtime = admission.get("runtime")
++    rights = admission.get("rights")
++    provider = admission.get("provider")
++    probe = admission.get("probe")
++    digests = admission.get("input_digests")
++    if not _object_fields(model, ("name", "tag", "ollama_digest")):
++        reasons.append("admission_schema")
++    if not _object_fields(runtime, ("name", "version", "endpoint")):
++        reasons.append("admission_schema")
++    if not _object_fields(rights, ("identifier", "terms_source", "terms_sha256")):
++        reasons.append("admission_schema")
++    if not isinstance(provider, dict) or not _nonempty_str(provider.get("name")):
++        reasons.append("admission_schema")
++    config = provider.get("config") if isinstance(provider, dict) else None
++    if not isinstance(config, dict) or config.get("no_cloud") is not True:
++        reasons.append("cloud_fallback")
++    if not _object_fields(probe, ("timestamp", "endpoint")):
++        reasons.append("admission_schema")
++    if not isinstance(digests, dict) or not _is_sha256(digests.get("probe")):
++        reasons.append("admission_schema")
++    elif not _is_sha256(digests.get("rights")):
++        reasons.append("admission_schema")
++    manifest_model = (
++        manifest.get("model") if isinstance(manifest.get("model"), dict) else {}
++    )
++    admission_model = model if isinstance(model, dict) else {}
++    for field in ("name", "tag", "ollama_digest"):
++        if str(manifest_model.get(field) or "") != str(
++            admission_model.get(field) or ""
++        ):
++            reasons.append("model_mismatch")
++            break
++    return reasons
++
++
++def _schema_reason(document: Any, schema_path: Path, code: str) -> list[str]:
++    if jsonschema is None:
++        return ["jsonschema_missing"]
++    validator = jsonschema.Draft7Validator(
++        load_schema(schema_path),
++        format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++    )
++    errors = sorted(validator.iter_errors(document), key=lambda item: list(item.path))
++    if errors:
++        return [code]
++    return []
++
++
++def _manifest_schema_errors(manifest: dict[str, Any]) -> list[str]:
++    return _schema_reason(manifest, MANIFEST_SCHEMA_PATH, "invalid_manifest")
++
++
++def _raw_record_errors(record: dict[str, Any], validator: Any) -> list[str]:
++    if validator is None:
++        return ["jsonschema_missing"]
++    errors = sorted(validator.iter_errors(record), key=lambda item: list(item.path))
++    if errors:
++        return ["invalid_hermes_record"]
++    return []
++
++
++def _v1_1_validator() -> Any:
++    if jsonschema is None:
++        return None
++    return jsonschema.Draft7Validator(
++        load_schema(V1_1_SCHEMA_PATH),
++        format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++    )
++
++
++def _raw_validator() -> Any:
++    if jsonschema is None:
++        return None
++    return jsonschema.Draft7Validator(
++        load_schema(RAW_SCHEMA_PATH),
++        format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++    )
++
++
++def _normalize_line(
++    payload: bytes,
++    *,
++    line_no: int,
++    input_path: str,
++    input_digest: str,
++    manifest_digest: str,
++    admission_digest: str,
++    manifest: dict[str, Any] | None,
++    file_reasons: list[str],
++    seen_keys: dict[tuple[str, str, str, str], int],
++    validator: Any,
++    raw_validator: Any,
++) -> dict[str, Any]:
++    source_digest = sha256_bytes(payload)
++    try:
++        return _normalize_line_inner(
++            payload,
++            line_no=line_no,
++            input_path=input_path,
++            input_digest=input_digest,
++            manifest_digest=manifest_digest,
++            admission_digest=admission_digest,
++            manifest=manifest,
++            file_reasons=file_reasons,
++            seen_keys=seen_keys,
++            validator=validator,
++            raw_validator=raw_validator,
++            source_digest=source_digest,
++        )
++    except UnsafeUrlError as exc:
++        reason = "secret_leakage" if "credential" in str(exc) else "invalid_record"
++        return _decision(
++            line_no=line_no,
++            status="rejected",
++            reasons=[*file_reasons, reason],
++            source_sha256=source_digest,
++            trajectory_id=None,
++            output_line=None,
++        )
++    except (TypeError, ValueError, KeyError, AttributeError, OverflowError):
++        return _decision(
++            line_no=line_no,
++            status="rejected",
++            reasons=[*file_reasons, "invalid_record"],
++            source_sha256=source_digest,
++            trajectory_id=None,
++            output_line=None,
++        )
++
++
++def _normalize_line_inner(
++    payload: bytes,
++    *,
++    line_no: int,
++    input_path: str,
++    input_digest: str,
++    manifest_digest: str,
++    admission_digest: str,
++    manifest: dict[str, Any] | None,
++    file_reasons: list[str],
++    seen_keys: dict[tuple[str, str, str, str], int],
++    validator: Any,
++    raw_validator: Any,
++    source_digest: str,
++) -> dict[str, Any]:
++    parsed, parse_reason = _parse_json_object(payload)
++    reasons = list(file_reasons)
++    if parsed is None:
++        reasons.append(parse_reason or "invalid_json")
++        return _decision(
++            line_no=line_no,
++            status="rejected",
++            reasons=reasons,
++            source_sha256=source_digest,
++            trajectory_id=None,
++            output_line=None,
++        )
++    reasons.extend(_raw_record_errors(parsed, raw_validator))
++    identity: tuple[str, str, str, str] | None = None
++    if "invalid_hermes_record" not in reasons:
++        identity = _identity_tuple(parsed)
++        first = seen_keys.get(identity)
++        if first is None:
++            seen_keys[identity] = line_no
++        else:
++            reasons.append("duplicate_record")
++    reasons.extend(_safety_reasons(parsed, allow_hidden=True))
++    sanitized = strip_hidden_reasoning(sanitize_query_secrets(parsed))
++    reasons.extend(_safety_reasons(sanitized, allow_hidden=False))
++    if manifest is not None:
++        reasons.extend(_trace_conflicts(parsed, manifest))
++        terminal, verifier_reasons = _independent_terminal(manifest)
++        reasons.extend(verifier_reasons)
++    else:
++        terminal = None
++        reasons.append("invalid_manifest")
++    if terminal is None:
++        status = "quarantined"
++        reasons.append("unverified")
++    elif reasons:
++        status = "rejected"
++    else:
++        status = "accepted"
++    if status != "accepted" or manifest is None:
++        if status == "accepted":
++            status = "rejected"
++            reasons.append("invalid_manifest")
++        if status == "quarantined" and any(
++            code not in {"unverified"} for code in reasons
++        ):
++            status = "rejected"
++        return _decision(
++            line_no=line_no,
++            status=status,
++            reasons=_unique_reasons(reasons),
++            source_sha256=source_digest,
++            trajectory_id=_trajectory_id(parsed) if identity is not None else None,
++            output_line=None,
++        )
++    record = _emit_record(
++        sanitized,
++        manifest=manifest,
++        input_digest=input_digest,
++        manifest_digest=manifest_digest,
++        admission_digest=admission_digest,
++        raw_trace_sha256=source_digest,
++        terminal=terminal,
++    )
++    reasons.extend(_safety_reasons(record, allow_hidden=False))
++    schema_errors = _schema_errors(record, validator)
++    if schema_errors or reasons:
++        extra = ["schema"] if schema_errors else []
++        return _decision(
++            line_no=line_no,
++            status="rejected",
++            reasons=_unique_reasons([*reasons, *extra]),
++            source_sha256=source_digest,
++            trajectory_id=record.get("trajectory_id"),
++            output_line=None,
++        )
++    return _decision(
++        line_no=line_no,
++        status="accepted",
++        reasons=[],
++        source_sha256=source_digest,
++        trajectory_id=record["trajectory_id"],
++        output_line=canonical_dumps(record),
++        extra={"input_path": input_path},
++    )
++
++
++def _decision(
++    *,
++    line_no: int,
++    status: str,
++    reasons: list[str],
++    source_sha256: str,
++    trajectory_id: str | None,
++    output_line: str | None,
++    extra: dict[str, Any] | None = None,
++) -> dict[str, Any]:
++    del extra
++    row = {
++        "line": line_no,
++        "reason_codes": _unique_reasons(reasons),
++        "source_sha256": source_sha256,
++        "status": status,
++        "trajectory_id": trajectory_id,
++    }
++    return {"output_line": output_line, "report_row": row}
++
++
++def _unique_reasons(reasons: list[str]) -> list[str]:
++    seen: set[str] = set()
++    out: list[str] = []
++    for reason in reasons:
++        if not reason or reason in seen:
++            continue
++        seen.add(reason)
++        out.append(reason)
++    return out
++
++
++def _identity_tuple(record: dict[str, Any]) -> tuple[str, str, str, str]:
++    return (
++        str(record["run_id"]),
++        str(record["session_id"]),
++        str(record["task_id"]),
++        str(record["raw_trace_id"]),
++    )
++
++
++def _trajectory_id(record: dict[str, Any]) -> str:
++    return "hermes:" + "/".join(_identity_tuple(record))
++
++
++def _mapping_conflicts(
++    trace_obj: Any, manifest_obj: Any, fields: tuple[str, ...], reason: str
++) -> list[str]:
++    if not isinstance(trace_obj, dict):
++        return []
++    if not isinstance(manifest_obj, dict):
++        return [reason]
++    for field in fields:
++        if field in trace_obj and trace_obj.get(field) != manifest_obj.get(field):
++            return [reason]
++    return []
++
++
++def _trace_conflicts(record: dict[str, Any], manifest: dict[str, Any]) -> list[str]:
++    reasons: list[str] = []
++    reasons.extend(
++        _mapping_conflicts(
++            record.get("repository"),
++            manifest.get("repository"),
++            _REPO_FIELDS,
++            "repository_conflict",
++        )
++    )
++    reasons.extend(
++        _mapping_conflicts(
++            record.get("workspace"),
++            manifest.get("workspace"),
++            _WORKSPACE_FIELDS,
++            "workspace_conflict",
++        )
++    )
++    source = record.get("verifier")
++    expected = (
++        manifest.get("verifier") if isinstance(manifest.get("verifier"), dict) else {}
++    )
++    if isinstance(source, dict):
++        for field in _VERIFIER_FIELDS:
++            if field in source and source.get(field) != expected.get(field):
++                reasons.append("verifier_conflict")
++                break
++    elif source is not None:
++        reasons.append("verifier_conflict")
++    return reasons
++
++
++def _artifact_hashes(value: Any) -> list[str]:
++    if not isinstance(value, list):
++        return []
++    return [item for item in value if _is_sha256(item)]
++
++
++def _independent_terminal(manifest: dict[str, Any]) -> tuple[str | None, list[str]]:
++    verifier = manifest.get("verifier")
++    if not isinstance(verifier, dict):
++        return None, ["verifier_evidence"]
++    outcome = verifier.get("outcome")
++    if outcome is None or outcome == "":
++        return None, []
++    terminal = _terminal_disposition(str(outcome).strip().lower())
++    if terminal not in _TERMINAL_EVIDENCE:
++        return None, []
++    producer = ""
++    producer_obj = manifest.get("producer")
++    if isinstance(producer_obj, dict):
++        producer = str(producer_obj.get("name") or "")
++    identity = verifier.get("identity")
++    version = verifier.get("version")
++    hashes = _artifact_hashes(verifier.get("artifact_sha256"))
++    if (
++        not _nonempty_str(identity)
++        or not _nonempty_str(version)
++        or identity in {producer, PROVIDER_ID}
++        or len(hashes) < 1
++    ):
++        return terminal, ["verifier_evidence"]
++    return terminal, []
++
++
++def _terminal_disposition(outcome: str | None) -> str | None:
++    if outcome is None:
++        return None
++    if outcome in _SUCCESS_OUTCOMES:
++        return "successful"
++    if outcome in _FAILED_OUTCOMES:
++        return "failed"
++    if outcome in _INTERRUPTED_OUTCOMES:
++        return "interrupted"
++    return None
++
++
++def _contains_secret(value: Any) -> bool:
++    if isinstance(value, str):
++        return bool(find_secrets(value))
++    if isinstance(value, list):
++        return any(_contains_secret(item) for item in value)
++    if isinstance(value, dict):
++        return any(
++            _contains_secret(key) or _contains_secret(item)
++            for key, item in value.items()
++        )
++    return False
++
++
++def _contains_credential_key(value: Any) -> bool:
++    if isinstance(value, list):
++        return any(_contains_credential_key(item) for item in value)
++    if isinstance(value, dict):
++        for key, item in value.items():
++            if str(key).casefold() in SECRET_QUERY_KEYS and item not in (
++                None,
++                "",
++                False,
++            ):
++                return True
++            if _contains_credential_key(item):
++                return True
++    return False
++
++
++def _contains_home_path(value: Any) -> bool:
++    if isinstance(value, str):
++        return HOME_PATH_RE.search(value) is not None
++    if isinstance(value, list):
++        return any(_contains_home_path(item) for item in value)
++    if isinstance(value, dict):
++        return any(
++            _contains_home_path(key) or _contains_home_path(item)
++            for key, item in value.items()
++        )
++    return False
++
++
++def _contains_hidden_reasoning(value: Any) -> bool:
++    if isinstance(value, str):
++        lowered = value.casefold()
++        return any(
++            marker in lowered
++            for marker in ("<think", "</think", "<thought", "</thought")
++        )
++    if isinstance(value, list):
++        return any(_contains_hidden_reasoning(item) for item in value)
++    if isinstance(value, dict):
++        return any(
++            is_hidden_key(key) or _contains_hidden_reasoning(item)
++            for key, item in value.items()
++        )
++    return False
++
++
++def _safety_reasons(value: Any, *, allow_hidden: bool = False) -> list[str]:
++    reasons: list[str] = []
++    if (
++        _contains_secret(value)
++        or _contains_credential_key(value)
++        or _contains_home_path(value)
++    ):
++        reasons.append("secret_leakage")
++    if not allow_hidden and _contains_hidden_reasoning(value):
++        reasons.append("hidden_reasoning")
++    return reasons
++
++
++def _pick(source: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
++    out: dict[str, Any] = {}
++    for field in fields:
++        if field in source:
++            out[field] = source[field]
++    return out
++
++
++def _ollama_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
++    source = manifest.get("ollama") if isinstance(manifest.get("ollama"), dict) else {}
++    out: dict[str, Any] = {
++        "endpoint": sanitize_query_secrets(str(source.get("endpoint") or "")),
++        "runtime": source.get("runtime"),
++        "version": source.get("version"),
++    }
++    config = source.get("config")
++    if isinstance(config, dict):
++        cleaned = {
++            key: value for key, value in config.items() if key in ALLOWED_OLLAMA_CONFIG
++        }
++        if cleaned:
++            out["config"] = cleaned
++    return out
++
++
++def _verifier_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
++    source = (
++        manifest.get("verifier") if isinstance(manifest.get("verifier"), dict) else {}
++    )
++    return {
++        "artifact_sha256": _artifact_hashes(source.get("artifact_sha256")),
++        "identity": source.get("identity"),
++        "outcome": source.get("outcome"),
++        "version": source.get("version"),
++    }
++
++
++def _repository_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
++    source = (
++        manifest.get("repository")
++        if isinstance(manifest.get("repository"), dict)
++        else {}
++    )
++    out = _pick(source, _REPO_FIELDS)
++    return {key: value for key, value in out.items() if value not in (None, "")}
++
++
++def _workspace_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
++    source = (
++        manifest.get("workspace") if isinstance(manifest.get("workspace"), dict) else {}
++    )
++    return _pick(source, _WORKSPACE_FIELDS)
++
++
++def _emit_record(
++    record: dict[str, Any],
++    *,
++    manifest: dict[str, Any],
++    input_digest: str,
++    manifest_digest: str,
++    admission_digest: str,
++    raw_trace_sha256: str,
++    terminal: str,
++) -> dict[str, Any]:
++    repository = _repository_from_manifest(manifest)
++    workspace = _workspace_from_manifest(manifest)
++    producer = _pick(
++        manifest.get("producer") if isinstance(manifest.get("producer"), dict) else {},
++        ("name", "version", "revision"),
++    )
++    model = _pick(
++        manifest.get("model") if isinstance(manifest.get("model"), dict) else {},
++        ("name", "tag", "ollama_digest", "quantization"),
++    )
++    retention = _pick(
++        manifest.get("reasoning_retention")
++        if isinstance(manifest.get("reasoning_retention"), dict)
++        else {},
++        ("policy", "strip_tags"),
++    )
++    events = _events(record, repository, terminal)
++    payload = _software_payload(record, terminal)
++    run_id, session_id, task_id, raw_trace_id = _identity_tuple(record)
++    return {
++        "artifacts": [],
++        "collection_policy": COLLECTION_POLICY,
++        "collector_version": NORMALIZER_VERSION,
++        "events": events,
++        "execution": {
++            "producer_completed": record["completed"],
++            "producer_partial": record["partial"],
++        },
++        "execution_provenance": {
++            "admission_report_sha256": admission_digest,
++            "input_sha256": input_digest,
++            "model": model,
++            "ollama": _ollama_from_manifest(manifest),
++            "producer": producer,
++            "raw_trace_id": raw_trace_id,
++            "raw_trace_sha256": raw_trace_sha256,
++            "reasoning_retention": retention,
++            "run_id": run_id,
++            "run_manifest_sha256": manifest_digest,
++            "session_id": session_id,
++            "task_id": task_id,
++            "verifier": _verifier_from_manifest(manifest),
++            "workspace": workspace,
++        },
++        "license": "Apache-2.0",
++        "provider_id": PROVIDER_ID,
++        "repository": repository,
++        "schema_version": SCHEMA_VERSION,
++        "software_payload": payload,
++        "source_id": raw_trace_id,
++        "terminal_disposition": terminal,
++        "trajectory_id": _trajectory_id(record),
++        "trajectory_type": "software",
++    }
++
++
++def _events(
++    record: dict[str, Any], repository: dict[str, Any], terminal: str
++) -> list[dict[str, Any]]:
++    messages = record.get("messages")
++    if not isinstance(messages, list) or not messages:
++        timestamp = str(record.get("started_at") or record.get("ended_at") or "")
++        return [_event("e1", timestamp, "agent", "run", terminal, repository, "")]
++    events: list[dict[str, Any]] = []
++    last_index = len(messages) - 1
++    for index, message in enumerate(messages):
++        if not isinstance(message, dict):
++            raise ValueError("non-object message")
++        role = str(message.get("role") or "assistant")
++        actor_type = _ACTOR_TYPES.get(role, "agent")
++        event_type = "tool_call" if role == "tool" else "message"
++        disposition = terminal if index == last_index else "neutral"
++        content = message.get("content")
++        if not isinstance(content, str):
++            raise ValueError("non-string message content")
++        timestamp = str(message.get("timestamp") or record.get("started_at") or "")
++        events.append(
++            _event(
++                f"e{index + 1}",
++                timestamp,
++                actor_type,
++                event_type,
++                disposition,
++                repository,
++                content,
++            )
++        )
++    return events
++
++
++def _event(
++    event_id: str,
++    timestamp: str,
++    actor_type: str,
++    event_type: str,
++    disposition: str,
++    repository: dict[str, Any],
++    content: str,
++) -> dict[str, Any]:
++    event: dict[str, Any] = {
++        "actor": {
++            "id": PROVIDER_ID if actor_type != "human" else "user",
++            "type": actor_type,
++        },
++        "code_state": {
++            "base_oid": repository.get("base_oid"),
++            "head_oid": repository.get("head_oid"),
++        },
++        "disposition": disposition,
++        "event_id": event_id,
++        "event_type": event_type,
++        "timestamp": timestamp,
++    }
++    if content:
++        event["content"] = content
++    url = repository.get("url")
++    if isinstance(url, str) and url:
++        event["evidence_references"] = [url]
++    return event
++
++
++def _software_payload(record: dict[str, Any], terminal: str) -> dict[str, str]:
++    issue = str(record.get("issue_statement") or "").strip()
++    patch = _patch_from_messages(record)
++    outcome = {
++        "successful": "pass",
++        "failed": "fail",
++        "interrupted": "interrupted",
++        "inconclusive": "unverified",
++    }.get(terminal, terminal)
++    payload: dict[str, str] = {"validation_outcome": outcome}
++    if issue:
++        payload["issue_statement"] = issue
++    if patch:
++        payload["implementation_patch"] = patch
++    return payload
++
++
++def _patch_from_messages(record: dict[str, Any]) -> str:
++    messages = record.get("messages")
++    if not isinstance(messages, list):
++        return ""
++    for message in messages:
++        if not isinstance(message, dict):
++            continue
++        if message.get("role") == "tool" and message.get("name") == "apply_patch":
++            return str(message.get("content") or "")
++    return ""
++
++
++def _schema_errors(record: dict[str, Any], validator: Any) -> list[str]:
++    if validator is None:
++        return ["jsonschema_missing"]
++    errors = sorted(validator.iter_errors(record), key=lambda item: list(item.path))
++    return [error.message for error in errors]
++
++
++def _iter_jsonl_lines(data: bytes) -> list[tuple[int, bytes]]:
++    rows: list[tuple[int, bytes]] = []
++    start = 0
++    line_no = 1
++    while start < len(data):
++        newline = data.find(b"\n", start)
++        if newline == -1:
++            rows.append((line_no, data[start:]))
++            break
++        rows.append((line_no, data[start : newline + 1]))
++        start = newline + 1
++        line_no += 1
++    return rows
++
++
++def _parse_json_object(payload: bytes) -> tuple[dict[str, Any] | None, str]:
++    try:
++        text = payload.decode("utf-8")
++    except UnicodeDecodeError:
++        return None, "invalid_json"
++    try:
++        parsed = json.loads(
++            text,
++            parse_constant=_reject_nonfinite,
++            object_pairs_hook=_unique_object,
++        )
++    except json.JSONDecodeError:
++        return None, "invalid_json"
++    except ValueError as exc:
++        message = str(exc)
++        if "duplicate JSON object key" in message:
++            return None, "duplicate_key"
++        return None, "invalid_json"
++    if _contains_nonfinite(parsed):
++        return None, "invalid_json"
++    if not isinstance(parsed, dict):
++        return None, "invalid_json"
++    return parsed, ""
++
++
++def _unique_object(pairs: list[tuple[Any, Any]]) -> dict[str, Any]:
++    seen: set[Any] = set()
++    parsed: dict[str, Any] = {}
++    for key, value in pairs:
++        if key in seen:
++            raise ValueError(f"duplicate JSON object key: {key}")
++        seen.add(key)
++        parsed[key] = value
++    return parsed
++
++
++def _reject_nonfinite(name: str) -> None:
++    raise ValueError(f"non-finite JSON constant: {name}")
++
++
++def _contains_nonfinite(value: Any) -> bool:
++    if isinstance(value, float) and not math.isfinite(value):
++        return True
++    if isinstance(value, dict):
++        return any(_contains_nonfinite(item) for item in value.values())
++    if isinstance(value, list):
++        return any(_contains_nonfinite(item) for item in value)
++    return False
+diff --git a/scripts/lib/hermes_sanitize.py b/scripts/lib/hermes_sanitize.py
+new file mode 100644
+index 0000000..6ddd003
+--- /dev/null
++++ b/scripts/lib/hermes_sanitize.py
+@@ -0,0 +1,100 @@
++"""Secret-query sanitization and hidden-reasoning stripping for Hermes traces."""
++
++from __future__ import annotations
++
++import re
++import urllib.parse
++from typing import Any
++
++SECRET_QUERY_KEYS = frozenset(
++    {
++        "access_token",
++        "token",
++        "client_secret",
++        "client_id",
++        "authorization",
++        "api_key",
++        "password",
++        "secret",
++    }
++)
++
++HIDDEN_KEYS = frozenset(
++    {
++        "reasoning",
++        "hidden_reasoning",
++        "thinking",
++        "thought",
++        "thoughts",
++    }
++)
++
++_THINK_RE = re.compile(
++    r"<(think|thought|thinking)\b[^>]*>.*?</\1>",
++    re.IGNORECASE | re.DOTALL,
++)
++_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
++
++
++class UnsafeUrlError(ValueError):
++    """Raised when a URL cannot be sanitized safely."""
++
++
++def sanitize_url(url: str) -> str:
++    """Drop credentials, secret query keys, and fragments; sort remaining query."""
++    try:
++        parts = urllib.parse.urlsplit(url)
++        host = parts.hostname or ""
++        port = parts.port
++        username = parts.username
++        password = parts.password
++    except ValueError as exc:
++        raise UnsafeUrlError("invalid_url") from exc
++    if username or password:
++        raise UnsafeUrlError("credential_url")
++    for segment in (parts.path or "").split("/"):
++        if segment.casefold() in SECRET_QUERY_KEYS:
++            raise UnsafeUrlError("credential_url")
++    if ":" in host and not host.startswith("["):
++        host = f"[{host}]"
++    netloc = f"{host}:{port}" if port else host
++    query_pairs = [
++        (key, value)
++        for key, value in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
++        if key.lower() not in SECRET_QUERY_KEYS
++    ]
++    query_pairs.sort(key=lambda item: (item[0], item[1]))
++    scheme = parts.scheme or "https"
++    return urllib.parse.urlunsplit(
++        (scheme, netloc, parts.path or "", urllib.parse.urlencode(query_pairs), "")
++    )
++
++
++def sanitize_query_secrets(value: Any) -> Any:
++    """Rewrite URLs embedded in strings so secret query keys cannot leak."""
++    if isinstance(value, str):
++        return _URL_RE.sub(lambda match: sanitize_url(match.group(0)), value)
++    if isinstance(value, list):
++        return [sanitize_query_secrets(item) for item in value]
++    if isinstance(value, dict):
++        return {key: sanitize_query_secrets(item) for key, item in value.items()}
++    return value
++
++
++def is_hidden_key(key: Any) -> bool:
++    return str(key).casefold() in HIDDEN_KEYS
++
++
++def strip_hidden_reasoning(value: Any) -> Any:
++    """Remove hidden-reasoning fields and producer think-tags from trainable views."""
++    if isinstance(value, str):
++        return _THINK_RE.sub("", value)
++    if isinstance(value, list):
++        return [strip_hidden_reasoning(item) for item in value]
++    if isinstance(value, dict):
++        return {
++            key: strip_hidden_reasoning(item)
++            for key, item in value.items()
++            if not is_hidden_key(key)
++        }
++    return value
+diff --git a/scripts/normalize_hermes_trajectories.py b/scripts/normalize_hermes_trajectories.py
+new file mode 100644
+index 0000000..78d70fb
+--- /dev/null
++++ b/scripts/normalize_hermes_trajectories.py
+@@ -0,0 +1,89 @@
++#!/usr/bin/env python3
++"""Normalize verified local Hermes traces into trajectory v1.1 JSONL.
++
++Usage:
++    python scripts/normalize_hermes_trajectories.py \\
++      --input <hermes-jsonl> \\
++      --run-manifest <manifest-json> \\
++      --model-admission <admission-json> \\
++      --output <canonical-jsonl> \\
++      --report <decision-report-json>
++"""
++
++from __future__ import annotations
++
++import argparse
++import logging
++import sys
++from pathlib import Path
++
++_SCRIPTS = Path(__file__).resolve().parent
++if str(_SCRIPTS) not in sys.path:
++    sys.path.insert(0, str(_SCRIPTS))
++
++from lib.hermes_normalize import (  # noqa: E402
++    NORMALIZER_VERSION,
++    normalize_files,
++)
++
++logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
++logger = logging.getLogger("normalize_hermes_trajectories")
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--input", type=Path, required=True, help="Hermes JSONL trace")
++    parser.add_argument(
++        "--run-manifest",
++        type=Path,
++        required=True,
++        help="Hermes run manifest JSON",
++    )
++    parser.add_argument(
++        "--model-admission",
++        type=Path,
++        required=True,
++        help="local_model_admission_v1 report JSON",
++    )
++    parser.add_argument(
++        "--output",
++        type=Path,
++        required=True,
++        help="Canonical trajectory v1.1 JSONL",
++    )
++    parser.add_argument(
++        "--report",
++        type=Path,
++        required=True,
++        help="accepted/quarantined/rejected decision report",
++    )
++    return parser
++
++
++def main(argv: list[str] | None = None) -> int:
++    args = build_parser().parse_args(argv)
++    try:
++        report = normalize_files(
++            input_path=args.input,
++            run_manifest_path=args.run_manifest,
++            model_admission_path=args.model_admission,
++            output_path=args.output,
++            report_path=args.report,
++        )
++    except (FileNotFoundError, OSError, ValueError, RuntimeError) as exc:
++        logger.error("%s", exc)
++        return 2
++    logger.info(
++        "normalized with %s: accepted=%s quarantined=%s rejected=%s → %s (report %s)",
++        NORMALIZER_VERSION,
++        report["accepted_count"],
++        report["quarantined_count"],
++        report["rejected_count"],
++        args.output,
++        args.report,
++    )
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/scripts/validate_jsonl.py b/scripts/validate_jsonl.py
+index 2a77b06..ba02eeb 100644
+--- a/scripts/validate_jsonl.py
++++ b/scripts/validate_jsonl.py
+@@ -26,7 +26,10 @@ try:
+     import jsonschema
+ except ImportError:
+     jsonschema = None
+-    print("ERROR: jsonschema is required. Install with: pip install jsonschema", file=sys.stderr)
++    print(
++        "ERROR: jsonschema is required. Install with: pip install jsonschema",
++        file=sys.stderr,
++    )
+     sys.exit(2)
+ 
+ _SCRIPTS = Path(__file__).resolve().parent
+@@ -35,8 +38,17 @@ if str(_SCRIPTS) not in sys.path:
+ 
+ from lib.secrets import find_secrets  # noqa: E402
+ 
+-SCHEMA_V0_PATH = Path(__file__).resolve().parent.parent / "schemas" / "pr_trajectory.schema.json"
+-SCHEMA_V1_PATH = Path(__file__).resolve().parent.parent / "schemas" / "trajectory_v1.schema.json"
++SCHEMA_V0_PATH = (
++    Path(__file__).resolve().parent.parent / "schemas" / "pr_trajectory.schema.json"
++)
++SCHEMA_V1_PATH = (
++    Path(__file__).resolve().parent.parent / "schemas" / "trajectory_v1.schema.json"
++)
++SCHEMA_V1_1_PATH = (
++    Path(__file__).resolve().parent.parent / "schemas" / "trajectory_v1_1.schema.json"
++)
++_V1_VERSIONS = frozenset({"1", "1.0", "v1"})
++_V1_1_VERSIONS = frozenset({"1.1", "v1.1"})
+ HOME_PATH_RE = re.compile(
+     r"("
+     r"/home/[A-Za-z0-9._-]+"
+@@ -80,7 +92,6 @@ def _iter_strings(obj: object):
+             yield from _iter_strings(value)
+ 
+ 
+-
+ def _is_absolute_uri(value: object) -> bool:
+     if not isinstance(value, str) or not value:
+         return False
+@@ -135,7 +146,7 @@ def policy_errors(record: dict, lineno: int, filename: str) -> list[str]:
+         return errors
+ 
+     schema_version = record.get("schema_version")
+-    if schema_version in ("1", "1.0", "v1"):
++    if schema_version in _V1_VERSIONS or schema_version in _V1_1_VERSIONS:
+         events = record.get("events")
+         if isinstance(events, list):
+             last_dt: datetime | None = None
+@@ -168,8 +179,15 @@ def policy_errors(record: dict, lineno: int, filename: str) -> list[str]:
+ 
+                 actor = e.get("actor")
+                 if isinstance(actor, dict):
+-                    if actor.get("type") not in ("human", "bot", "application", "agent"):
+-                        errors.append(f"  {filename}:{lineno} [policy] - invented/unsupported actor type")
++                    if actor.get("type") not in (
++                        "human",
++                        "bot",
++                        "application",
++                        "agent",
++                    ):
++                        errors.append(
++                            f"  {filename}:{lineno} [policy] - invented/unsupported actor type"
++                        )
+ 
+                 if not _event_has_auditable_anchor(e):
+                     errors.append(
+@@ -197,10 +215,16 @@ def policy_errors(record: dict, lineno: int, filename: str) -> list[str]:
+                             f"  {filename}:{lineno} [policy] - code snapshot {key} is not a git object id"
+                         )
+             if not has_snapshot:
+-                errors.append(f"  {filename}:{lineno} [policy] - missing required code snapshots for software trajectory")
++                errors.append(
++                    f"  {filename}:{lineno} [policy] - missing required code snapshots for software trajectory"
++                )
+ 
+         disp = record.get("terminal_disposition")
+-        payload = record.get("software_payload") if traj_type == "software" else record.get("research_payload")
++        payload = (
++            record.get("software_payload")
++            if traj_type == "software"
++            else record.get("research_payload")
++        )
+         success_dispositions = ("successful", "passed")
+         success_outcomes = ("pass", "passed", "success", "successful", "verified", "ok")
+         terminal_enum = {
+@@ -318,12 +342,34 @@ def policy_errors(record: dict, lineno: int, filename: str) -> list[str]:
+     return errors
+ 
+ 
++def _select_validator(
++    record: object,
++    v0_validator: jsonschema.Draft7Validator,
++    v1_validator: jsonschema.Draft7Validator,
++    v1_1_validator: jsonschema.Draft7Validator | None,
++) -> jsonschema.Draft7Validator:
++    if not isinstance(record, dict):
++        return v0_validator
++    version = record.get("schema_version")
++    if version in _V1_1_VERSIONS:
++        if v1_1_validator is None:
++            v1_1_validator = jsonschema.Draft7Validator(
++                load_schema(SCHEMA_V1_1_PATH),
++                format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++            )
++        return v1_1_validator
++    if version in _V1_VERSIONS:
++        return v1_validator
++    return v0_validator
++
++
+ def validate_file(
+     filepath: Path,
+     v0_validator: jsonschema.Draft7Validator,
+     v1_validator: jsonschema.Draft7Validator,
+     *,
+     strict_policy: bool = False,
++    v1_1_validator: jsonschema.Draft7Validator | None = None,
+ ) -> list[str]:
+     """Validate a single JSONL file. Returns list of error strings."""
+     errors: list[str] = []
+@@ -336,6 +382,7 @@ def validate_file(
+                     continue
+                 count += 1
+                 try:
++
+                     def _reject_nonfinite(constant: str):
+                         raise json.JSONDecodeError(
+                             f"non-finite constant {constant!r}", line, 0
+@@ -351,15 +398,17 @@ def validate_file(
+                     )
+                     continue
+ 
+-                if isinstance(record, dict):
+-                    version = record.get("schema_version")
+-                    validator = v1_validator if version in ("1", "1.0", "v1") else v0_validator
+-                else:
+-                    validator = v0_validator
++                validator = _select_validator(
++                    record, v0_validator, v1_validator, v1_1_validator
++                )
+ 
+-                for error in sorted(validator.iter_errors(record), key=lambda e: list(e.path)):
++                for error in sorted(
++                    validator.iter_errors(record), key=lambda e: list(e.path)
++                ):
+                     path = ".".join(str(p) for p in error.absolute_path) or "(root)"
+-                    errors.append(f"  {filepath.name}:{lineno} [{path}] - {error.message}")
++                    errors.append(
++                        f"  {filepath.name}:{lineno} [{path}] - {error.message}"
++                    )
+                 if strict_policy and isinstance(record, dict):
+                     errors.extend(policy_errors(record, lineno, filepath.name))
+     except FileNotFoundError:
+@@ -389,13 +438,23 @@ def main(argv: list[str] | None = None) -> int:
+     v1_validator = jsonschema.Draft7Validator(
+         schema_v1, format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER
+     )
++    v1_1_validator = None
++    if SCHEMA_V1_1_PATH.exists():
++        v1_1_validator = jsonschema.Draft7Validator(
++            load_schema(SCHEMA_V1_1_PATH),
++            format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++        )
+ 
+     all_errors: list[str] = []
+ 
+     for arg in args.files:
+         filepath = Path(arg)
+         file_errors = validate_file(
+-            filepath, v0_validator, v1_validator, strict_policy=args.strict_policy
++            filepath,
++            v0_validator,
++            v1_validator,
++            strict_policy=args.strict_policy,
++            v1_1_validator=v1_1_validator,
+         )
+         all_errors.extend(file_errors)
+         if not file_errors:
+diff --git a/tests/fixtures/hermes/completed_true_verifier_failed.jsonl b/tests/fixtures/hermes/completed_true_verifier_failed.jsonl
+new file mode 100644
+index 0000000..bf96536
+--- /dev/null
++++ b/tests/fixtures/hermes/completed_true_verifier_failed.jsonl
+@@ -0,0 +1 @@
++{"completed":true,"ended_at":"2026-09-21T12:01:00Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"},{"content":"I'll inspect loop.py and apply a minimal fix.","role":"assistant","timestamp":"2026-09-21T12:00:10Z"}],"partial":false,"raw_trace_id":"trace-run-false-success","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-false-success","session_id":"sess-run-false-success","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-false-success","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/fixtures/hermes/duplicate_keys.jsonl b/tests/fixtures/hermes/duplicate_keys.jsonl
+new file mode 100644
+index 0000000..d8797fb
+--- /dev/null
++++ b/tests/fixtures/hermes/duplicate_keys.jsonl
+@@ -0,0 +1 @@
++{"run_id":"run-dup-key","run_id":"run-dup-key-other","session_id":"sess-dup","task_id":"task-dup","raw_trace_id":"trace-dup","completed":true,"partial":false,"started_at":"2026-09-21T12:00:00Z","ended_at":"2026-09-21T12:01:00Z","issue_statement":"dup","messages":[{"role":"user","timestamp":"2026-09-21T12:00:00Z","content":"hello"}],"repository":{"owner":"rmems","name":"synthetic-loop","base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2"},"workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/fixtures/hermes/duplicate_records.jsonl b/tests/fixtures/hermes/duplicate_records.jsonl
+new file mode 100644
+index 0000000..d9541f1
+--- /dev/null
++++ b/tests/fixtures/hermes/duplicate_records.jsonl
+@@ -0,0 +1,2 @@
++{"completed":true,"ended_at":"2026-09-21T12:01:00Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"},{"content":"I'll inspect loop.py and apply a minimal fix.","role":"assistant","timestamp":"2026-09-21T12:00:10Z"}],"partial":false,"raw_trace_id":"trace-run-dup","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-dup","session_id":"sess-run-dup","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-dup","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
++{"completed":true,"ended_at":"2026-09-21T12:01:00Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"},{"content":"I'll inspect loop.py and apply a minimal fix.","role":"assistant","timestamp":"2026-09-21T12:00:10Z"}],"partial":false,"raw_trace_id":"trace-run-dup","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-dup","session_id":"sess-run-dup","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-dup","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/fixtures/hermes/hidden_reasoning.jsonl b/tests/fixtures/hermes/hidden_reasoning.jsonl
+new file mode 100644
+index 0000000..40a0f28
+--- /dev/null
++++ b/tests/fixtures/hermes/hidden_reasoning.jsonl
+@@ -0,0 +1 @@
++{"completed":true,"ended_at":"2026-09-21T12:01:00Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"},{"content":"<think>hide this private chain</think>I'll inspect loop.py and apply a minimal fix.","reasoning":"internal plan must not be trainable","role":"assistant","timestamp":"2026-09-21T12:00:10Z"}],"partial":false,"raw_trace_id":"trace-run-think","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-think","session_id":"sess-run-think","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-think","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/fixtures/hermes/interrupted.jsonl b/tests/fixtures/hermes/interrupted.jsonl
+new file mode 100644
+index 0000000..f2c3815
+--- /dev/null
++++ b/tests/fixtures/hermes/interrupted.jsonl
+@@ -0,0 +1 @@
++{"completed":false,"ended_at":"2026-09-21T12:00:12Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"}],"partial":false,"raw_trace_id":"trace-run-interrupted","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-interrupted","session_id":"sess-run-interrupted","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-interrupted","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/fixtures/hermes/local_model_admission_v1.json b/tests/fixtures/hermes/local_model_admission_v1.json
+new file mode 100644
+index 0000000..70d8e92
+--- /dev/null
++++ b/tests/fixtures/hermes/local_model_admission_v1.json
+@@ -0,0 +1,35 @@
++{
++  "schema_version": "local_model_admission_v1",
++  "decision": "accepted",
++  "reasons": [],
++  "model": {
++    "name": "qwen2.5-coder",
++    "tag": "7b-instruct",
++    "ollama_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
++    "quantization": "q4_K_M",
++    "upstream_revision": "synthetic-upstream-1"
++  },
++  "runtime": {
++    "name": "ollama",
++    "version": "0.11.4",
++    "endpoint": "http://127.0.0.1:11434"
++  },
++  "rights": {
++    "identifier": "Apache-2.0",
++    "terms_source": "synthetic-fixture",
++    "terms_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++  },
++  "provider": {
++    "name": "hermes-agent",
++    "config": {"no_cloud": true}
++  },
++  "cloud_fallback_allowed": false,
++  "probe": {
++    "timestamp": "2026-09-21T11:00:00Z",
++    "endpoint": "http://127.0.0.1:11434"
++  },
++  "input_digests": {
++    "probe": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
++    "rights": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++  }
++}
+diff --git a/tests/fixtures/hermes/malformed.jsonl b/tests/fixtures/hermes/malformed.jsonl
+new file mode 100644
+index 0000000..47fd522
+--- /dev/null
++++ b/tests/fixtures/hermes/malformed.jsonl
+@@ -0,0 +1 @@
++{"run_id":"run-malformed", this is not json
+diff --git a/tests/fixtures/hermes/partial.jsonl b/tests/fixtures/hermes/partial.jsonl
+new file mode 100644
+index 0000000..a808b62
+--- /dev/null
++++ b/tests/fixtures/hermes/partial.jsonl
+@@ -0,0 +1 @@
++{"completed":false,"ended_at":"2026-09-21T12:00:30Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"},{"content":"Still gathering context.","role":"assistant","timestamp":"2026-09-21T12:00:10Z"}],"partial":true,"raw_trace_id":"trace-run-partial","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-partial","session_id":"sess-run-partial","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-partial","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/fixtures/hermes/query_secret.jsonl b/tests/fixtures/hermes/query_secret.jsonl
+new file mode 100644
+index 0000000..c0b9582
+--- /dev/null
++++ b/tests/fixtures/hermes/query_secret.jsonl
+@@ -0,0 +1 @@
++{"completed":true,"ended_at":"2026-09-21T12:01:00Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"},{"content":"Fetched https://example.test/hook?access_token=supersecretvalue1&page=2","name":"fetch","role":"tool","timestamp":"2026-09-21T12:00:10Z"}],"partial":false,"raw_trace_id":"trace-run-query","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-query","session_id":"sess-run-query","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-query","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/fixtures/hermes/secret_leak.jsonl b/tests/fixtures/hermes/secret_leak.jsonl
+new file mode 100644
+index 0000000..4c434ac
+--- /dev/null
++++ b/tests/fixtures/hermes/secret_leak.jsonl
+@@ -0,0 +1 @@
++{"completed":true,"ended_at":"2026-09-21T12:01:00Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"},{"content":"token=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","role":"assistant","timestamp":"2026-09-21T12:00:10Z"}],"partial":false,"raw_trace_id":"trace-run-secret","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-secret","session_id":"sess-run-secret","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-secret","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/fixtures/hermes/successful.jsonl b/tests/fixtures/hermes/successful.jsonl
+new file mode 100644
+index 0000000..a7523cf
+--- /dev/null
++++ b/tests/fixtures/hermes/successful.jsonl
+@@ -0,0 +1 @@
++{"completed":true,"ended_at":"2026-09-21T12:01:00Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"},{"content":"<think>I should inspect loop.py first.</think>I'll inspect loop.py and apply a minimal fix.","role":"assistant","timestamp":"2026-09-21T12:00:10Z"},{"content":"--- a/loop.py\n+++ b/loop.py\n@@ -1 +1 @@\n-return None\n+return []\n","name":"apply_patch","role":"tool","timestamp":"2026-09-21T12:00:20Z"}],"partial":false,"raw_trace_id":"trace-run-success","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-success","session_id":"sess-run-success","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-success","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/fixtures/hermes/truncated.jsonl b/tests/fixtures/hermes/truncated.jsonl
+new file mode 100644
+index 0000000..755039c
+--- /dev/null
++++ b/tests/fixtures/hermes/truncated.jsonl
+@@ -0,0 +1 @@
++{"run_id":"run-truncated","session_id":"sess-run-truncated","messages":[{"role":"user"
+\ No newline at end of file
+diff --git a/tests/fixtures/hermes/unverified.jsonl b/tests/fixtures/hermes/unverified.jsonl
+new file mode 100644
+index 0000000..2f7f582
+--- /dev/null
++++ b/tests/fixtures/hermes/unverified.jsonl
+@@ -0,0 +1 @@
++{"completed":true,"ended_at":"2026-09-21T12:01:00Z","issue_statement":"Empty lists currently return None instead of [].","messages":[{"content":"Fix the failing empty-list test in loop.py.","role":"user","timestamp":"2026-09-21T12:00:00Z"},{"content":"I'll inspect loop.py and apply a minimal fix.","role":"assistant","timestamp":"2026-09-21T12:00:10Z"}],"partial":false,"raw_trace_id":"trace-run-unverified","repository":{"base_oid":"aaa111aaa111aaa111aaa111aaa111aaa111aaa1","head_oid":"bbb222bbb222bbb222bbb222bbb222bbb222bbb2","name":"synthetic-loop","owner":"rmems","url":"https://github.com/rmems/synthetic-loop"},"run_id":"run-unverified","session_id":"sess-run-unverified","started_at":"2026-09-21T12:00:00Z","task_id":"task-run-unverified","workspace":{"id":"ws-isolated-001","kind":"isolated"}}
+diff --git a/tests/hermes_fixtures.py b/tests/hermes_fixtures.py
+new file mode 100644
+index 0000000..4d7fd94
+--- /dev/null
++++ b/tests/hermes_fixtures.py
+@@ -0,0 +1,248 @@
++"""Synthetic Hermes builders for offline normalize tests (RM-1348).
++
++Fixtures are deliberately invented. They are not personal conversations,
++live Hermes traces, or recorded GitHub pages.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++from pathlib import Path
++from typing import Any
++
++ROOT = Path(__file__).resolve().parents[1]
++FIXTURES = ROOT / "tests" / "fixtures" / "hermes"
++ADMISSION_FIXTURE = FIXTURES / "local_model_admission_v1.json"
++
++BASE_OID = "aaa111aaa111aaa111aaa111aaa111aaa111aaa1"
++HEAD_OID = "bbb222bbb222bbb222bbb222bbb222bbb222bbb2"
++MODEL_DIGEST = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
++TERMS_SHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++PRODUCER_REVISION = "c0ffee1c0ffee1c0ffee1c0ffee1c0ffee1c0ffe"
++VERIFIER_ARTIFACT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
++SYNTHETIC_GITHUB_TOKEN = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
++
++FIXTURE_VERIFIER_OUTCOMES: dict[str, str | None] = {
++    "completed_true_verifier_failed.jsonl": "fail",
++    "duplicate_keys.jsonl": "pass",
++    "duplicate_records.jsonl": "pass",
++    "hidden_reasoning.jsonl": "pass",
++    "interrupted.jsonl": "interrupted",
++    "malformed.jsonl": "pass",
++    "partial.jsonl": "interrupted",
++    "query_secret.jsonl": "pass",
++    "secret_leak.jsonl": "pass",
++    "successful.jsonl": "pass",
++    "truncated.jsonl": "pass",
++    "unverified.jsonl": None,
++}
++
++
++def canonical_dumps(value: Any) -> str:
++    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
++
++
++def sha256_bytes(payload: bytes) -> str:
++    return hashlib.sha256(payload).hexdigest()
++
++
++def sha256_text(text: str) -> str:
++    return sha256_bytes(text.encode("utf-8"))
++
++
++def default_admission(**overrides: Any) -> dict[str, Any]:
++    payload = json.loads(ADMISSION_FIXTURE.read_text(encoding="utf-8"))
++    if not isinstance(payload, dict):
++        raise TypeError("local_model_admission_v1 fixture must be an object")
++    return _deep_merge(payload, overrides)
++
++
++def default_verifier(*, outcome: str | None = "pass") -> dict[str, Any]:
++    artifacts = [VERIFIER_ARTIFACT] if outcome else []
++    return {
++        "artifact_sha256": artifacts,
++        "identity": "pytest-local",
++        "outcome": outcome,
++        "version": "8.4.1",
++    }
++
++
++def default_manifest(
++    *, admission_report_sha256: str, **overrides: Any
++) -> dict[str, Any]:
++    payload: dict[str, Any] = {
++        "schema_version": "hermes_run_manifest_v1",
++        "producer": {
++            "name": "hermes-agent",
++            "version": "0.4.0",
++            "revision": PRODUCER_REVISION,
++        },
++        "model": {
++            "name": "qwen2.5-coder",
++            "tag": "7b-instruct",
++            "ollama_digest": MODEL_DIGEST,
++            "quantization": "q4_K_M",
++        },
++        "admission_report_sha256": admission_report_sha256,
++        "ollama": {
++            "runtime": "ollama",
++            "version": "0.11.4",
++            "endpoint": "http://127.0.0.1:11434",
++            "config": {"num_ctx": 8192, "keep_alive": "5m"},
++        },
++        "repository": {
++            "owner": "rmems",
++            "name": "synthetic-loop",
++            "url": "https://github.com/rmems/synthetic-loop",
++            "base_oid": BASE_OID,
++            "head_oid": HEAD_OID,
++        },
++        "workspace": {
++            "id": "ws-isolated-001",
++            "kind": "isolated",
++        },
++        "reasoning_retention": {
++            "policy": "strip_hidden",
++            "strip_tags": ["think"],
++        },
++        "verifier": default_verifier(),
++    }
++    return _deep_merge(payload, overrides)
++
++
++def hermes_record(
++    *,
++    run_id: str,
++    completed: bool = True,
++    partial: bool = False,
++    content: str | dict[str, Any] = "I'll inspect loop.py and apply a minimal fix.",
++    reasoning: str | None = None,
++    extra_message: dict[str, Any] | None = None,
++    trace_verifier: dict[str, Any] | None = None,
++    **overrides: Any,
++) -> dict[str, Any]:
++    assistant: dict[str, Any] = {
++        "role": "assistant",
++        "timestamp": "2026-09-21T12:00:10Z",
++        "content": content,
++    }
++    if reasoning is not None:
++        assistant["reasoning"] = reasoning
++    messages: list[Any] = [
++        {
++            "role": "user",
++            "timestamp": "2026-09-21T12:00:00Z",
++            "content": "Fix the failing empty-list test in loop.py.",
++        },
++        assistant,
++        {
++            "role": "tool",
++            "name": "apply_patch",
++            "timestamp": "2026-09-21T12:00:20Z",
++            "content": "--- a/loop.py\n+++ b/loop.py\n@@ -1 +1 @@\n-return None\n+return []\n",
++        },
++    ]
++    if extra_message is not None:
++        messages.append(extra_message)
++    payload: dict[str, Any] = {
++        "run_id": run_id,
++        "session_id": f"sess-{run_id}",
++        "task_id": f"task-{run_id}",
++        "raw_trace_id": f"trace-{run_id}",
++        "completed": completed,
++        "partial": partial,
++        "started_at": "2026-09-21T12:00:00Z",
++        "ended_at": "2026-09-21T12:01:00Z",
++        "issue_statement": "Empty lists currently return None instead of [].",
++        "messages": messages,
++        "repository": {
++            "owner": "rmems",
++            "name": "synthetic-loop",
++            "url": "https://github.com/rmems/synthetic-loop",
++            "base_oid": BASE_OID,
++            "head_oid": HEAD_OID,
++        },
++        "workspace": {"id": "ws-isolated-001", "kind": "isolated"},
++    }
++    if trace_verifier is not None:
++        payload["verifier"] = trace_verifier
++    return _deep_merge(payload, overrides)
++
++
++def write_json(path: Path, payload: Any) -> bytes:
++    raw = (canonical_dumps(payload) + "\n").encode("utf-8")
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_bytes(raw)
++    return raw
++
++
++def write_jsonl(path: Path, records: list[dict[str, Any]]) -> bytes:
++    raw = "".join(canonical_dumps(record) + "\n" for record in records).encode("utf-8")
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_bytes(raw)
++    return raw
++
++
++def write_scenario(
++    tmp_path: Path,
++    records: list[dict[str, Any]],
++    *,
++    admission: dict[str, Any] | None = None,
++    manifest_overrides: dict[str, Any] | None = None,
++    input_name: str = "input.jsonl",
++) -> dict[str, Path]:
++    admission_payload = default_admission() if admission is None else admission
++    admission_path = tmp_path / "model_admission.json"
++    admission_bytes = write_json(admission_path, admission_payload)
++    manifest = default_manifest(
++        admission_report_sha256=sha256_bytes(admission_bytes),
++        **(manifest_overrides or {}),
++    )
++    manifest_path = tmp_path / "run_manifest.json"
++    write_json(manifest_path, manifest)
++    input_path = tmp_path / input_name
++    write_jsonl(input_path, records)
++    return {
++        "admission": admission_path,
++        "input": input_path,
++        "manifest": manifest_path,
++        "output": tmp_path / "canonical.jsonl",
++        "report": tmp_path / "decision-report.json",
++    }
++
++
++def write_fixture_scenario(tmp_path: Path, name: str) -> dict[str, Path]:
++    outcome = FIXTURE_VERIFIER_OUTCOMES[name]
++    paths = write_scenario(
++        tmp_path,
++        [],
++        manifest_overrides={"verifier": default_verifier(outcome=outcome)},
++    )
++    paths["input"].write_bytes((FIXTURES / name).read_bytes())
++    return paths
++
++
++def cli_args(paths: dict[str, Path]) -> list[str]:
++    return [
++        "--input",
++        str(paths["input"]),
++        "--run-manifest",
++        str(paths["manifest"]),
++        "--model-admission",
++        str(paths["admission"]),
++        "--output",
++        str(paths["output"]),
++        "--report",
++        str(paths["report"]),
++    ]
++
++
++def _deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
++    merged = dict(base)
++    for key, value in overrides.items():
++        if isinstance(value, dict) and isinstance(merged.get(key), dict):
++            merged[key] = _deep_merge(merged[key], value)
++        else:
++            merged[key] = value
++    return merged
+diff --git a/tests/test_normalize_hermes_trajectories.py b/tests/test_normalize_hermes_trajectories.py
+new file mode 100644
+index 0000000..345e641
+--- /dev/null
++++ b/tests/test_normalize_hermes_trajectories.py
+@@ -0,0 +1,677 @@
++"""Normalize verified Hermes traces into trajectory v1.1 (Linear RM-1348)."""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import jsonschema
++import pytest
++
++from hermes_fixtures import (
++    ADMISSION_FIXTURE,
++    ROOT,
++    SYNTHETIC_GITHUB_TOKEN,
++    VERIFIER_ARTIFACT,
++    cli_args,
++    default_admission,
++    default_verifier,
++    hermes_record,
++    sha256_bytes,
++    write_json,
++    write_scenario,
++    write_fixture_scenario,
++)
++from lib.hermes_normalize import LocalFileBoundary, canonical_dumps, normalize_files
++from normalize_hermes_trajectories import build_parser, main
++from validate_jsonl import load_schema, validate_file
++
++V1_1_SCHEMA = ROOT / "schemas" / "trajectory_v1_1.schema.json"
++V0_SCHEMA = ROOT / "schemas" / "pr_trajectory.schema.json"
++V1_SCHEMA = ROOT / "schemas" / "trajectory_v1.schema.json"
++
++
++def _load_jsonl(path: Path) -> list[dict]:
++    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
++    return [json.loads(line) for line in lines]
++
++
++def _run(paths: dict[str, Path], extra: list[str] | None = None) -> int:
++    argv = cli_args(paths)
++    if extra:
++        argv.extend(extra)
++    return main(argv)
++
++
++def _scenario_from_fixture(tmp_path: Path, name: str) -> dict[str, Path]:
++    return write_fixture_scenario(tmp_path, name)
++
++
++def _report(paths: dict[str, Path]) -> dict:
++    return json.loads(paths["report"].read_text(encoding="utf-8"))
++
++
++def test_cli_contract_exposes_exact_flags():
++    actions = {action.dest for action in build_parser()._actions}
++    assert {
++        "input",
++        "run_manifest",
++        "model_admission",
++        "output",
++        "report",
++    }.issubset(actions)
++    usage = build_parser().format_help()
++    assert "--input" in usage
++    assert "--run-manifest" in usage
++    assert "--model-admission" in usage
++    assert "--output" in usage
++    assert "--report" in usage
++
++
++def test_successful_run_is_accepted_v1_1_and_binds_provenance(tmp_path: Path):
++    paths = _scenario_from_fixture(tmp_path, "successful.jsonl")
++    assert _run(paths) == 0
++    records = _load_jsonl(paths["output"])
++    assert len(records) == 1
++    record = records[0]
++    jsonschema.Draft7Validator(
++        load_schema(V1_1_SCHEMA),
++        format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++    ).validate(record)
++    assert record["schema_version"] in ("1.1", "v1.1")
++    assert record["terminal_disposition"] == "successful"
++    assert record["execution"]["producer_completed"] is True
++    assert record["execution"]["producer_partial"] is False
++    assert "provenance_binding" not in record
++    binding = record["execution_provenance"]
++    assert binding["run_id"] == "run-success"
++    assert binding["session_id"] == "sess-run-success"
++    assert binding["task_id"] == "task-run-success"
++    assert binding["raw_trace_id"] == "trace-run-success"
++    assert binding["input_sha256"] == sha256_bytes(paths["input"].read_bytes())
++    assert binding["run_manifest_sha256"] == sha256_bytes(
++        paths["manifest"].read_bytes()
++    )
++    assert binding["admission_report_sha256"] == sha256_bytes(
++        paths["admission"].read_bytes()
++    )
++    assert binding["raw_trace_sha256"] == sha256_bytes(
++        paths["input"].read_bytes().splitlines()[0]
++    )
++    assert binding["producer"]["name"] == "hermes-agent"
++    assert binding["producer"]["revision"]
++    assert binding["model"]["ollama_digest"].startswith("sha256:")
++    assert binding["ollama"]["endpoint"].startswith("http://127.0.0.1")
++    assert binding["workspace"]["id"] == "ws-isolated-001"
++    assert binding["reasoning_retention"]["policy"] == "strip_hidden"
++    assert binding["verifier"]["identity"] == "pytest-local"
++    assert binding["verifier"]["outcome"] == "pass"
++    assert binding["verifier"]["artifact_sha256"] == [VERIFIER_ARTIFACT]
++    report = _report(paths)
++    assert report["accepted_count"] == 1
++    assert report["quarantined_count"] == 0
++    assert report["rejected_count"] == 0
++    assert report["records"][0]["status"] == "accepted"
++
++
++def test_completed_true_with_failing_verifier_is_not_successful(tmp_path: Path):
++    paths = _scenario_from_fixture(tmp_path, "completed_true_verifier_failed.jsonl")
++    assert _run(paths) == 0
++    records = _load_jsonl(paths["output"])
++    assert len(records) == 1
++    assert records[0]["execution"]["producer_completed"] is True
++    assert records[0]["terminal_disposition"] == "failed"
++    assert records[0]["terminal_disposition"] != "successful"
++    assert records[0]["execution_provenance"]["verifier"]["outcome"] == "fail"
++
++
++def test_partial_and_interrupted_runs_keep_execution_metadata(tmp_path: Path):
++    partial = _scenario_from_fixture(tmp_path / "partial", "partial.jsonl")
++    interrupted = _scenario_from_fixture(tmp_path / "interrupted", "interrupted.jsonl")
++    assert _run(partial) == 0
++    assert _run(interrupted) == 0
++    partial_record = _load_jsonl(partial["output"])[0]
++    interrupted_record = _load_jsonl(interrupted["output"])[0]
++    assert partial_record["execution"]["producer_partial"] is True
++    assert partial_record["execution"]["producer_completed"] is False
++    assert partial_record["terminal_disposition"] == "interrupted"
++    assert interrupted_record["terminal_disposition"] == "interrupted"
++    assert interrupted_record["execution"]["producer_completed"] is False
++
++
++def test_unverified_run_is_quarantined(tmp_path: Path):
++    paths = _scenario_from_fixture(tmp_path, "unverified.jsonl")
++    assert _run(paths) == 0
++    assert paths["output"].read_text(encoding="utf-8") == ""
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["quarantined_count"] == 1
++    assert report["records"][0]["status"] == "quarantined"
++    assert "unverified" in ",".join(report["records"][0]["reason_codes"])
++
++
++def test_hidden_reasoning_is_stripped_from_trainable_views(tmp_path: Path):
++    paths = _scenario_from_fixture(tmp_path, "hidden_reasoning.jsonl")
++    assert _run(paths) == 0
++    dumped = paths["output"].read_text(encoding="utf-8")
++    assert "<think>" not in dumped.lower()
++    assert "</think>" not in dumped.lower()
++    assert "hide this private chain" not in dumped
++    assert "internal plan must not be trainable" not in dumped
++    record = _load_jsonl(paths["output"])[0]
++    assert "I'll inspect loop.py" in json.dumps(record)
++    assert record["execution_provenance"]["reasoning_retention"]["policy"] == (
++        "strip_hidden"
++    )
++
++
++def test_secret_leakage_is_rejected_and_not_emitted(tmp_path: Path):
++    paths = _scenario_from_fixture(tmp_path, "secret_leak.jsonl")
++    original = paths["input"].read_bytes()
++    assert _run(paths) == 0
++    assert paths["input"].read_bytes() == original
++    assert paths["output"].read_text(encoding="utf-8") == ""
++    report = _report(paths)
++    assert report["rejected_count"] == 1
++    assert "secret" in ",".join(report["records"][0]["reason_codes"])
++    dumped = paths["report"].read_text(encoding="utf-8")
++    assert "ghp_" not in dumped
++
++
++def test_query_secrets_are_stripped_from_accepted_output(tmp_path: Path):
++    paths = _scenario_from_fixture(tmp_path, "query_secret.jsonl")
++    assert _run(paths) == 0
++    dumped = paths["output"].read_text(encoding="utf-8")
++    assert "supersecretvalue1" not in dumped
++    assert "access_token" not in dumped
++    record = _load_jsonl(paths["output"])[0]
++    assert record["schema_version"] in ("1.1", "v1.1")
++
++
++def test_malformed_and_truncated_jsonl_are_rejected(tmp_path: Path):
++    malformed = _scenario_from_fixture(tmp_path / "malformed", "malformed.jsonl")
++    truncated = _scenario_from_fixture(tmp_path / "truncated", "truncated.jsonl")
++    assert _run(malformed) == 0
++    assert _run(truncated) == 0
++    malformed_report = _report(malformed)
++    truncated_report = _report(truncated)
++    assert malformed_report["rejected_count"] == 1
++    assert truncated_report["rejected_count"] == 1
++    assert malformed["output"].read_text(encoding="utf-8") == ""
++    assert truncated["output"].read_text(encoding="utf-8") == ""
++    assert "invalid_json" in malformed_report["records"][0]["reason_codes"]
++    assert "invalid_json" in truncated_report["records"][0]["reason_codes"]
++
++
++def test_duplicate_keys_and_duplicate_records_are_rejected(tmp_path: Path):
++    keys = _scenario_from_fixture(tmp_path / "keys", "duplicate_keys.jsonl")
++    records = _scenario_from_fixture(tmp_path / "records", "duplicate_records.jsonl")
++    assert _run(keys) == 0
++    assert _run(records) == 0
++    keys_report = _report(keys)
++    records_report = _report(records)
++    assert keys_report["rejected_count"] == 1
++    assert "duplicate_key" in ",".join(keys_report["records"][0]["reason_codes"])
++    statuses = [row["status"] for row in records_report["records"]]
++    assert statuses[0] == "accepted"
++    assert statuses[1] == "rejected"
++    assert "duplicate" in ",".join(records_report["records"][1]["reason_codes"])
++    assert len(_load_jsonl(records["output"])) == 1
++
++
++def test_admission_digest_mismatch_fails_closed(tmp_path: Path):
++    paths = write_scenario(tmp_path, [hermes_record(run_id="run-mismatch")])
++    manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
++    manifest["admission_report_sha256"] = "0" * 64
++    write_json(paths["manifest"], manifest)
++    assert _run(paths) == 0
++    assert paths["output"].read_text(encoding="utf-8") == ""
++    report = _report(paths)
++    assert report["rejected_count"] >= 1
++    assert any("digest" in ",".join(row["reason_codes"]) for row in report["records"])
++
++
++def test_output_and_report_cannot_alias_inputs(tmp_path: Path):
++    paths = write_scenario(tmp_path, [hermes_record(run_id="run-alias")])
++    original = paths["input"].read_bytes()
++    colliding = dict(paths)
++    colliding["output"] = paths["input"]
++    assert _run(colliding) == 2
++    assert paths["input"].read_bytes() == original
++    colliding_report = dict(paths)
++    colliding_report["report"] = paths["manifest"]
++    assert _run(colliding_report) == 2
++    colliding_same = dict(paths)
++    colliding_same["output"] = paths["report"]
++    colliding_same["report"] = paths["report"]
++    assert _run(colliding_same) == 2
++
++
++def test_hard_link_output_collision_fails_closed(tmp_path: Path):
++    paths = write_scenario(tmp_path, [hermes_record(run_id="run-link")])
++    linked = tmp_path / "linked-output.jsonl"
++    linked.hardlink_to(paths["input"])
++    colliding = dict(paths)
++    colliding["output"] = linked
++    original = paths["input"].read_bytes()
++    assert _run(colliding) == 2
++    assert paths["input"].read_bytes() == original
++
++
++def test_rerun_is_byte_identical_canonical_json(tmp_path: Path):
++    paths = write_scenario(
++        tmp_path,
++        [hermes_record(run_id="run-stable", content="Stable observable answer.")],
++    )
++    assert _run(paths) == 0
++    first_out = paths["output"].read_bytes()
++    first_report = paths["report"].read_bytes()
++    assert b"\r" not in first_out
++    assert first_out.endswith(b"\n")
++    assert first_report.endswith(b"\n")
++    assert _run(paths) == 0
++    assert paths["output"].read_bytes() == first_out
++    assert paths["report"].read_bytes() == first_report
++    line = first_out.strip()
++    parsed = json.loads(line)
++    assert line == canonical_dumps(parsed).encode("utf-8")
++    assert list(json.loads(first_report).keys()) == sorted(
++        json.loads(first_report).keys()
++    )
++
++
++def test_local_file_boundary_rejects_http_and_allows_injected_replay(tmp_path: Path):
++    paths = write_scenario(tmp_path, [hermes_record(run_id="run-replay")])
++    frozen = {
++        paths["input"].resolve(): paths["input"].read_bytes(),
++        paths["manifest"].resolve(): paths["manifest"].read_bytes(),
++        paths["admission"].resolve(): paths["admission"].read_bytes(),
++    }
++    boundary = LocalFileBoundary(opener=lambda path: frozen[path.resolve()])
++    report = normalize_files(
++        input_path=paths["input"],
++        run_manifest_path=paths["manifest"],
++        model_admission_path=paths["admission"],
++        output_path=paths["output"],
++        report_path=paths["report"],
++        source=boundary,
++    )
++    assert report["accepted_count"] == 1
++    with pytest.raises(ValueError, match="local file"):
++        LocalFileBoundary().read_bytes(Path("https://example.test/trace.jsonl"))
++
++
++def test_existing_v0_and_v1_validators_still_pass():
++    v0 = jsonschema.Draft7Validator(
++        load_schema(V0_SCHEMA),
++        format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++    )
++    v1 = jsonschema.Draft7Validator(
++        load_schema(V1_SCHEMA),
++        format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++    )
++    errors = validate_file(
++        ROOT / "tests" / "fixtures" / "v1" / "software_valid.jsonl",
++        v0,
++        v1,
++        strict_policy=True,
++    )
++    assert errors == []
++
++
++def test_replacement_does_not_ship_github_page_cassettes():
++    assert not (ROOT / "schemas" / "github_page_cassette.schema.json").exists()
++    assert not (ROOT / "scripts" / "lib" / "github_page_fixtures.py").exists()
++    assert not (
++        ROOT / "tests" / "fixtures" / "github" / "pages" / "pr89_multipage.json"
++    ).exists()
++
++
++def test_custody_and_reasoning_docs_exist():
++    assert (ROOT / "docs" / "hermes-raw-trace-custody.md").is_file()
++    assert (ROOT / "docs" / "hermes-reasoning-retention.md").is_file()
++
++
++def test_nonfinite_json_is_rejected(tmp_path: Path):
++    paths = write_scenario(tmp_path, [hermes_record(run_id="run-nan")])
++    text = paths["input"].read_text(encoding="utf-8").replace('"run-nan"', "NaN")
++    paths["input"].write_text(text, encoding="utf-8")
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["rejected_count"] == 1
++    assert "invalid_json" in report["records"][0]["reason_codes"]
++
++
++def test_admission_model_mismatch_fails_closed(tmp_path: Path):
++    admission = default_admission()
++    admission["model"]["name"] = "other-model"
++    paths = write_scenario(
++        tmp_path,
++        [hermes_record(run_id="run-model")],
++        admission=admission,
++    )
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++    joined = ",".join(report["records"][0]["reason_codes"])
++    assert "model" in joined or "mismatch" in joined
++
++
++def test_shared_admission_fixture_uses_singular_decision_interface():
++    payload = json.loads(ADMISSION_FIXTURE.read_text(encoding="utf-8"))
++    assert payload["schema_version"] == "local_model_admission_v1"
++    assert payload["decision"] == "accepted"
++    assert payload["reasons"] == []
++    assert payload["model"]["ollama_digest"].startswith("sha256:")
++    assert payload["runtime"]["name"] == "ollama"
++    assert payload["rights"]["identifier"] == "Apache-2.0"
++    assert payload["provider"]["config"]["no_cloud"] is True
++    assert payload["cloud_fallback_allowed"] is False
++    assert payload["probe"]["endpoint"].startswith("http://127.0.0.1")
++    assert len(payload["input_digests"]["probe"]) == 64
++    assert default_admission()["decision"] == "accepted"
++    assert "disposition" not in default_admission()
++
++
++def test_legacy_disposition_admission_is_rejected(tmp_path: Path):
++    admission = default_admission()
++    admission.pop("decision")
++    admission["disposition"] = "accepted"
++    paths = write_scenario(
++        tmp_path,
++        [hermes_record(run_id="run-disposition")],
++        admission=admission,
++    )
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++    joined = ",".join(report["records"][0]["reason_codes"])
++    assert "admission" in joined
++
++
++def test_non_accepted_decision_admission_is_rejected(tmp_path: Path):
++    admission = default_admission(decision="quarantined")
++    paths = write_scenario(
++        tmp_path,
++        [hermes_record(run_id="run-decision")],
++        admission=admission,
++    )
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++    assert "admission_rejected" in report["records"][0]["reason_codes"]
++
++
++def test_manifest_verifier_conflict_with_trace_is_rejected(tmp_path: Path):
++    record = hermes_record(
++        run_id="run-verifier-conflict",
++        trace_verifier={
++            "artifact_sha256": [
++                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
++            ],
++            "identity": "trace-self",
++            "outcome": "pass",
++            "version": "0.0.0",
++        },
++    )
++    paths = write_scenario(
++        tmp_path,
++        [record],
++        manifest_overrides={"verifier": default_verifier(outcome="fail")},
++    )
++    assert _run(paths) == 0
++    assert paths["output"].read_text(encoding="utf-8") == ""
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++    joined = ",".join(report["records"][0]["reason_codes"])
++    assert "verifier" in joined
++
++
++def test_manifest_repository_and_workspace_conflicts_are_rejected(tmp_path: Path):
++    record = hermes_record(run_id="run-repo-conflict")
++    record["repository"]["head_oid"] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
++    record["workspace"] = {"id": "ws-shared-home", "kind": "shared"}
++    paths = write_scenario(tmp_path, [record])
++    assert _run(paths) == 0
++    dumped = paths["output"].read_text(encoding="utf-8")
++    assert dumped == ""
++    assert "deadbeef" not in dumped
++    assert "ws-shared-home" not in dumped
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++    joined = ",".join(report["records"][0]["reason_codes"])
++    assert "repository" in joined or "workspace" in joined or "conflict" in joined
++
++
++def test_manifest_ollama_credential_is_rejected_and_not_emitted(tmp_path: Path):
++    paths = write_scenario(
++        tmp_path,
++        [hermes_record(run_id="run-manifest-secret")],
++        manifest_overrides={
++            "ollama": {"config": {"api_key": SYNTHETIC_GITHUB_TOKEN}},
++        },
++    )
++    assert _run(paths) == 0
++    assert paths["output"].read_text(encoding="utf-8") == ""
++    report_text = paths["report"].read_text(encoding="utf-8")
++    assert "ghp_" not in report_text
++    report = json.loads(report_text)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++    assert "secret" in ",".join(report["records"][0]["reason_codes"])
++
++
++def test_missing_ids_and_string_booleans_are_rejected(tmp_path: Path):
++    record = hermes_record(run_id="run-coerced")
++    del record["session_id"]
++    del record["task_id"]
++    del record["raw_trace_id"]
++    record["completed"] = "false"
++    record["partial"] = "false"
++    paths = write_scenario(tmp_path, [record])
++    assert _run(paths) == 0
++    assert paths["output"].read_text(encoding="utf-8") == ""
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++    joined = ",".join(report["records"][0]["reason_codes"])
++    assert "identity" in joined or "execution" in joined or "invalid" in joined
++
++
++def test_empty_input_with_invalid_binding_is_explicitly_rejected(tmp_path: Path):
++    paths = write_scenario(tmp_path, [])
++    paths["input"].write_bytes(b"")
++    write_json(paths["manifest"], {"schema_version": "not-a-manifest"})
++    write_json(paths["admission"], {"schema_version": "not-admission"})
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["quarantined_count"] == 0
++    assert report["rejected_count"] >= 1
++    assert report["records"]
++    assert report["records"][0]["reason_codes"]
++
++
++def test_empty_input_with_valid_binding_is_explicitly_rejected(tmp_path: Path):
++    paths = write_scenario(tmp_path, [])
++    paths["input"].write_bytes(b"")
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["quarantined_count"] == 0
++    assert report["rejected_count"] >= 1
++    assert "empty_input" in report["records"][0]["reason_codes"]
++
++
++def test_structured_credential_content_is_rejected(tmp_path: Path):
++    record = hermes_record(
++        run_id="run-structured-secret",
++        content={"api_key": "ordinarysecretvalue123", "answer": "visible"},
++    )
++    paths = write_scenario(tmp_path, [record])
++    assert _run(paths) == 0
++    dumped = paths["output"].read_text(encoding="utf-8")
++    assert dumped == ""
++    assert "ordinarysecretvalue123" not in dumped
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++
++
++def test_credential_url_path_is_rejected(tmp_path: Path):
++    record = hermes_record(
++        run_id="run-path-secret",
++        extra_message={
++            "role": "tool",
++            "name": "fetch",
++            "timestamp": "2026-09-21T12:00:30Z",
++            "content": "https://example.test/token/ordinarysecretvalue123",
++        },
++    )
++    paths = write_scenario(tmp_path, [record])
++    assert _run(paths) == 0
++    dumped = paths["output"].read_text(encoding="utf-8")
++    assert dumped == ""
++    assert "ordinarysecretvalue123" not in dumped
++    report = _report(paths)
++    assert report["rejected_count"] >= 1
++
++
++def test_casefolded_hidden_reasoning_and_manifest_hidden_fields_are_rejected(
++    tmp_path: Path,
++):
++    record = hermes_record(run_id="run-reason-case")
++    record["messages"][1]["Reasoning"] = "case-folded private plan"
++    paths = write_scenario(
++        tmp_path,
++        [record],
++        manifest_overrides={
++            "reasoning_retention": {"hidden_reasoning": "keep this private"},
++        },
++    )
++    assert _run(paths) == 0
++    dumped = paths["output"].read_text(encoding="utf-8")
++    assert "case-folded private plan" not in dumped
++    assert "keep this private" not in dumped
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++
++
++def test_malformed_identity_and_invalid_url_do_not_abort_batch(tmp_path: Path):
++    bad_id = hermes_record(run_id="run-list-id")
++    bad_id["run_id"] = []
++    bad_url = hermes_record(
++        run_id="run-bad-url",
++        extra_message={
++            "role": "tool",
++            "name": "fetch",
++            "timestamp": "2026-09-21T12:00:30Z",
++            "content": "http://example.test:notaport/path",
++        },
++    )
++    good = hermes_record(run_id="run-after-bad")
++    paths = write_scenario(tmp_path, [bad_id, bad_url, good])
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert len(report["records"]) == 3
++    assert report["records"][0]["status"] == "rejected"
++    assert report["records"][1]["status"] == "rejected"
++    assert report["records"][2]["status"] == "accepted"
++    assert report["accepted_count"] == 1
++    assert len(_load_jsonl(paths["output"])) == 1
++
++
++def test_successful_disposition_requires_independent_verifier_evidence(tmp_path: Path):
++    paths = write_scenario(
++        tmp_path,
++        [hermes_record(run_id="run-self-verify")],
++        manifest_overrides={
++            "verifier": {
++                "artifact_sha256": [],
++                "identity": "hermes-agent",
++                "outcome": "pass",
++                "version": "0.4.0",
++            }
++        },
++    )
++    assert _run(paths) == 0
++    assert paths["output"].read_text(encoding="utf-8") == ""
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    joined = ",".join(report["records"][0]["reason_codes"])
++    assert "verifier" in joined
++
++
++def test_normalized_output_passes_strict_jsonl_validator(tmp_path: Path):
++    paths = write_scenario(tmp_path, [hermes_record(run_id="run-validate")])
++    assert _run(paths) == 0
++    v0 = jsonschema.Draft7Validator(
++        load_schema(V0_SCHEMA),
++        format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++    )
++    v1 = jsonschema.Draft7Validator(
++        load_schema(V1_SCHEMA),
++        format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER,
++    )
++    errors = validate_file(paths["output"], v0, v1, strict_policy=True)
++    assert errors == []
++    v0_errors = validate_file(
++        ROOT / "tests" / "fixtures" / "v1" / "software_valid.jsonl",
++        v0,
++        v1,
++        strict_policy=True,
++    )
++    assert v0_errors == []
++
++
++def test_trajectory_id_uses_full_identity_tuple(tmp_path: Path):
++    first = hermes_record(run_id="same")
++    second = hermes_record(run_id="same")
++    second["session_id"] = "sess-other"
++    second["task_id"] = "task-other"
++    second["raw_trace_id"] = "trace-other"
++    paths = write_scenario(tmp_path, [first, second])
++    assert _run(paths) == 0
++    records = _load_jsonl(paths["output"])
++    assert len(records) == 2
++    assert records[0]["trajectory_id"] != records[1]["trajectory_id"]
++    assert records[0]["trajectory_id"] != "hermes:same"
++    assert "sess-same" in records[0]["trajectory_id"]
++    assert "sess-other" in records[1]["trajectory_id"]
++
++
++def test_non_object_message_is_rejected(tmp_path: Path):
++    record = hermes_record(run_id="run-msg")
++    record["messages"].append("not-an-object")
++    paths = write_scenario(tmp_path, [record])
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert report["rejected_count"] >= 1
++    assert paths["output"].read_text(encoding="utf-8") == ""
++
++
++def test_ipv6_loopback_endpoint_keeps_brackets(tmp_path: Path):
++    paths = write_scenario(
++        tmp_path,
++        [hermes_record(run_id="run-ipv6")],
++        manifest_overrides={"ollama": {"endpoint": "http://[::1]:11434"}},
++        admission=default_admission(),
++    )
++    admission = json.loads(paths["admission"].read_text(encoding="utf-8"))
++    admission["runtime"]["endpoint"] = "http://[::1]:11434"
++    admission["probe"]["endpoint"] = "http://[::1]:11434"
++    write_json(paths["admission"], admission)
++    manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
++    manifest["admission_report_sha256"] = sha256_bytes(paths["admission"].read_bytes())
++    write_json(paths["manifest"], manifest)
++    assert _run(paths) == 0
++    record = _load_jsonl(paths["output"])[0]
++    assert record["execution_provenance"]["ollama"]["endpoint"] == "http://[::1]:11434"
++    assert "http://::1" not in paths["output"].read_text(encoding="utf-8")
+diff --git a/tests/test_trajectory_v1_1_schema.py b/tests/test_trajectory_v1_1_schema.py
+new file mode 100644
+index 0000000..cb6f7a6
+--- /dev/null
++++ b/tests/test_trajectory_v1_1_schema.py
+@@ -0,0 +1,124 @@
++"""Trajectory v1.1 schema presence while v0 / v1.0 stay unchanged."""
++
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import jsonschema
++
++ROOT = Path(__file__).resolve().parents[1]
++V0_SCHEMA = ROOT / "schemas" / "pr_trajectory.schema.json"
++V1_SCHEMA = ROOT / "schemas" / "trajectory_v1.schema.json"
++V1_1_SCHEMA = ROOT / "schemas" / "trajectory_v1_1.schema.json"
++MANIFEST_SCHEMA = ROOT / "schemas" / "hermes_run_manifest.schema.json"
++RAW_SCHEMA = ROOT / "schemas" / "hermes_raw_trace.schema.json"
++V1_SOFTWARE = ROOT / "tests" / "fixtures" / "v1" / "software_valid.jsonl"
++V0_EXAMPLE = ROOT / "datasets" / "examples" / "trajectory-v0-example.json"
++
++
++def _load(path: Path) -> dict:
++    return json.loads(path.read_text(encoding="utf-8"))
++
++
++def test_v1_0_schema_version_enum_is_unchanged():
++    schema = _load(V1_SCHEMA)
++    assert schema["properties"]["schema_version"]["enum"] == ["1", "1.0", "v1"]
++
++
++def test_v0_example_still_matches_v0_schema():
++    schema = _load(V0_SCHEMA)
++    jsonschema.Draft7Validator(schema).validate(_load(V0_EXAMPLE))
++
++
++def test_v1_software_fixture_still_matches_v1_schema():
++    schema = _load(V1_SCHEMA)
++    record = json.loads(V1_SOFTWARE.read_text(encoding="utf-8").splitlines()[0])
++    jsonschema.Draft7Validator(
++        schema, format_checker=jsonschema.Draft7Validator.FORMAT_CHECKER
++    ).validate(record)
++
++
++def test_v1_1_schema_declares_new_version_and_bindings():
++    schema = _load(V1_1_SCHEMA)
++    assert schema["properties"]["schema_version"]["enum"] == ["1.1", "v1.1"]
++    required = set(schema["required"])
++    assert "execution" in required
++    assert "execution_provenance" in required
++    assert "provenance_binding" not in required
++    assert schema.get("additionalProperties") is False
++    execution = schema["properties"]["execution"]["required"]
++    assert "producer_completed" in execution
++    assert "producer_partial" in execution
++    binding = schema["properties"]["execution_provenance"]["required"]
++    for field in (
++        "run_id",
++        "session_id",
++        "task_id",
++        "raw_trace_id",
++        "producer",
++        "model",
++        "ollama",
++        "workspace",
++        "reasoning_retention",
++        "verifier",
++        "input_sha256",
++        "admission_report_sha256",
++        "raw_trace_sha256",
++        "run_manifest_sha256",
++    ):
++        assert field in binding
++    digest = schema["properties"]["execution_provenance"]["properties"]["model"][
++        "properties"
++    ]["ollama_digest"]
++    digest_pattern = (
++        digest.get("pattern") or schema["definitions"]["modelDigest"]["pattern"]
++    )
++    assert "sha256:" in digest_pattern
++    policy = schema["properties"]["execution_provenance"]["properties"][
++        "reasoning_retention"
++    ]["properties"]["policy"]
++    assert policy.get("const") == "strip_hidden"
++
++
++def test_hermes_run_manifest_schema_binds_identities():
++    schema = _load(MANIFEST_SCHEMA)
++    assert schema["properties"]["schema_version"]["const"] == "hermes_run_manifest_v1"
++    assert schema.get("additionalProperties") is False
++    required = set(schema["required"])
++    for field in (
++        "producer",
++        "model",
++        "admission_report_sha256",
++        "ollama",
++        "repository",
++        "workspace",
++        "reasoning_retention",
++        "verifier",
++    ):
++        assert field in required
++    verifier = schema["properties"]["verifier"]["required"]
++    for field in ("identity", "version", "outcome", "artifact_sha256"):
++        assert field in verifier
++
++
++def test_raw_hermes_schema_requires_identities_and_booleans():
++    schema = _load(RAW_SCHEMA)
++    required = set(schema["required"])
++    for field in (
++        "run_id",
++        "session_id",
++        "task_id",
++        "raw_trace_id",
++        "completed",
++        "partial",
++        "messages",
++    ):
++        assert field in required
++    assert schema["properties"]["completed"]["type"] == "boolean"
++    assert schema["properties"]["partial"]["type"] == "boolean"
++    assert schema["properties"]["messages"]["items"]["type"] == "object"
++    assert (
++        schema["properties"]["messages"]["items"]["properties"]["content"]["type"]
++        == "string"
++    )
+-- 
+2.43.0
+
+
+From b7fca79f82d53f3d273b1e072c44628bdd53c947 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Mon, 21 Sep 2026 17:22:11 +0000
+Subject: [PATCH 2/2] fix(ingest): tighten Hermes admission binding and safety
+ regressions
+
+Align the shared local_model_admission_v1 fixture with PR #75 structured
+accepted reports, recompute evidence digests, cross-bind runtime/provider/
+model fields to the manifest, require isolated workspaces and external
+verifiers, carry repository revisions in execution_provenance, and extend
+secret, hidden-reasoning, URL, trajectory-id, and tool-payload fail-closed
+checks with focused regressions.
+---
+ schemas/hermes_raw_trace.schema.json          |   8 +-
+ schemas/hermes_run_manifest.schema.json       |   7 +-
+ schemas/trajectory_v1_1.schema.json           |  20 +-
+ scripts/lib/hermes_normalize.py               | 217 +++++++++++++---
+ scripts/lib/hermes_sanitize.py                |  28 ++-
+ .../hermes/local_model_admission_v1.json      |  15 +-
+ tests/hermes_fixtures.py                      |  22 +-
+ tests/test_normalize_hermes_trajectories.py   | 236 +++++++++++++++++-
+ tests/test_trajectory_v1_1_schema.py          |   2 +
+ 9 files changed, 510 insertions(+), 45 deletions(-)
+
+diff --git a/schemas/hermes_raw_trace.schema.json b/schemas/hermes_raw_trace.schema.json
+index 72beafa..86bef88 100644
+--- a/schemas/hermes_raw_trace.schema.json
++++ b/schemas/hermes_raw_trace.schema.json
+@@ -44,6 +44,7 @@
+       "items": {
+         "type": "object",
+         "required": ["role", "content"],
++        "additionalProperties": false,
+         "properties": {
+           "role": { "type": "string", "minLength": 1 },
+           "content": { "type": "string" },
+@@ -53,7 +54,12 @@
+           "hidden_reasoning": true,
+           "thinking": true,
+           "thought": true,
+-          "thoughts": true
++          "thoughts": true,
++          "analysis": true,
++          "scratchpad": true,
++          "chain_of_thought": true,
++          "chain-of-thought": true,
++          "cot": true
+         }
+       }
+     },
+diff --git a/schemas/hermes_run_manifest.schema.json b/schemas/hermes_run_manifest.schema.json
+index 8ae7570..5e075bf 100644
+--- a/schemas/hermes_run_manifest.schema.json
++++ b/schemas/hermes_run_manifest.schema.json
+@@ -54,7 +54,8 @@
+         "name": { "type": "string", "minLength": 1 },
+         "tag": { "type": "string", "minLength": 1 },
+         "ollama_digest": { "$ref": "#/definitions/modelDigest" },
+-        "quantization": { "type": "string" }
++        "quantization": { "type": "string", "minLength": 1 },
++        "upstream_revision": { "type": "string", "minLength": 1 }
+       }
+     },
+     "admission_report_sha256": { "$ref": "#/definitions/sha256" },
+@@ -91,10 +92,10 @@
+     "workspace": {
+       "type": "object",
+       "additionalProperties": false,
+-      "required": ["id"],
++      "required": ["id", "kind"],
+       "properties": {
+         "id": { "type": "string", "minLength": 1 },
+-        "kind": { "type": "string" }
++        "kind": { "const": "isolated" }
+       }
+     },
+     "reasoning_retention": {
+diff --git a/schemas/trajectory_v1_1.schema.json b/schemas/trajectory_v1_1.schema.json
+index 080a2d3..c4d4460 100644
+--- a/schemas/trajectory_v1_1.schema.json
++++ b/schemas/trajectory_v1_1.schema.json
+@@ -106,6 +106,7 @@
+         "workspace",
+         "reasoning_retention",
+         "verifier",
++        "repository",
+         "input_sha256",
+         "admission_report_sha256",
+         "raw_trace_sha256",
+@@ -134,7 +135,8 @@
+             "name": { "type": "string", "minLength": 1 },
+             "tag": { "type": "string", "minLength": 1 },
+             "ollama_digest": { "$ref": "#/definitions/modelDigest" },
+-            "quantization": { "type": "string" }
++            "quantization": { "type": "string", "minLength": 1 },
++            "upstream_revision": { "type": "string", "minLength": 1 }
+           }
+         },
+         "ollama": {
+@@ -158,10 +160,22 @@
+         "workspace": {
+           "type": "object",
+           "additionalProperties": false,
+-          "required": ["id"],
++          "required": ["id", "kind"],
+           "properties": {
+             "id": { "type": "string", "minLength": 1 },
+-            "kind": { "type": "string" }
++            "kind": { "const": "isolated" }
++          }
++        },
++        "repository": {
++          "type": "object",
++          "additionalProperties": false,
++          "required": ["owner", "name", "base_oid", "head_oid"],
++          "properties": {
++            "owner": { "type": "string", "minLength": 1 },
++            "name": { "type": "string", "minLength": 1 },
++            "url": { "type": "string" },
++            "base_oid": { "$ref": "#/definitions/gitObjectId" },
++            "head_oid": { "$ref": "#/definitions/gitObjectId" }
+           }
+         },
+         "reasoning_retention": {
+diff --git a/scripts/lib/hermes_normalize.py b/scripts/lib/hermes_normalize.py
+index ac23bde..e92d404 100644
+--- a/scripts/lib/hermes_normalize.py
++++ b/scripts/lib/hermes_normalize.py
+@@ -8,6 +8,7 @@ import math
+ import os
+ import re
+ import tempfile
++import xml.etree.ElementTree as ET
+ from collections.abc import Callable
+ from pathlib import Path
+ from typing import Any
+@@ -18,11 +19,14 @@ from validate_jsonl import HOME_PATH_RE, load_schema
+ from .hermes_sanitize import (
+     SECRET_QUERY_KEYS,
+     UnsafeUrlError,
++    contains_header_secret,
++    hidden_markup_remains,
+     is_hidden_key,
+     sanitize_query_secrets,
+     strip_hidden_reasoning,
+ )
+ from .secrets import find_secrets
++from .source_inventory_common import sha256_json
+ 
+ try:
+     import jsonschema
+@@ -78,7 +82,13 @@ class LocalFileBoundary:
+ 
+ 
+ def canonical_dumps(value: Any) -> str:
+-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
++    return json.dumps(
++        value,
++        ensure_ascii=False,
++        separators=(",", ":"),
++        sort_keys=True,
++        allow_nan=False,
++    )
+ 
+ 
+ def sha256_bytes(payload: bytes) -> str:
+@@ -185,6 +195,8 @@ def _normalize_bytes(
+         file_reasons.append(admission_reason or "invalid_json")
+     else:
+         file_reasons.extend(_safety_reasons(admission))
++    if manifest is not None:
++        file_reasons.extend(_workspace_errors(manifest))
+     if manifest is not None and admission is not None:
+         file_reasons.extend(_binding_errors(manifest, admission, admission_digest))
+ 
+@@ -257,6 +269,55 @@ def _object_fields(value: Any, fields: tuple[str, ...]) -> bool:
+     return all(_nonempty_str(value.get(field)) for field in fields)
+ 
+ 
++_MODEL_BIND_FIELDS = (
++    "name",
++    "tag",
++    "ollama_digest",
++    "quantization",
++    "upstream_revision",
++)
++_OPTIONAL_MODEL_FIELDS = frozenset({"quantization", "upstream_revision"})
++_REQUIRED_INPUT_DIGESTS = ("admissions", "rights", "probe")
++
++
++def _present(value: Any) -> bool:
++    return value is not None and value != ""
++
++
++def _evidence_digest_ok(admission: dict[str, Any]) -> bool:
++    declared = admission.get("evidence_digest")
++    if not _is_sha256(declared):
++        return False
++    body = {key: value for key, value in admission.items() if key != "evidence_digest"}
++    return declared == sha256_json(body)
++
++
++def _fallback_disproved(admission: dict[str, Any]) -> bool:
++    provider = admission.get("provider")
++    config = provider.get("config") if isinstance(provider, dict) else None
++    fallback = admission.get("fallback_evidence")
++    if not isinstance(config, dict) or not isinstance(fallback, dict):
++        return False
++    return (
++        admission.get("cloud_fallback_allowed") is False
++        and config.get("no_cloud") is True
++        and config.get("cloud_fallback_allowed") is False
++        and fallback.get("no_cloud") is True
++        and fallback.get("cloud_fallback_allowed") is False
++        and fallback.get("unsanitized_keys") == []
++        and fallback.get("remote_endpoints") == []
++    )
++
++
++def _workspace_errors(manifest: dict[str, Any]) -> list[str]:
++    workspace = manifest.get("workspace")
++    if not isinstance(workspace, dict):
++        return ["workspace_not_isolated"]
++    if not _nonempty_str(workspace.get("id")) or workspace.get("kind") != "isolated":
++        return ["workspace_not_isolated"]
++    return []
++
++
+ def _binding_errors(
+     manifest: dict[str, Any], admission: dict[str, Any], admission_digest: str
+ ) -> list[str]:
+@@ -268,43 +329,76 @@ def _binding_errors(
+         reasons.append("admission_schema")
+     if admission.get("decision") != "accepted":
+         reasons.append("admission_rejected")
+-    if not isinstance(admission.get("reasons"), list):
+-        reasons.append("admission_schema")
+-    if admission.get("cloud_fallback_allowed") is not False:
+-        reasons.append("cloud_fallback")
++    if admission.get("reasons") != []:
++        reasons.append("admission_reasons")
++    if not _evidence_digest_ok(admission):
++        reasons.append("evidence_digest")
+     model = admission.get("model")
+     runtime = admission.get("runtime")
+     rights = admission.get("rights")
+     provider = admission.get("provider")
+     probe = admission.get("probe")
+     digests = admission.get("input_digests")
+-    if not _object_fields(model, ("name", "tag", "ollama_digest")):
++    if not _object_fields(model, ("name", "tag", "ollama_digest", "quantization")):
++        reasons.append("admission_schema")
++    if (
++        isinstance(model, dict)
++        and "upstream_revision" in model
++        and model.get("upstream_revision") is not None
++        and not _nonempty_str(model.get("upstream_revision"))
++    ):
+         reasons.append("admission_schema")
+     if not _object_fields(runtime, ("name", "version", "endpoint")):
+         reasons.append("admission_schema")
+     if not _object_fields(rights, ("identifier", "terms_source", "terms_sha256")):
+         reasons.append("admission_schema")
+-    if not isinstance(provider, dict) or not _nonempty_str(provider.get("name")):
+-        reasons.append("admission_schema")
+-    config = provider.get("config") if isinstance(provider, dict) else None
+-    if not isinstance(config, dict) or config.get("no_cloud") is not True:
+-        reasons.append("cloud_fallback")
++    if not isinstance(provider, dict) or provider.get("name") != "hermes-agent":
++        reasons.append("provider_mismatch")
+     if not _object_fields(probe, ("timestamp", "endpoint")):
+         reasons.append("admission_schema")
+-    if not isinstance(digests, dict) or not _is_sha256(digests.get("probe")):
+-        reasons.append("admission_schema")
+-    elif not _is_sha256(digests.get("rights")):
++    if not isinstance(digests, dict) or any(
++        not _is_sha256(digests.get(name)) for name in _REQUIRED_INPUT_DIGESTS
++    ):
+         reasons.append("admission_schema")
++    if not _fallback_disproved(admission):
++        reasons.append("cloud_fallback")
++    reasons.extend(_cross_bind_errors(manifest, admission))
++    return reasons
++
++
++def _cross_bind_errors(manifest: dict[str, Any], admission: dict[str, Any]) -> list[str]:
++    reasons: list[str] = []
+     manifest_model = (
+         manifest.get("model") if isinstance(manifest.get("model"), dict) else {}
+     )
+-    admission_model = model if isinstance(model, dict) else {}
+-    for field in ("name", "tag", "ollama_digest"):
+-        if str(manifest_model.get(field) or "") != str(
+-            admission_model.get(field) or ""
+-        ):
++    admission_model = (
++        admission.get("model") if isinstance(admission.get("model"), dict) else {}
++    )
++    for field in _MODEL_BIND_FIELDS:
++        left = manifest_model.get(field)
++        right = admission_model.get(field)
++        if field in _OPTIONAL_MODEL_FIELDS and not _present(left) and not _present(right):
++            continue
++        if left != right:
+             reasons.append("model_mismatch")
+             break
++    ollama = manifest.get("ollama") if isinstance(manifest.get("ollama"), dict) else {}
++    runtime = admission.get("runtime") if isinstance(admission.get("runtime"), dict) else {}
++    if (
++        runtime.get("name") != ollama.get("runtime")
++        or runtime.get("version") != ollama.get("version")
++        or runtime.get("endpoint") != ollama.get("endpoint")
++    ):
++        reasons.append("runtime_mismatch")
++    probe = admission.get("probe") if isinstance(admission.get("probe"), dict) else {}
++    if probe.get("endpoint") != runtime.get("endpoint") or probe.get(
++        "endpoint"
++    ) != ollama.get("endpoint"):
++        reasons.append("probe_endpoint_mismatch")
++    producer = manifest.get("producer") if isinstance(manifest.get("producer"), dict) else {}
++    provider = admission.get("provider") if isinstance(admission.get("provider"), dict) else {}
++    if provider.get("name") != producer.get("name"):
++        reasons.append("provider_mismatch")
+     return reasons
+ 
+ 
+@@ -439,6 +533,7 @@ def _normalize_line_inner(
+             seen_keys[identity] = line_no
+         else:
+             reasons.append("duplicate_record")
++    reasons.extend(_tool_payload_reasons(parsed))
+     reasons.extend(_safety_reasons(parsed, allow_hidden=True))
+     sanitized = strip_hidden_reasoning(sanitize_query_secrets(parsed))
+     reasons.extend(_safety_reasons(sanitized, allow_hidden=False))
+@@ -546,7 +641,8 @@ def _identity_tuple(record: dict[str, Any]) -> tuple[str, str, str, str]:
+ 
+ 
+ def _trajectory_id(record: dict[str, Any]) -> str:
+-    return "hermes:" + "/".join(_identity_tuple(record))
++    encoded = "/".join(f"{len(part)}:{part}" for part in _identity_tuple(record))
++    return f"hermes:{encoded}"
+ 
+ 
+ def _mapping_conflicts(
+@@ -620,13 +716,19 @@ def _independent_terminal(manifest: dict[str, Any]) -> tuple[str | None, list[st
+     if (
+         not _nonempty_str(identity)
+         or not _nonempty_str(version)
+-        or identity in {producer, PROVIDER_ID}
++        or not _external_verifier_identity(str(identity), producer)
+         or len(hashes) < 1
+     ):
+         return terminal, ["verifier_evidence"]
+     return terminal, []
+ 
+ 
++def _external_verifier_identity(identity: str, producer: str) -> bool:
++    folded = identity.casefold()
++    blocked = {producer.casefold(), PROVIDER_ID.casefold(), "hermes-agent"}
++    return folded not in blocked
++
++
+ def _terminal_disposition(outcome: str | None) -> str | None:
+     if outcome is None:
+         return None
+@@ -639,9 +741,34 @@ def _terminal_disposition(outcome: str | None) -> str | None:
+     return None
+ 
+ 
++_CREDENTIAL_KEY_NAMES = {name.replace("-", "_") for name in SECRET_QUERY_KEYS} | {
++    "x_api_key",
++    "bearer",
++}
++
++
++def _credential_key(key: Any) -> bool:
++    return str(key).casefold().replace("-", "_") in _CREDENTIAL_KEY_NAMES
++
++
++def _json_credential_string(value: str) -> bool:
++    text = value.strip()
++    if not (text.startswith("{") and text.endswith("}")):
++        return False
++    try:
++        parsed = json.loads(text)
++    except json.JSONDecodeError:
++        return False
++    return _contains_credential_key(parsed)
++
++
+ def _contains_secret(value: Any) -> bool:
+     if isinstance(value, str):
+-        return bool(find_secrets(value))
++        return (
++            bool(find_secrets(value))
++            or contains_header_secret(value)
++            or _json_credential_string(value)
++        )
+     if isinstance(value, list):
+         return any(_contains_secret(item) for item in value)
+     if isinstance(value, dict):
+@@ -657,7 +784,7 @@ def _contains_credential_key(value: Any) -> bool:
+         return any(_contains_credential_key(item) for item in value)
+     if isinstance(value, dict):
+         for key, item in value.items():
+-            if str(key).casefold() in SECRET_QUERY_KEYS and item not in (
++            if _credential_key(key) and item not in (
+                 None,
+                 "",
+                 False,
+@@ -683,11 +810,7 @@ def _contains_home_path(value: Any) -> bool:
+ 
+ def _contains_hidden_reasoning(value: Any) -> bool:
+     if isinstance(value, str):
+-        lowered = value.casefold()
+-        return any(
+-            marker in lowered
+-            for marker in ("<think", "</think", "<thought", "</thought")
+-        )
++        return hidden_markup_remains(value)
+     if isinstance(value, list):
+         return any(_contains_hidden_reasoning(item) for item in value)
+     if isinstance(value, dict):
+@@ -698,6 +821,35 @@ def _contains_hidden_reasoning(value: Any) -> bool:
+     return False
+ 
+ 
++def _tool_payload_reasons(record: dict[str, Any]) -> list[str]:
++    messages = record.get("messages")
++    if not isinstance(messages, list):
++        return []
++    for message in messages:
++        if not isinstance(message, dict) or message.get("role") != "tool":
++            continue
++        content = message.get("content")
++        if not isinstance(content, str):
++            continue
++        text = content.lstrip()
++        if text.startswith("{") or text.startswith("["):
++            try:
++                json.loads(text)
++            except json.JSONDecodeError:
++                return ["invalid_tool_payload"]
++        elif text.startswith("<") and not _xml_well_formed(text):
++            return ["invalid_tool_payload"]
++    return []
++
++
++def _xml_well_formed(text: str) -> bool:
++    try:
++        ET.fromstring(text)
++    except ET.ParseError:
++        return False
++    return True
++
++
+ def _safety_reasons(value: Any, *, allow_hidden: bool = False) -> list[str]:
+     reasons: list[str] = []
+     if (
+@@ -755,7 +907,11 @@ def _repository_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+         else {}
+     )
+     out = _pick(source, _REPO_FIELDS)
+-    return {key: value for key, value in out.items() if value not in (None, "")}
++    cleaned = {key: value for key, value in out.items() if value not in (None, "")}
++    url = cleaned.get("url")
++    if isinstance(url, str) and url:
++        cleaned["url"] = sanitize_query_secrets(url)
++    return cleaned
+ 
+ 
+ def _workspace_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+@@ -783,7 +939,7 @@ def _emit_record(
+     )
+     model = _pick(
+         manifest.get("model") if isinstance(manifest.get("model"), dict) else {},
+-        ("name", "tag", "ollama_digest", "quantization"),
++        ("name", "tag", "ollama_digest", "quantization", "upstream_revision"),
+     )
+     retention = _pick(
+         manifest.get("reasoning_retention")
+@@ -811,6 +967,7 @@ def _emit_record(
+             "producer": producer,
+             "raw_trace_id": raw_trace_id,
+             "raw_trace_sha256": raw_trace_sha256,
++            "repository": repository,
+             "reasoning_retention": retention,
+             "run_id": run_id,
+             "run_manifest_sha256": manifest_digest,
+diff --git a/scripts/lib/hermes_sanitize.py b/scripts/lib/hermes_sanitize.py
+index 6ddd003..e25a7f6 100644
+--- a/scripts/lib/hermes_sanitize.py
++++ b/scripts/lib/hermes_sanitize.py
+@@ -26,14 +26,27 @@ HIDDEN_KEYS = frozenset(
+         "thinking",
+         "thought",
+         "thoughts",
++        "analysis",
++        "scratchpad",
++        "chain_of_thought",
++        "chain-of-thought",
++        "cot",
+     }
+ )
+ 
++_HIDDEN_TAG = (
++    r"(?:think|thought|thinking|analysis|reasoning|scratchpad|chain-of-thought|cot)"
++)
+ _THINK_RE = re.compile(
+-    r"<(think|thought|thinking)\b[^>]*>.*?</\1>",
++    rf"<({_HIDDEN_TAG})\b[^>]*>.*?</\1>",
+     re.IGNORECASE | re.DOTALL,
+ )
++_HIDDEN_OPEN_RE = re.compile(rf"<({_HIDDEN_TAG})\b", re.IGNORECASE)
++_HIDDEN_CLOSE_RE = re.compile(rf"</({_HIDDEN_TAG})\b", re.IGNORECASE)
+ _URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
++_HEADER_SECRET_RE = re.compile(
++    r"(?i)\b(?:authorization|x-api-key|api[-_]?key)\b\s*[:=]"
++)
+ 
+ 
+ class UnsafeUrlError(ValueError):
+@@ -85,6 +98,19 @@ def is_hidden_key(key: Any) -> bool:
+     return str(key).casefold() in HIDDEN_KEYS
+ 
+ 
++def hidden_markup_remains(value: str) -> bool:
++    """True when a hidden tag is unclosed or only partially stripped."""
++    stripped = _THINK_RE.sub("", value)
++    return (
++        _HIDDEN_OPEN_RE.search(stripped) is not None
++        or _HIDDEN_CLOSE_RE.search(stripped) is not None
++    )
++
++
++def contains_header_secret(value: str) -> bool:
++    return _HEADER_SECRET_RE.search(value) is not None
++
++
+ def strip_hidden_reasoning(value: Any) -> Any:
+     """Remove hidden-reasoning fields and producer think-tags from trainable views."""
+     if isinstance(value, str):
+diff --git a/tests/fixtures/hermes/local_model_admission_v1.json b/tests/fixtures/hermes/local_model_admission_v1.json
+index 70d8e92..2b7ecf7 100644
+--- a/tests/fixtures/hermes/local_model_admission_v1.json
++++ b/tests/fixtures/hermes/local_model_admission_v1.json
+@@ -21,15 +21,26 @@
+   },
+   "provider": {
+     "name": "hermes-agent",
+-    "config": {"no_cloud": true}
++    "config": {
++      "no_cloud": true,
++      "cloud_fallback_allowed": false
++    }
+   },
+   "cloud_fallback_allowed": false,
++  "fallback_evidence": {
++    "no_cloud": true,
++    "cloud_fallback_allowed": false,
++    "unsanitized_keys": [],
++    "remote_endpoints": []
++  },
+   "probe": {
+     "timestamp": "2026-09-21T11:00:00Z",
+     "endpoint": "http://127.0.0.1:11434"
+   },
+   "input_digests": {
++    "admissions": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+     "probe": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "rights": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+-  }
++  },
++  "evidence_digest": "bccb5d7df3ecb8bdc107f4832509f4a1b9a84195c9ebe94cd30ddd417d2abc6d"
+ }
+diff --git a/tests/hermes_fixtures.py b/tests/hermes_fixtures.py
+index 4d7fd94..2bdc51e 100644
+--- a/tests/hermes_fixtures.py
++++ b/tests/hermes_fixtures.py
+@@ -40,7 +40,20 @@ FIXTURE_VERIFIER_OUTCOMES: dict[str, str | None] = {
+ 
+ 
+ def canonical_dumps(value: Any) -> str:
+-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
++    return json.dumps(
++        value,
++        ensure_ascii=False,
++        separators=(",", ":"),
++        sort_keys=True,
++        allow_nan=False,
++    )
++
++
++def seal_admission(payload: dict[str, Any]) -> dict[str, Any]:
++    body = {key: value for key, value in payload.items() if key != "evidence_digest"}
++    sealed = dict(body)
++    sealed["evidence_digest"] = sha256_bytes(canonical_dumps(body).encode("utf-8"))
++    return sealed
+ 
+ 
+ def sha256_bytes(payload: bytes) -> str:
+@@ -55,7 +68,7 @@ def default_admission(**overrides: Any) -> dict[str, Any]:
+     payload = json.loads(ADMISSION_FIXTURE.read_text(encoding="utf-8"))
+     if not isinstance(payload, dict):
+         raise TypeError("local_model_admission_v1 fixture must be an object")
+-    return _deep_merge(payload, overrides)
++    return seal_admission(_deep_merge(payload, overrides))
+ 
+ 
+ def default_verifier(*, outcome: str | None = "pass") -> dict[str, Any]:
+@@ -83,6 +96,7 @@ def default_manifest(
+             "tag": "7b-instruct",
+             "ollama_digest": MODEL_DIGEST,
+             "quantization": "q4_K_M",
++            "upstream_revision": "synthetic-upstream-1",
+         },
+         "admission_report_sha256": admission_report_sha256,
+         "ollama": {
+@@ -192,7 +206,9 @@ def write_scenario(
+     manifest_overrides: dict[str, Any] | None = None,
+     input_name: str = "input.jsonl",
+ ) -> dict[str, Path]:
+-    admission_payload = default_admission() if admission is None else admission
++    admission_payload = seal_admission(
++        default_admission() if admission is None else admission
++    )
+     admission_path = tmp_path / "model_admission.json"
+     admission_bytes = write_json(admission_path, admission_payload)
+     manifest = default_manifest(
+diff --git a/tests/test_normalize_hermes_trajectories.py b/tests/test_normalize_hermes_trajectories.py
+index 345e641..4e2b1b2 100644
+--- a/tests/test_normalize_hermes_trajectories.py
++++ b/tests/test_normalize_hermes_trajectories.py
+@@ -10,6 +10,8 @@ import pytest
+ 
+ from hermes_fixtures import (
+     ADMISSION_FIXTURE,
++    BASE_OID,
++    HEAD_OID,
+     ROOT,
+     SYNTHETIC_GITHUB_TOKEN,
+     VERIFIER_ARTIFACT,
+@@ -18,6 +20,7 @@ from hermes_fixtures import (
+     default_verifier,
+     hermes_record,
+     sha256_bytes,
++    seal_admission,
+     write_json,
+     write_scenario,
+     write_fixture_scenario,
+@@ -101,6 +104,10 @@ def test_successful_run_is_accepted_v1_1_and_binds_provenance(tmp_path: Path):
+     assert binding["producer"]["name"] == "hermes-agent"
+     assert binding["producer"]["revision"]
+     assert binding["model"]["ollama_digest"].startswith("sha256:")
++    assert binding["model"]["upstream_revision"] == "synthetic-upstream-1"
++    assert binding["repository"]["base_oid"] == BASE_OID
++    assert binding["repository"]["head_oid"] == HEAD_OID
++    assert binding["workspace"]["kind"] == "isolated"
+     assert binding["ollama"]["endpoint"].startswith("http://127.0.0.1")
+     assert binding["workspace"]["id"] == "ws-isolated-001"
+     assert binding["reasoning_retention"]["policy"] == "strip_hidden"
+@@ -367,9 +374,13 @@ def test_shared_admission_fixture_uses_singular_decision_interface():
+     assert payload["runtime"]["name"] == "ollama"
+     assert payload["rights"]["identifier"] == "Apache-2.0"
+     assert payload["provider"]["config"]["no_cloud"] is True
++    assert payload["provider"]["config"]["cloud_fallback_allowed"] is False
+     assert payload["cloud_fallback_allowed"] is False
++    assert payload["fallback_evidence"]["cloud_fallback_allowed"] is False
++    assert payload["fallback_evidence"]["no_cloud"] is True
+     assert payload["probe"]["endpoint"].startswith("http://127.0.0.1")
+-    assert len(payload["input_digests"]["probe"]) == 64
++    assert set(payload["input_digests"]) >= {"admissions", "rights", "probe"}
++    assert payload["evidence_digest"] == seal_admission(payload)["evidence_digest"]
+     assert default_admission()["decision"] == "accepted"
+     assert "disposition" not in default_admission()
+ 
+@@ -667,7 +678,7 @@ def test_ipv6_loopback_endpoint_keeps_brackets(tmp_path: Path):
+     admission = json.loads(paths["admission"].read_text(encoding="utf-8"))
+     admission["runtime"]["endpoint"] = "http://[::1]:11434"
+     admission["probe"]["endpoint"] = "http://[::1]:11434"
+-    write_json(paths["admission"], admission)
++    write_json(paths["admission"], seal_admission(admission))
+     manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
+     manifest["admission_report_sha256"] = sha256_bytes(paths["admission"].read_bytes())
+     write_json(paths["manifest"], manifest)
+@@ -675,3 +686,224 @@ def test_ipv6_loopback_endpoint_keeps_brackets(tmp_path: Path):
+     record = _load_jsonl(paths["output"])[0]
+     assert record["execution_provenance"]["ollama"]["endpoint"] == "http://[::1]:11434"
+     assert "http://::1" not in paths["output"].read_text(encoding="utf-8")
++
++
++def test_accepted_admission_with_reasons_is_rejected(tmp_path: Path):
++    admission = default_admission(reasons=["rights_conflict"])
++    paths = write_scenario(tmp_path, [hermes_record(run_id="run-reasons")], admission=admission)
++    assert _run(paths) == 0
++    assert paths["output"].read_text(encoding="utf-8") == ""
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert "admission_reasons" in report["records"][0]["reason_codes"]
++
++
++def test_runtime_and_probe_conflicts_are_rejected(tmp_path: Path):
++    admission = default_admission()
++    admission["runtime"]["version"] = "9.9.9"
++    admission["runtime"]["endpoint"] = "http://127.0.0.1:1"
++    admission["probe"]["endpoint"] = "http://127.0.0.1:2"
++    paths = write_scenario(
++        tmp_path, [hermes_record(run_id="run-runtime")], admission=admission
++    )
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    joined = ",".join(report["records"][0]["reason_codes"])
++    assert "runtime" in joined or "probe" in joined
++
++
++def test_provider_config_without_fallback_flag_is_rejected(tmp_path: Path):
++    admission = default_admission()
++    admission["provider"]["config"].pop("cloud_fallback_allowed")
++    paths = write_scenario(
++        tmp_path, [hermes_record(run_id="run-fallback")], admission=admission
++    )
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert "cloud_fallback" in report["records"][0]["reason_codes"]
++
++
++def test_fake_evidence_digest_is_rejected(tmp_path: Path):
++    admission = default_admission()
++    admission["evidence_digest"] = "f" * 64
++    paths = write_scenario(
++        tmp_path,
++        [hermes_record(run_id="run-digest")],
++        admission=admission,
++    )
++    # write_scenario reseals; overwrite the sealed file with a fake digest.
++    stored = json.loads(paths["admission"].read_text(encoding="utf-8"))
++    stored["evidence_digest"] = "f" * 64
++    write_json(paths["admission"], stored)
++    manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
++    manifest["admission_report_sha256"] = sha256_bytes(paths["admission"].read_bytes())
++    write_json(paths["manifest"], manifest)
++    assert _run(paths) == 0
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert "evidence_digest" in report["records"][0]["reason_codes"]
++
++
++def test_shared_or_missing_workspace_kind_is_rejected(tmp_path: Path):
++    record = hermes_record(run_id="run-shared-ws")
++    record.pop("workspace")
++    shared = write_scenario(
++        tmp_path / "shared",
++        [record],
++        manifest_overrides={"workspace": {"kind": "shared"}},
++    )
++    missing = write_scenario(tmp_path / "missing", [record])
++    missing_manifest = json.loads(missing["manifest"].read_text(encoding="utf-8"))
++    missing_manifest["workspace"].pop("kind")
++    write_json(missing["manifest"], missing_manifest)
++    assert _run(shared) == 0
++    assert _run(missing) == 0
++    for paths in (shared, missing):
++        assert paths["output"].read_text(encoding="utf-8") == ""
++        report = _report(paths)
++        assert report["accepted_count"] == 0
++        assert report["rejected_count"] >= 1
++        assert "workspace" in ",".join(report["records"][0]["reason_codes"])
++
++
++def test_casefolded_hermes_verifier_identity_is_not_external(tmp_path: Path):
++    paths = write_scenario(
++        tmp_path,
++        [hermes_record(run_id="run-self-case")],
++        manifest_overrides={
++            "verifier": {
++                "artifact_sha256": [VERIFIER_ARTIFACT],
++                "identity": "Hermes-Agent",
++                "outcome": "pass",
++                "version": "0.4.0",
++            }
++        },
++    )
++    assert _run(paths) == 0
++    dumped = paths["output"].read_text(encoding="utf-8")
++    assert dumped == ""
++    assert "successful" not in dumped
++    report = _report(paths)
++    assert report["accepted_count"] == 0
++    assert "verifier" in ",".join(report["records"][0]["reason_codes"])
++
++
++def test_hidden_equivalent_tags_are_stripped_and_unclosed_are_rejected(tmp_path: Path):
++    closed = hermes_record(
++        run_id="run-hidden-tags",
++        content=(
++            "<analysis>private chain</analysis>"
++            "<reasoning>private chain</reasoning>"
++            "<scratchpad>private chain</scratchpad>"
++            "Visible answer."
++        ),
++    )
++    paths = write_scenario(tmp_path / "closed", [closed])
++    assert _run(paths) == 0
++    dumped = paths["output"].read_text(encoding="utf-8")
++    assert "private chain" not in dumped
++    assert "Visible answer." in dumped
++    unclosed = hermes_record(
++        run_id="run-unclosed",
++        content="<analysis>private chain",
++    )
++    rejected = write_scenario(tmp_path / "open", [unclosed])
++    assert _run(rejected) == 0
++    open_dump = rejected["output"].read_text(encoding="utf-8")
++    assert open_dump == ""
++    assert "private chain" not in open_dump
++    assert _report(rejected)["rejected_count"] >= 1
++
++
++def test_repository_url_query_credential_is_not_emitted(tmp_path: Path):
++    secret_url = (
++        "https://github.com/rmems/synthetic-loop?access_token=ordinarysecretvalue123"
++    )
++    omitted = hermes_record(run_id="run-url-omit")
++    omitted.pop("repository")
++    agreed = hermes_record(run_id="run-url-agree")
++    agreed["repository"]["url"] = secret_url
++    for name, record in (("omit", omitted), ("agree", agreed)):
++        paths = write_scenario(
++            tmp_path / name,
++            [record],
++            manifest_overrides={"repository": {"url": secret_url}},
++        )
++        assert _run(paths) == 0
++        dumped = paths["output"].read_text(encoding="utf-8") + paths["report"].read_text(
++            encoding="utf-8"
++        )
++        assert "ordinarysecretvalue123" not in dumped
++        assert "access_token" not in dumped
++
++
++def test_header_and_json_credential_content_is_rejected(tmp_path: Path):
++    bearer = hermes_record(
++        run_id="run-bearer",
++        content="Authorization: Bearer ordinarysecretvalue123",
++    )
++    header = hermes_record(
++        run_id="run-header",
++        content='{"X-API-Key":"ordinarysecretvalue123"}',
++    )
++    for name, record in (("bearer", bearer), ("header", header)):
++        paths = write_scenario(tmp_path / name, [record])
++        assert _run(paths) == 0
++        dumped = paths["output"].read_text(encoding="utf-8")
++        assert dumped == ""
++        assert "ordinarysecretvalue123" not in dumped
++        assert _report(paths)["rejected_count"] >= 1
++
++
++def test_trajectory_id_encoding_resists_delimiter_collision(tmp_path: Path):
++    first = hermes_record(run_id="a/b")
++    first["session_id"] = "c"
++    first["task_id"] = "d"
++    first["raw_trace_id"] = "e"
++    second = hermes_record(run_id="a")
++    second["session_id"] = "b"
++    second["task_id"] = "c"
++    second["raw_trace_id"] = "d/e"
++    paths = write_scenario(tmp_path, [first, second])
++    assert _run(paths) == 0
++    records = _load_jsonl(paths["output"])
++    assert len(records) == 2
++    assert records[0]["trajectory_id"] != records[1]["trajectory_id"]
++    assert records[0]["trajectory_id"] != "hermes:a/b/c/d/e"
++    assert records[0]["execution_provenance"]["run_id"] == "a/b"
++    assert records[1]["execution_provenance"]["raw_trace_id"] == "d/e"
++
++
++def test_malformed_tool_payload_is_rejected(tmp_path: Path):
++    record = hermes_record(
++        run_id="run-tool",
++        extra_message={
++            "role": "tool",
++            "name": "fetch",
++            "timestamp": "2026-09-21T12:00:30Z",
++            "content": '{"unterminated":',
++        },
++    )
++    paths = write_scenario(tmp_path, [record])
++    assert _run(paths) == 0
++    assert paths["output"].read_text(encoding="utf-8") == ""
++    report = _report(paths)
++    assert report["rejected_count"] >= 1
++    assert "invalid_tool_payload" in report["records"][0]["reason_codes"]
++
++
++def test_unknown_message_field_is_rejected(tmp_path: Path):
++    record = hermes_record(run_id="run-extra-field")
++    record["messages"][1]["private_notes"] = "producer private container"
++    paths = write_scenario(tmp_path, [record])
++    assert _run(paths) == 0
++    dumped = paths["output"].read_text(encoding="utf-8")
++    assert "producer private container" not in dumped
++    assert _report(paths)["accepted_count"] == 0
++
++
++def test_canonical_dumps_rejects_nonfinite_numbers():
++    with pytest.raises(ValueError):
++        canonical_dumps({"value": float("nan")})
+diff --git a/tests/test_trajectory_v1_1_schema.py b/tests/test_trajectory_v1_1_schema.py
+index cb6f7a6..c910c26 100644
+--- a/tests/test_trajectory_v1_1_schema.py
++++ b/tests/test_trajectory_v1_1_schema.py
+@@ -62,6 +62,7 @@ def test_v1_1_schema_declares_new_version_and_bindings():
+         "workspace",
+         "reasoning_retention",
+         "verifier",
++        "repository",
+         "input_sha256",
+         "admission_report_sha256",
+         "raw_trace_sha256",
+@@ -122,3 +123,4 @@ def test_raw_hermes_schema_requires_identities_and_booleans():
+         schema["properties"]["messages"]["items"]["properties"]["content"]["type"]
+         == "string"
+     )
++    assert schema["properties"]["messages"]["items"]["additionalProperties"] is False
+-- 
+2.43.0
+

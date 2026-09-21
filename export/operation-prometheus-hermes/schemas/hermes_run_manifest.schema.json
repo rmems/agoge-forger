@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/rmems/operation-prometheus/schemas/hermes_run_manifest.schema.json",
+  "title": "Hermes run manifest",
+  "description": "Producer, model, runtime, workspace, and independent verifier bindings for a local Hermes capture.",
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "gitObjectId": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{3,64}$"
+    },
+    "modelDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "loopbackEndpoint": {
+      "type": "string",
+      "pattern": "^https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]+)?/?$"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "producer",
+    "model",
+    "admission_report_sha256",
+    "ollama",
+    "repository",
+    "workspace",
+    "reasoning_retention",
+    "verifier"
+  ],
+  "properties": {
+    "schema_version": { "const": "hermes_run_manifest_v1" },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "revision"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "tag", "ollama_digest"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "ollama_digest": { "$ref": "#/definitions/modelDigest" },
+        "quantization": { "type": "string", "minLength": 1 },
+        "upstream_revision": { "type": "string", "minLength": 1 }
+      }
+    },
+    "admission_report_sha256": { "$ref": "#/definitions/sha256" },
+    "ollama": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime", "version", "endpoint"],
+      "properties": {
+        "runtime": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "endpoint": { "$ref": "#/definitions/loopbackEndpoint" },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "num_ctx": { "type": "integer" },
+            "keep_alive": { "type": "string" }
+          }
+        }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "name", "base_oid", "head_oid"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string" },
+        "base_oid": { "$ref": "#/definitions/gitObjectId" },
+        "head_oid": { "$ref": "#/definitions/gitObjectId" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "isolated" }
+      }
+    },
+    "reasoning_retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy"],
+      "properties": {
+        "policy": { "const": "strip_hidden" },
+        "strip_tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "version", "outcome", "artifact_sha256"],
+      "properties": {
+        "identity": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "outcome": { "type": ["string", "null"] },
+        "artifact_sha256": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/sha256" }
+        }
+      }
+    }
+  }
+}

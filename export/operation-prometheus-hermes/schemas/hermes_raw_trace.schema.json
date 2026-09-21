@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/rmems/operation-prometheus/schemas/hermes_raw_trace.schema.json",
+  "title": "Raw Hermes trace record",
+  "description": "Strict per-line Hermes JSONL object accepted by the v1.1 normalizer.",
+  "definitions": {
+    "gitObjectId": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{3,64}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "identity": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "type": "object",
+  "required": [
+    "run_id",
+    "session_id",
+    "task_id",
+    "raw_trace_id",
+    "completed",
+    "partial",
+    "messages"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "$ref": "#/definitions/identity" },
+    "session_id": { "$ref": "#/definitions/identity" },
+    "task_id": { "$ref": "#/definitions/identity" },
+    "raw_trace_id": { "$ref": "#/definitions/identity" },
+    "completed": { "type": "boolean" },
+    "partial": { "type": "boolean" },
+    "started_at": { "type": "string", "minLength": 1 },
+    "ended_at": { "type": "string", "minLength": 1 },
+    "issue_statement": { "type": "string" },
+    "messages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["role", "content"],
+        "additionalProperties": false,
+        "properties": {
+          "role": { "type": "string", "minLength": 1 },
+          "content": { "type": "string" },
+          "name": { "type": "string" },
+          "timestamp": { "type": "string", "minLength": 1 },
+          "reasoning": true,
+          "hidden_reasoning": true,
+          "thinking": true,
+          "thought": true,
+          "thoughts": true,
+          "analysis": true,
+          "scratchpad": true,
+          "chain_of_thought": true,
+          "chain-of-thought": true,
+          "cot": true
+        }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string" },
+        "base_oid": { "$ref": "#/definitions/gitObjectId" },
+        "head_oid": { "$ref": "#/definitions/gitObjectId" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string" }
+      }
+    },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "identity": { "type": "string" },
+        "version": { "type": "string" },
+        "outcome": { "type": ["string", "null"] },
+        "artifact_sha256": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/sha256" }
+        }
+      }
+    }
+  }
+}

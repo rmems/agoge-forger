@@ -1,0 +1,46 @@
+{
+  "schema_version": "local_model_admission_v1",
+  "decision": "accepted",
+  "reasons": [],
+  "model": {
+    "name": "qwen2.5-coder",
+    "tag": "7b-instruct",
+    "ollama_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "quantization": "q4_K_M",
+    "upstream_revision": "synthetic-upstream-1"
+  },
+  "runtime": {
+    "name": "ollama",
+    "version": "0.11.4",
+    "endpoint": "http://127.0.0.1:11434"
+  },
+  "rights": {
+    "identifier": "Apache-2.0",
+    "terms_source": "synthetic-fixture",
+    "terms_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "provider": {
+    "name": "hermes-agent",
+    "config": {
+      "no_cloud": true,
+      "cloud_fallback_allowed": false
+    }
+  },
+  "cloud_fallback_allowed": false,
+  "fallback_evidence": {
+    "no_cloud": true,
+    "cloud_fallback_allowed": false,
+    "unsanitized_keys": [],
+    "remote_endpoints": []
+  },
+  "probe": {
+    "timestamp": "2026-09-21T11:00:00Z",
+    "endpoint": "http://127.0.0.1:11434"
+  },
+  "input_digests": {
+    "admissions": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "probe": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "rights": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "evidence_digest": "bccb5d7df3ecb8bdc107f4832509f4a1b9a84195c9ebe94cd30ddd417d2abc6d"
+}

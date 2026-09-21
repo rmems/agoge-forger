@@ -1,0 +1,420 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/rmems/operation-prometheus/schemas/trajectory_v1_1.schema.json",
+  "title": "Trajectory v1.1",
+  "description": "Producer-neutral trajectory v1.1 envelope with Hermes provenance bindings.",
+  "definitions": {
+    "gitObjectId": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{3,64}$"
+    },
+    "evidenceUrl": {
+      "type": "string",
+      "minLength": 1,
+      "format": "uri"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "modelDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "loopbackEndpoint": {
+      "type": "string",
+      "pattern": "^https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]+)?/?$"
+    },
+    "identity": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "trajectory_id",
+    "trajectory_type",
+    "provider_id",
+    "source_id",
+    "collector_version",
+    "repository",
+    "license",
+    "collection_policy",
+    "terminal_disposition",
+    "execution",
+    "execution_provenance",
+    "events",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["1.1", "v1.1"] },
+    "trajectory_id": { "type": "string" },
+    "trajectory_type": { "enum": ["software", "research"] },
+    "provider_id": { "type": "string" },
+    "source_id": { "type": "string" },
+    "collector_version": { "type": "string" },
+    "repository": {
+      "type": "object",
+      "required": ["owner", "name"],
+      "properties": {
+        "owner": { "type": "string" },
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "commit_oid": { "type": "string" },
+        "base_oid": { "type": "string" },
+        "head_oid": { "type": "string" }
+      }
+    },
+    "license": { "type": "string" },
+    "provenance": { "type": "string" },
+    "collection_policy": { "type": "string" },
+    "takedown_state": { "type": "string" },
+    "terminal_disposition": {
+      "enum": [
+        "successful",
+        "failed",
+        "reverted",
+        "falsified",
+        "null",
+        "invalid",
+        "interrupted",
+        "inconclusive"
+      ]
+    },
+    "execution": {
+      "type": "object",
+      "required": ["producer_completed", "producer_partial"],
+      "additionalProperties": false,
+      "properties": {
+        "producer_completed": { "type": "boolean" },
+        "producer_partial": { "type": "boolean" }
+      }
+    },
+    "execution_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "session_id",
+        "task_id",
+        "raw_trace_id",
+        "producer",
+        "model",
+        "ollama",
+        "workspace",
+        "reasoning_retention",
+        "verifier",
+        "repository",
+        "input_sha256",
+        "admission_report_sha256",
+        "raw_trace_sha256",
+        "run_manifest_sha256"
+      ],
+      "properties": {
+        "run_id": { "$ref": "#/definitions/identity" },
+        "session_id": { "$ref": "#/definitions/identity" },
+        "task_id": { "$ref": "#/definitions/identity" },
+        "raw_trace_id": { "$ref": "#/definitions/identity" },
+        "producer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version", "revision"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 },
+            "revision": { "type": "string", "minLength": 1 }
+          }
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "tag", "ollama_digest"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 },
+            "ollama_digest": { "$ref": "#/definitions/modelDigest" },
+            "quantization": { "type": "string", "minLength": 1 },
+            "upstream_revision": { "type": "string", "minLength": 1 }
+          }
+        },
+        "ollama": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runtime", "version", "endpoint"],
+          "properties": {
+            "runtime": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 },
+            "endpoint": { "$ref": "#/definitions/loopbackEndpoint" },
+            "config": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "num_ctx": { "type": "integer" },
+                "keep_alive": { "type": "string" }
+              }
+            }
+          }
+        },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "kind"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "kind": { "const": "isolated" }
+          }
+        },
+        "repository": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["owner", "name", "base_oid", "head_oid"],
+          "properties": {
+            "owner": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "url": { "type": "string" },
+            "base_oid": { "$ref": "#/definitions/gitObjectId" },
+            "head_oid": { "$ref": "#/definitions/gitObjectId" }
+          }
+        },
+        "reasoning_retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["policy"],
+          "properties": {
+            "policy": { "const": "strip_hidden" },
+            "strip_tags": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "verifier": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["identity", "version", "outcome", "artifact_sha256"],
+          "properties": {
+            "identity": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 },
+            "outcome": { "type": ["string", "null"] },
+            "artifact_sha256": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/sha256" }
+            }
+          }
+        },
+        "input_sha256": { "$ref": "#/definitions/sha256" },
+        "admission_report_sha256": { "$ref": "#/definitions/sha256" },
+        "raw_trace_sha256": { "$ref": "#/definitions/sha256" },
+        "run_manifest_sha256": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "evidence_quality": {
+      "type": "object",
+      "properties": {
+        "signal_to_noise": { "type": "number" },
+        "reproducibility": { "type": "number" },
+        "completeness": { "type": "number" }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "sha256", "media_type", "byte_size", "availability", "reproduction_role"],
+        "properties": {
+          "id": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "media_type": { "type": "string" },
+          "byte_size": { "type": "integer", "minimum": 0 },
+          "availability": { "enum": ["inline", "remote", "missing"] },
+          "reproduction_role": { "type": "string" },
+          "content": { "type": "string" },
+          "uri": { "type": "string", "format": "uri" }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "availability": { "const": "remote" } } },
+            "then": { "required": ["uri"] }
+          },
+          {
+            "if": { "properties": { "availability": { "const": "inline" } } },
+            "then": { "required": ["content"] }
+          }
+        ]
+      }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["event_id", "timestamp", "actor", "event_type"],
+        "properties": {
+          "event_id": { "type": "string" },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "actor": {
+            "type": "object",
+            "required": ["type", "id"],
+            "properties": {
+              "type": { "enum": ["human", "bot", "application", "agent"] },
+              "id": { "type": "string" },
+              "disclosed_identity": { "type": "string" }
+            }
+          },
+          "event_type": { "type": "string" },
+          "code_state": {
+            "type": "object",
+            "properties": {
+              "commit_oid": { "type": "string" },
+              "base_oid": { "type": "string" },
+              "head_oid": { "type": "string" },
+              "tree_oid": { "type": "string" },
+              "before_blob": { "type": "string" },
+              "after_blob": { "type": "string" }
+            }
+          },
+          "evidence_references": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/evidenceUrl" }
+          },
+          "disposition": {
+            "enum": [
+              "successful",
+              "failed",
+              "reverted",
+              "falsified",
+              "null",
+              "invalid",
+              "interrupted",
+              "inconclusive",
+              "neutral",
+              "passed"
+            ]
+          },
+          "content": { "type": "string" }
+        },
+        "anyOf": [
+          {
+            "required": ["evidence_references"],
+            "properties": {
+              "evidence_references": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/definitions/evidenceUrl" }
+              }
+            }
+          },
+          {
+            "required": ["code_state"],
+            "properties": {
+              "code_state": {
+                "type": "object",
+                "anyOf": [
+                  {
+                    "required": ["commit_oid"],
+                    "properties": {
+                      "commit_oid": { "$ref": "#/definitions/gitObjectId" }
+                    }
+                  },
+                  {
+                    "required": ["base_oid"],
+                    "properties": {
+                      "base_oid": { "$ref": "#/definitions/gitObjectId" }
+                    }
+                  },
+                  {
+                    "required": ["head_oid"],
+                    "properties": {
+                      "head_oid": { "$ref": "#/definitions/gitObjectId" }
+                    }
+                  },
+                  {
+                    "required": ["tree_oid"],
+                    "properties": {
+                      "tree_oid": { "$ref": "#/definitions/gitObjectId" }
+                    }
+                  },
+                  {
+                    "required": ["before_blob"],
+                    "properties": {
+                      "before_blob": { "$ref": "#/definitions/gitObjectId" }
+                    }
+                  },
+                  {
+                    "required": ["after_blob"],
+                    "properties": {
+                      "after_blob": { "$ref": "#/definitions/gitObjectId" }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "properties": {
+        "supersedes": { "type": "array", "items": { "type": "string" } },
+        "reverts": { "type": "array", "items": { "type": "string" } },
+        "multi_pr_links": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "software_payload": {
+      "type": "object",
+      "minProperties": 1,
+      "anyOf": [
+        { "required": ["issue_statement"] },
+        { "required": ["acceptance_criteria"] },
+        { "required": ["pre_change_state"] },
+        { "required": ["implementation_patch"] },
+        { "required": ["validation_outcome"] }
+      ],
+      "properties": {
+        "issue_statement": { "type": "string", "minLength": 1 },
+        "acceptance_criteria": { "type": "string", "minLength": 1 },
+        "pre_change_state": { "type": "string", "minLength": 1 },
+        "implementation_patch": { "type": "string", "minLength": 1 },
+        "validation_outcome": { "type": "string", "minLength": 1 }
+      }
+    },
+    "research_payload": {
+      "type": "object",
+      "minProperties": 1,
+      "anyOf": [
+        { "required": ["hypothesis"] },
+        { "required": ["initial_state"] },
+        { "required": ["plan"] },
+        { "required": ["resource_budget"] },
+        { "required": ["measurements"] }
+      ],
+      "properties": {
+        "hypothesis": { "type": "string", "minLength": 1 },
+        "initial_state": { "type": "string", "minLength": 1 },
+        "plan": { "type": "string", "minLength": 1 },
+        "resource_budget": { "type": "string", "minLength": 1 },
+        "measurements": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "trajectory_type": { "const": "software" } }
+      },
+      "then": {
+        "required": ["software_payload"],
+        "not": { "required": ["research_payload"] }
+      }
+    },
+    {
+      "if": {
+        "properties": { "trajectory_type": { "const": "research" } }
+      },
+      "then": {
+        "required": ["research_payload"],
+        "not": { "required": ["software_payload"] }
+      }
+    }
+  ]
+}
