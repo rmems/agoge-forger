@@ -17,6 +17,7 @@ from agoge_forger.split_contract import (
 )
 from tests.mixture_composer_fixtures import (
     MODEL_REVISION,
+    ComposeSpecOptions,
     SidecarWriteOptions,
     compose_spec,
     freeze_source,
@@ -42,7 +43,7 @@ def test_allocate_token_quotas_uses_largest_remainder_rounding():
 def test_exact_budget_mixture_from_frozen_fixtures(tmp_path):
     sources = prepare_sources(tmp_path)
     output = tmp_path / "mixture"
-    manifest = compose_mixture(compose_spec(sources, budget=30), output)
+    manifest = compose_mixture(compose_spec(sources, ComposeSpecOptions(budget=30)), output)
 
     assert manifest.artifact.accepted_tokens == 30
     assert all(source.accepted_tokens == 10 for source in manifest.sources)
@@ -55,7 +56,7 @@ def test_exact_budget_mixture_from_frozen_fixtures(tmp_path):
 def test_source_underfill_is_reported_and_not_oversampled(tmp_path):
     sources = prepare_sources(tmp_path)
     output = tmp_path / "mixture"
-    manifest = compose_mixture(compose_spec(sources, budget=10_000), output)
+    manifest = compose_mixture(compose_spec(sources, ComposeSpecOptions(budget=10_000)), output)
 
     assert all(source.underfilled for source in manifest.sources)
     assert all(source.shortfall_tokens > 0 for source in manifest.sources)
@@ -88,7 +89,7 @@ def test_duplicate_lineage_is_rejected(tmp_path):
         compose_mixture(
             compose_spec(
                 (("synthetic", synthetic, 1), ("public", public, 1)),
-                budget=20,
+                ComposeSpecOptions(budget=20),
             ),
             tmp_path / "mixture",
         )
@@ -105,7 +106,7 @@ def test_tokenizer_revision_mismatch_is_rejected(tmp_path):
         compose_mixture(
             compose_spec(
                 (("synthetic", synthetic, 1), ("public", public, 1)),
-                budget=20,
+                ComposeSpecOptions(budget=20),
             ),
             tmp_path / "mixture",
         )
@@ -118,12 +119,18 @@ def test_lineage_groups_are_not_split_to_fill_a_quota(tmp_path):
         lineage=lambda index: f"synthetic-lineage-{index // 2:03d}",
     )
     write_sidecars(snapshot)
-    spec_under = compose_spec((("synthetic", snapshot, 1),), budget=15, experiment_arm="B")
+    spec_under = compose_spec(
+        (("synthetic", snapshot, 1),),
+        ComposeSpecOptions(budget=15, experiment_arm="B"),
+    )
     with pytest.raises(ValueError, match="mixture selected no records"):
         compose_mixture(spec_under, tmp_path / "mixture-under")
 
     manifest = compose_mixture(
-        compose_spec((("synthetic", snapshot, 1),), budget=20, experiment_arm="B"),
+        compose_spec(
+            (("synthetic", snapshot, 1),),
+            ComposeSpecOptions(budget=20, experiment_arm="B"),
+        ),
         tmp_path / "mixture-pair",
     )
     assert manifest.artifact.accepted_tokens == 20
@@ -143,9 +150,11 @@ def test_reserved_lineage_cannot_cross_experiment_arms(tmp_path):
         compose_mixture(
             compose_spec(
                 (("synthetic", snapshot, 1),),
-                budget=10,
-                reserved_lineage_ids=(reserved,),
-                reserved_experiment_arm="E",
+                ComposeSpecOptions(
+                    budget=10,
+                    reserved_lineage_ids=(reserved,),
+                    reserved_experiment_arm="E",
+                ),
             ),
             tmp_path / "mixture",
         )
@@ -153,7 +162,7 @@ def test_reserved_lineage_cannot_cross_experiment_arms(tmp_path):
 
 def test_deterministic_rebuild_is_byte_identical(tmp_path):
     sources = prepare_sources(tmp_path)
-    spec = compose_spec(sources, budget=30)
+    spec = compose_spec(sources, ComposeSpecOptions(budget=30))
     first = tmp_path / "first"
     second = tmp_path / "second"
     first_manifest = compose_mixture(spec, first)
@@ -167,7 +176,7 @@ def test_deterministic_rebuild_is_byte_identical(tmp_path):
 def test_compose_mixture_refuses_silent_regeneration(tmp_path):
     snapshot = freeze_source(tmp_path, "synthetic")
     write_sidecars(snapshot)
-    spec = compose_spec((("synthetic", snapshot, 1),), budget=10)
+    spec = compose_spec((("synthetic", snapshot, 1),), ComposeSpecOptions(budget=10))
     compose_mixture(spec, tmp_path / "mixture")
 
     with pytest.raises(FileExistsError, match="refusing silent regeneration"):
@@ -182,7 +191,10 @@ def test_truncated_records_are_excluded_not_oversampled(tmp_path):
     truncated_id = train_members[0].canonical_id
     write_sidecars(snapshot, SidecarWriteOptions(truncated_ids=frozenset({truncated_id})))
     manifest = compose_mixture(
-        compose_spec((("synthetic", snapshot, 1),), budget=10, experiment_arm="B"),
+        compose_spec(
+            (("synthetic", snapshot, 1),),
+            ComposeSpecOptions(budget=10, experiment_arm="B"),
+        ),
         tmp_path / "mixture-truncated",
     )
     selected_ids = {member.canonical_id for member in manifest.selected}

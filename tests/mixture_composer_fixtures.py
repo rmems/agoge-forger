@@ -37,6 +37,16 @@ class SidecarWriteOptions:
     truncated_ids: frozenset[str] = frozenset()
 
 
+@dataclass(frozen=True)
+class ComposeSpecOptions:
+    budget: int
+    experiment_arm: str = "F"
+    reserved_lineage_ids: tuple[str, ...] = ()
+    reserved_canonical_ids: tuple[str, ...] = ()
+    reserved_content_sha256: tuple[str, ...] = ()
+    reserved_experiment_arm: str | None = None
+
+
 def write_source(path: Path, prefix: str, count: int, *, lineage=None) -> None:
     rows = [
         {
@@ -151,28 +161,22 @@ def source_spec(source_id: str, snapshot: Path, weight: int) -> MixtureSourceSpe
 
 def compose_spec(
     sources: tuple[tuple[str, Path, int], ...],
-    *,
-    budget: int,
-    experiment_arm: str = "F",
-    reserved_lineage_ids: tuple[str, ...] = (),
-    reserved_canonical_ids: tuple[str, ...] = (),
-    reserved_content_sha256: tuple[str, ...] = (),
-    reserved_experiment_arm: str | None = None,
+    options: ComposeSpecOptions,
 ) -> MixtureCompositionSpec:
     return MixtureCompositionSpec(
         policy=MixturePolicy(
             seed=20260915,
             salt="matched-budget-v1",
-            accepted_token_budget=budget,
-            experiment_arm=experiment_arm,
+            accepted_token_budget=options.budget,
+            experiment_arm=options.experiment_arm,
         ),
         sources=tuple(
             source_spec(source_id, snapshot, weight) for source_id, snapshot, weight in sources
         ),
-        reserved_lineage_ids=reserved_lineage_ids,
-        reserved_canonical_ids=reserved_canonical_ids,
-        reserved_content_sha256=reserved_content_sha256,
-        reserved_experiment_arm=reserved_experiment_arm,
+        reserved_lineage_ids=options.reserved_lineage_ids,
+        reserved_canonical_ids=options.reserved_canonical_ids,
+        reserved_content_sha256=options.reserved_content_sha256,
+        reserved_experiment_arm=options.reserved_experiment_arm,
     )
 
 
