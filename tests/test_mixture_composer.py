@@ -17,6 +17,7 @@ from agoge_forger.split_contract import (
 )
 from tests.mixture_composer_fixtures import (
     MODEL_REVISION,
+    SidecarWriteOptions,
     compose_spec,
     freeze_source,
     prepare_sources,
@@ -78,8 +79,8 @@ def test_duplicate_lineage_is_rejected(tmp_path):
             "synthetic-lineage-000" if index == 0 else f"public-lineage-{index:03d}"
         ),
     )
-    write_sidecars(synthetic, tokens=10)
-    write_sidecars(public, tokens=10)
+    write_sidecars(synthetic)
+    write_sidecars(public)
 
     with pytest.raises(
         ValueError, match="duplicate-lineage|cannot cross train/validation/held-out"
@@ -97,8 +98,8 @@ def test_duplicate_lineage_is_rejected(tmp_path):
 def test_tokenizer_revision_mismatch_is_rejected(tmp_path):
     synthetic = freeze_source(tmp_path, "synthetic")
     public = freeze_source(tmp_path, "public")
-    write_sidecars(synthetic, tokens=10)
-    write_sidecars(public, tokens=10, tokenizer_revision="e" * 40)
+    write_sidecars(synthetic)
+    write_sidecars(public, SidecarWriteOptions(tokenizer_revision="e" * 40))
 
     with pytest.raises(ValueError, match="tokenizer-revision mismatch"):
         compose_mixture(
@@ -116,7 +117,7 @@ def test_lineage_groups_are_not_split_to_fill_a_quota(tmp_path):
         "synthetic",
         lineage=lambda index: f"synthetic-lineage-{index // 2:03d}",
     )
-    write_sidecars(snapshot, tokens=10)
+    write_sidecars(snapshot)
     spec_under = compose_spec((("synthetic", snapshot, 1),), budget=15, experiment_arm="B")
     with pytest.raises(ValueError, match="mixture selected no records"):
         compose_mixture(spec_under, tmp_path / "mixture-under")
@@ -132,7 +133,7 @@ def test_lineage_groups_are_not_split_to_fill_a_quota(tmp_path):
 
 def test_reserved_lineage_cannot_cross_experiment_arms(tmp_path):
     snapshot = freeze_source(tmp_path, "synthetic")
-    write_sidecars(snapshot, tokens=10)
+    write_sidecars(snapshot)
     train_lineage = (
         validate_split_manifest(snapshot / "split_manifest.json").splits["train"].members[0]
     )
@@ -165,7 +166,7 @@ def test_deterministic_rebuild_is_byte_identical(tmp_path):
 
 def test_compose_mixture_refuses_silent_regeneration(tmp_path):
     snapshot = freeze_source(tmp_path, "synthetic")
-    write_sidecars(snapshot, tokens=10)
+    write_sidecars(snapshot)
     spec = compose_spec((("synthetic", snapshot, 1),), budget=10)
     compose_mixture(spec, tmp_path / "mixture")
 
@@ -179,7 +180,7 @@ def test_truncated_records_are_excluded_not_oversampled(tmp_path):
         validate_split_manifest(snapshot / "split_manifest.json").splits["train"].members
     )
     truncated_id = train_members[0].canonical_id
-    write_sidecars(snapshot, tokens=10, truncated_ids=frozenset({truncated_id}))
+    write_sidecars(snapshot, SidecarWriteOptions(truncated_ids=frozenset({truncated_id})))
     manifest = compose_mixture(
         compose_spec((("synthetic", snapshot, 1),), budget=10, experiment_arm="B"),
         tmp_path / "mixture-truncated",

@@ -1,5 +1,6 @@
 """Shared frozen-fixture builders for mixture composer tests."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from agoge_forger.mixture_contract import MixtureCompositionSpec, MixturePolicy, MixtureSourceSpec
@@ -26,6 +27,14 @@ PROVENANCE = {
     "public": "EXTERNAL_PUBLIC_SWE",
     "prometheus": "PROMETHEUS_REAL",
 }
+
+
+@dataclass(frozen=True)
+class SidecarWriteOptions:
+    tokens: int = 10
+    tokenizer_revision: str = TOKENIZER_REVISION
+    context_limit: int = 64
+    truncated_ids: frozenset[str] = frozenset()
 
 
 def write_source(path: Path, prefix: str, count: int, *, lineage=None) -> None:
@@ -66,12 +75,9 @@ def freeze_source(tmp_path: Path, source_id: str, count: int = 36, *, lineage=No
 
 def write_sidecars(
     snapshot: Path,
-    *,
-    tokens: int = 10,
-    tokenizer_revision: str = TOKENIZER_REVISION,
-    context_limit: int = 64,
-    truncated_ids: frozenset[str] = frozenset(),
+    options: SidecarWriteOptions | None = None,
 ) -> None:
+    opts = options or SidecarWriteOptions()
     manifest_path = snapshot / "split_manifest.json"
     manifest = validate_split_manifest(manifest_path)
     records: list[TokenLedgerRecord] = []
@@ -80,14 +86,14 @@ def write_sidecars(
         lengths = []
         truncated_count = 0
         for member in manifest.splits[split].members:
-            truncated = member.canonical_id in truncated_ids
-            lengths.append(tokens)
+            truncated = member.canonical_id in opts.truncated_ids
+            lengths.append(opts.tokens)
             truncated_count += int(truncated)
             records.append(
                 TokenLedgerRecord(
                     canonical_id=member.canonical_id,
                     split=split,
-                    accepted_tokens=tokens,
+                    accepted_tokens=opts.tokens,
                     truncated=truncated,
                 )
             )
@@ -104,12 +110,12 @@ def write_sidecars(
         model_id="fake/model",
         model_revision=MODEL_REVISION,
         tokenizer_id="fake/tokenizer",
-        tokenizer_revision=tokenizer_revision,
+        tokenizer_revision=opts.tokenizer_revision,
         tokenizer_sha256=TOKENIZER_SHA256,
         serializer_id="plain-text",
         serializer_version="1",
         serializer_sha256=SERIALIZER_SHA256,
-        context_limit=context_limit,
+        context_limit=opts.context_limit,
         splits=splits,
     )
     ledger = TokenLedger(
@@ -176,6 +182,6 @@ def prepare_sources(
     prepared = []
     for name in names:
         snapshot = freeze_source(tmp_path, name)
-        write_sidecars(snapshot, tokens=10)
+        write_sidecars(snapshot)
         prepared.append((name, snapshot, 1))
     return tuple(prepared)

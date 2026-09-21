@@ -22,7 +22,7 @@ def _invoke_compose(spec: Path, output: Path):
 
 def test_compose_mixture_cli_writes_frozen_snapshot(tmp_path):
     snapshot = freeze_source(tmp_path, "synthetic")
-    write_sidecars(snapshot, tokens=10)
+    write_sidecars(snapshot)
     spec = compose_spec(
         (("synthetic", snapshot, 1),),
         budget=10,
@@ -44,7 +44,7 @@ def test_compose_mixture_cli_writes_frozen_snapshot(tmp_path):
 
 def test_compose_mixture_cli_refuses_existing_destination(tmp_path, caplog):
     snapshot = freeze_source(tmp_path, "synthetic")
-    write_sidecars(snapshot, tokens=10)
+    write_sidecars(snapshot)
     spec = compose_spec((("synthetic", snapshot, 1),), budget=10)
     spec_path = tmp_path / "mixture-spec.json"
     output = tmp_path / "mixture"
@@ -64,7 +64,7 @@ def test_compose_mixture_cli_refuses_existing_destination(tmp_path, caplog):
 def test_compose_mixture_cli_allows_allowlisted_temp_prefix(tmp_path, monkeypatch):
     ambient, real_tmp = _allowlist_ambient_tmp(tmp_path, monkeypatch)
     snapshot = freeze_source(tmp_path, "synthetic")
-    write_sidecars(snapshot, tokens=10)
+    write_sidecars(snapshot)
     spec = compose_spec((("synthetic", snapshot, 1),), budget=10)
     spec_path = tmp_path / "mixture-spec.json"
     output = ambient / "nested" / "mixture"
