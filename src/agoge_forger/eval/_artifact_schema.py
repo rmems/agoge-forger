@@ -110,6 +110,12 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
+def portable_artifact_path(value: str) -> PurePosixPath:
+    """Return a portable relative POSIX path or raise ValueError."""
+
+    return _portable_artifact_path(value)
+
+
 def _portable_artifact_path(value: str) -> PurePosixPath:
     if not value.strip():
         raise ValueError(f"artifact index path must stay relative to its directory: {value}")
