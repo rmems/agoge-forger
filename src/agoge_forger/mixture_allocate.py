@@ -11,6 +11,15 @@ from .split_schema import sha256_bytes
 
 
 @dataclass(frozen=True)
+class _HamiltonRemainder:
+    budget: int
+    floors: dict[str, int]
+    source_ids: Sequence[str]
+    weights: Mapping[str, int]
+    total_weight: int
+
+
+@dataclass(frozen=True)
 class SelectableRecord:
     source_id: str
     canonical_id: str
@@ -61,7 +70,9 @@ def allocate_token_quotas(
     _validate_quota_inputs(budget, weights, source_ids)
     total_weight = sum(weights[source_id] for source_id in source_ids)
     floors = _floor_quotas(budget, weights, source_ids, total_weight)
-    quotas = _apply_quota_remainders(budget, floors, source_ids, weights, total_weight)
+    quotas = _apply_quota_remainders(
+        _HamiltonRemainder(budget, floors, source_ids, weights, total_weight)
+    )
     if sum(quotas.values()) != budget:
         raise ValueError("source quotas must sum to the accepted-token budget")
     return quotas
@@ -89,22 +100,16 @@ def _floor_quotas(
     }
 
 
-def _apply_quota_remainders(
-    budget: int,
-    floors: dict[str, int],
-    source_ids: Sequence[str],
-    weights: Mapping[str, int],
-    total_weight: int,
-) -> dict[str, int]:
-    quotas = dict(floors)
+def _apply_quota_remainders(plan: _HamiltonRemainder) -> dict[str, int]:
+    quotas = dict(plan.floors)
     remainders = sorted(
         (
-            (divmod(budget * weights[source_id], total_weight)[1], source_id)
-            for source_id in source_ids
+            (divmod(plan.budget * plan.weights[source_id], plan.total_weight)[1], source_id)
+            for source_id in plan.source_ids
         ),
         key=lambda item: (-item[0], item[1]),
     )
-    leftover = budget - sum(quotas.values())
+    leftover = plan.budget - sum(quotas.values())
     for _, bonus_source_id in remainders[:leftover]:
         quotas[bonus_source_id] += 1
     return quotas

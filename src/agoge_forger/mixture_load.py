@@ -22,6 +22,15 @@ from .split_validation import validate_split_manifest_snapshot
 
 
 @dataclass(frozen=True)
+class _ConsumedSplit:
+    source_id: str
+    manifest_path: Path
+    manifest: SplitManifest
+    ledger: TokenLedger
+    consumed: SplitName
+
+
+@dataclass(frozen=True)
 class LoadedSource:
     spec: MixtureSourceSpec
     manifest_path: Path
@@ -51,7 +60,9 @@ def load_source(
     ledger, ledger_sha256 = load_token_ledger(ledger_path)
     require_sidecar_identity(manifest, manifest_sha256, statistics, ledger)
     require_ledger_matches_statistics(ledger, statistics)
-    records = consumed_records(source.source_id, manifest_path, manifest, ledger, consumed)
+    records = consumed_records(
+        _ConsumedSplit(source.source_id, manifest_path, manifest, ledger, consumed)
+    )
     return LoadedSource(
         spec=source,
         manifest_path=manifest_path,
@@ -119,27 +130,29 @@ def _require_sidecar_split_digests(
         raise ValueError(f"token {label} source-split digests do not match the frozen manifest")
 
 
-def consumed_records(
-    source_id: str,
-    manifest_path: Path,
-    manifest: SplitManifest,
-    ledger: TokenLedger,
-    consumed: SplitName,
-) -> tuple[SelectableRecord, ...]:
+def consumed_records(context: _ConsumedSplit) -> tuple[SelectableRecord, ...]:
     token_by_id = {
-        record.canonical_id: record for record in ledger.records if record.split == consumed
+        record.canonical_id: record
+        for record in context.ledger.records
+        if record.split == context.consumed
     }
-    artifact = manifest.splits[consumed]
-    rows = tuple(iter_materialized_records(manifest_path, manifest, consumed))
+    artifact = context.manifest.splits[context.consumed]
+    rows = tuple(
+        iter_materialized_records(context.manifest_path, context.manifest, context.consumed)
+    )
     if len(rows) != len(artifact.members):
         raise ValueError(
-            f"{source_id}: frozen {consumed} membership does not match materialized rows"
+            f"{context.source_id}: frozen {context.consumed} membership does not match "
+            "materialized rows"
         )
     if set(token_by_id) != {member.canonical_id for member in artifact.members}:
-        raise ValueError(f"{source_id}: token ledger does not cover the consumed {consumed} split")
+        raise ValueError(
+            f"{context.source_id}: token ledger does not cover the consumed "
+            f"{context.consumed} split"
+        )
     return tuple(
         SelectableRecord(
-            source_id=source_id,
+            source_id=context.source_id,
             canonical_id=member.canonical_id,
             lineage_id=member.lineage_id,
             group_id=member.group_id,

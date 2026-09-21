@@ -117,10 +117,18 @@ class MixtureManifest(FrozenModel):
 
 
 def _require_fill_invariants(source: MixtureSourceResult) -> None:
+    _require_fill_token_caps(source)
+    _require_fill_shortfall(source)
+
+
+def _require_fill_token_caps(source: MixtureSourceResult) -> None:
     if source.accepted_tokens > source.quota_tokens:
         raise ValueError("accepted tokens cannot exceed the allocated quota")
     if source.accepted_tokens > source.available_accepted_tokens:
         raise ValueError("accepted tokens cannot exceed available accepted tokens")
+
+
+def _require_fill_shortfall(source: MixtureSourceResult) -> None:
     if source.underfilled != (source.shortfall_tokens > 0):
         raise ValueError("underfilled must match a positive token shortfall")
     if source.shortfall_tokens != source.quota_tokens - source.accepted_tokens:

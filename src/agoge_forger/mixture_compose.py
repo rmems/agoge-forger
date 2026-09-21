@@ -48,6 +48,12 @@ class _MixturePublication:
     selections: Sequence[SourceSelection]
 
 
+@dataclass(frozen=True)
+class _ManifestBuild:
+    publication: _MixturePublication
+    artifact: MixtureArtifact
+
+
 def compose_mixture(
     spec: MixtureCompositionSpec,
     output_dir: str | Path,
@@ -83,13 +89,7 @@ def _publish_mixture(publication: _MixturePublication) -> MixtureManifest:
         staged_destination = Path(staging_dir) / "snapshot"
         staged_destination.mkdir()
         artifact = _write_mixture_artifact(staged_destination, publication.selections)
-        manifest = _build_manifest(
-            publication.spec,
-            publication.tokenizer,
-            publication.loaded,
-            publication.selections,
-            artifact,
-        )
+        manifest = _build_manifest(_ManifestBuild(publication, artifact))
         exclusive_write(staged_destination / "mixture_manifest.json", manifest_bytes(manifest))
         exclusive_write(
             staged_destination / "mixture_report.md",
@@ -183,13 +183,13 @@ def _write_mixture_artifact(
     )
 
 
-def _build_manifest(
-    spec: MixtureCompositionSpec,
-    tokenizer: MixtureTokenizerPin,
-    loaded: Sequence[LoadedSource],
-    selections: Sequence[SourceSelection],
-    artifact: MixtureArtifact,
-) -> MixtureManifest:
+def _build_manifest(build: _ManifestBuild) -> MixtureManifest:
+    publication = build.publication
+    spec = publication.spec
+    tokenizer = publication.tokenizer
+    loaded = publication.loaded
+    selections = publication.selections
+    artifact = build.artifact
     by_source = {selection.source_id: selection for selection in selections}
     source_results = tuple(
         _source_result(source, by_source[source.spec.source_id]) for source in loaded

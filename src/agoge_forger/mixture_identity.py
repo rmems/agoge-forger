@@ -6,18 +6,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .mixture_allocate import SelectableRecord
+from .mixture_load import LoadedSource
+from .mixture_schema import MixtureCompositionSpec
+from .split_contract import SPLIT_NAMES, SplitName
+
 
 @dataclass(frozen=True)
 class _IdentityObservation:
     source_id: str
     split: SplitName
     arm: str
-
-
-from .mixture_allocate import SelectableRecord
-from .mixture_load import LoadedSource
-from .mixture_schema import MixtureCompositionSpec
-from .split_contract import SPLIT_NAMES, SplitName
 
 
 @dataclass
