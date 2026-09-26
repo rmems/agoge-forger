@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 from .path_safety import resolve_existing_path
+from .profile_window import ProfileWindowConfig
 
 
 def normalize_revision(value: object) -> str | None:
@@ -74,6 +77,20 @@ class RuntimeConfig(BaseModel):
     checkpoint_disk_buffer_gb: float = 8.0
 
 
+class TelemetryConfig(BaseModel):
+    run_id: str | None = None
+    emit_markers: bool = True
+    profile_window: ProfileWindowConfig = Field(default_factory=ProfileWindowConfig)
+    _environment_resolved: bool = PrivateAttr(default=False)
+
+    @property
+    def environment_resolved(self) -> bool:
+        return self._environment_resolved
+
+    def mark_environment_resolved(self) -> None:
+        self._environment_resolved = True
+
+
 class ExperimentConfig(BaseModel):
     model_id: str
     revision: str | None = None
@@ -87,6 +104,7 @@ class ExperimentConfig(BaseModel):
     training: TrainingConfig = Field(default_factory=TrainingConfig)
     lora: LoraConfigModel = Field(default_factory=LoraConfigModel)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
 
     @field_validator("revision", mode="before")
     @classmethod
@@ -112,8 +130,6 @@ def load_config(yaml_path: str) -> ExperimentConfig:
     # Resolve relative `dataset_path` entries against the directory of
     # the config file itself, not the current working directory, so
     # configs are portable and reproducible across environments.
-    from pathlib import Path
-
     raw_dataset_path = Path(str(data["dataset_path"])).expanduser()
     if not raw_dataset_path.is_absolute():
         raw_dataset_path = (config_path.parent / raw_dataset_path).resolve()
@@ -165,4 +181,14 @@ def load_config(yaml_path: str) -> ExperimentConfig:
             disk_free_warning_gb=data.get("disk_free_warning_gb", 20.0),
             checkpoint_disk_buffer_gb=data.get("checkpoint_disk_buffer_gb", 8.0),
         ),
+        telemetry=_load_telemetry(data),
     )
+
+
+def _load_telemetry(data: dict) -> TelemetryConfig:
+    raw = data.get("telemetry")
+    if raw is None:
+        return TelemetryConfig()
+    if not isinstance(raw, dict):
+        raise TypeError("telemetry must be a mapping")
+    return TelemetryConfig.model_validate(raw)

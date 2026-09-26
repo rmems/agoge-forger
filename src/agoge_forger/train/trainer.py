@@ -13,6 +13,8 @@ from ..eval import ArtifactProducerProvenance
 from ..logging import logger
 from ..manifests import write_run_manifest
 from ..models.load import load_base_model
+from ..telemetry import attach_telemetry, open_training_session
+from ..telemetry.gpu import gpu_identity
 from .checkpoints import resolve_resume_checkpoint
 from .completion import prepare_completion_dataset
 from .preflight import (
@@ -117,6 +119,7 @@ class _TrainingFinalization:
     out_dir: str
     gpu_report: Mapping[str, object]
     producer_provenance: ArtifactProducerProvenance | Mapping[str, object] | None = None
+    telemetry_metrics: Mapping[str, object] | None = None
 
 
 def _finalize_training_run(config, finalization: _TrainingFinalization):
@@ -144,6 +147,8 @@ def _finalize_training_run(config, finalization: _TrainingFinalization):
         "gpu_report": finalization.gpu_report,
         "artifact_index": index_path,
     }
+    if finalization.telemetry_metrics:
+        metrics["telemetry"] = dict(finalization.telemetry_metrics)
     write_run_manifest(
         os.path.join("runs", config.run_name),
         config.model_dump(),
@@ -163,7 +168,19 @@ def _require_training_provenance(producer_provenance: Any) -> ArtifactProducerPr
 
 
 def run_training(config, producer_provenance=None):
+    session = open_training_session(config)
+    try:
+        _execute_training(config, producer_provenance, session)
+    except Exception:
+        session.record_failure()
+        raise
+    finally:
+        session.close()
+
+
+def _execute_training(config, producer_provenance, session):
     check_cuda_available(required=True)
+    session.writer.update_gpu(gpu_identity())
     gpu_report = get_gpu_report()
     logger.info(f"GPU Report: {gpu_report}")
 
@@ -184,6 +201,7 @@ def run_training(config, producer_provenance=None):
         revision=config.revision,
     )
     model = _prepare_peft_model(config, model)
+    session.emit("model_load", phase="setup", global_step=0)
 
     dataset = load_jsonl_dataset(config.dataset_path, tokenizer)
     # Authoritative re-check: the peek above only saw the first row, and a
@@ -197,6 +215,7 @@ def run_training(config, producer_provenance=None):
 
     training_args = _build_training_args(config, out_dir)
     trainer = _build_sft_trainer(model, dataset, tokenizer, training_args)
+    attach_telemetry(trainer, session)
 
     logger.info("Starting training...")
     trainer.train(resume_from_checkpoint=resume_checkpoint)
@@ -207,5 +226,6 @@ def run_training(config, producer_provenance=None):
             out_dir=out_dir,
             gpu_report=gpu_report,
             producer_provenance=producer_provenance,
+            telemetry_metrics=session.manifest_entry(),
         ),
     )

@@ -3,9 +3,16 @@
 import typer
 
 from ._cli_app import CLI_PATH_ERRORS, app, exit_on_error
-from .config import load_config
+from .config import ExperimentConfig, load_config
+from .telemetry.window import overlay_cli_telemetry
 from .train.lora import train_lora as _train_lora
 from .train.qlora import train_qlora as _train_qlora
+
+_RUN_ID_HELP = "Stable agoge_run_id for GPU/CUDA correlation (default: config run_name)"
+_PROFILE_WINDOW_HELP = (
+    "Opt-in bounded CUDA profile window, e.g. train:1-2. Off unless set. "
+    "Not required for ordinary training."
+)
 
 
 def _load(config: str):
@@ -17,19 +24,39 @@ def _load(config: str):
     """
     try:
         return load_config(config)
-    except CLI_PATH_ERRORS as e:
+    except (*CLI_PATH_ERRORS, TypeError) as e:
         exit_on_error(e)
 
 
+def _apply_telemetry_cli(
+    cfg: ExperimentConfig,
+    run_id: str | None,
+    profile_window: str | None,
+) -> ExperimentConfig:
+    try:
+        cfg.telemetry = overlay_cli_telemetry(cfg.telemetry, run_id, profile_window)
+    except ValueError as error:
+        exit_on_error(error)
+    return cfg
+
+
 @app.command()
-def train_qlora(config: str = typer.Option(..., help="Path to YAML config")):
+def train_qlora(
+    config: str = typer.Option(..., help="Path to YAML config"),
+    run_id: str | None = typer.Option(None, help=_RUN_ID_HELP),
+    profile_window: str | None = typer.Option(None, help=_PROFILE_WINDOW_HELP),
+):
     """Run QLoRA training."""
-    cfg = _load(config)
+    cfg = _apply_telemetry_cli(_load(config), run_id, profile_window)
     _train_qlora(cfg)
 
 
 @app.command()
-def train_lora(config: str = typer.Option(..., help="Path to YAML config")):
+def train_lora(
+    config: str = typer.Option(..., help="Path to YAML config"),
+    run_id: str | None = typer.Option(None, help=_RUN_ID_HELP),
+    profile_window: str | None = typer.Option(None, help=_PROFILE_WINDOW_HELP),
+):
     """Run LoRA training."""
-    cfg = _load(config)
+    cfg = _apply_telemetry_cli(_load(config), run_id, profile_window)
     _train_lora(cfg)
