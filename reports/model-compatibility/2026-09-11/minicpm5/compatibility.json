@@ -1,0 +1,39 @@
+{
+  "model_id": "openbmb/MiniCPM5-1B-Base",
+  "revision": "156170697656c48f69915b33a2fb44110242187c",
+  "status": "pass_mechanical",
+  "architectures": [
+    "LlamaForCausalLM"
+  ],
+  "lora_target_modules": [
+    "down_proj",
+    "gate_proj",
+    "k_proj",
+    "o_proj",
+    "q_proj",
+    "up_proj",
+    "v_proj"
+  ],
+  "recommended_common_targets": [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj"
+  ],
+  "qlora": {
+    "load_in_4bit": true,
+    "bnb_4bit_quant_type": "nf4",
+    "compute_dtype": "bfloat16",
+    "double_quant": true
+  },
+  "completion_only_loss": false,
+  "completion_only_note": "Tiny chat freeze lacks completion_start_char; #133/#138 already proved completion-only on real trainer batch. Code-repair completion-masked MiniCPM canary still optional follow-up.",
+  "machine": {
+    "host": "ShipOfTheseus",
+    "gpu": "NVIDIA GeForce RTX 5080 16GB"
+  },
+  "agoge_code": "6d779e9f031d0f3fbce9e92fe47b7370d4bd43d7"
+}

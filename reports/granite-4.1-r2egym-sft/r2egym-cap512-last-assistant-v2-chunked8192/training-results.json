@@ -1,0 +1,20 @@
+{
+  "experiment_id": "r2egym-cap512-last-assistant-v2-chunked8192",
+  "train": {
+    "config_path": "reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/train.yaml",
+    "status": "completed",
+    "source_rows": 411,
+    "rows_accepted": 121,
+    "dropped_over_max_seq_length": 290,
+    "prepared_sha256": "d4649159bd04e39e2b6f55af5e0523ce6875ba6d1fd48fe8bdcc7e3a5026698f",
+    "train_runtime_s": 413.4,
+    "train_loss": 3.29,
+    "train_samples_per_second": 0.293,
+    "max_vram_gb": 7.3,
+    "gpu": "NVIDIA GeForce RTX 5080",
+    "loss_type": "chunked_nll",
+    "activation_offloading": true,
+    "adapter_sha256": "bc89d1befeb26bd3f5cfee8d484d942190c5330ec7893911576333555eb2820a",
+    "adapter_path": "/home/raulmc/agoge-data/adapters/granite-4.1-r2egym-cap512-last-assistant-v2-chunked8192/r2egym-cap512-last-assistant-v2-chunked8192"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "completion_only_loss": true,
+  "boundary_unit": "unicode_code_point",
+  "truncation": false,
+  "max_seq_length": 8192,
+  "rows": 121,
+  "max_tokens": 8172,
+  "shifted_supervised_tokens": 42089,
+  "prepared_sha256": "d4649159bd04e39e2b6f55af5e0523ce6875ba6d1fd48fe8bdcc7e3a5026698f",
+  "dropped_over_max_seq_length": 290,
+  "source_rows": 411
+}
