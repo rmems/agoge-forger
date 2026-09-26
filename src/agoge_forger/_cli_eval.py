@@ -240,27 +240,37 @@ def _run_g0_held_out_eval_command(request: _G0HeldOutEvalRequest) -> None:
     logger.info("wrote G0 held-out eval bundle %s", published)
 
 
+_SplitManifestOption = Annotated[str, typer.Option(help="Frozen split_manifest.json")]
+_BaseModelIdOption = Annotated[str, typer.Option(help="Pinned base model id or local snapshot")]
+_BaseRevisionOption = Annotated[str, typer.Option(help="Immutable 40-64 hex base revision")]
+_TokenizerIdOption = Annotated[
+    str | None, typer.Option(help="Tokenizer id (defaults to --base-model-id)")
+]
+_TokenizerRevisionOption = Annotated[
+    str | None, typer.Option(help="Tokenizer revision (defaults to --base-revision)")
+]
+_TruncationPolicyOption = Annotated[
+    TruncationPolicy, typer.Option(help="reject or mark_unsupported")
+]
+_DeviceMapOption = Annotated[str, typer.Option(help="Transformers device_map")]
+_TrustRemoteCodeOption = Annotated[bool, typer.Option(help=_TRUST_REMOTE_CODE_HELP)]
+
+
 @app.command("g0-held-out-eval")
 def g0_held_out_eval(
-    split_manifest: str = typer.Option(..., help="Frozen split_manifest.json"),
-    output_dir: str = typer.Option(..., help="New g0/<run_name> bundle directory"),
-    experiment_id: str = typer.Option(..., help="Pre-registered experiment identifier"),
-    base_model_id: str = typer.Option(..., help="Pinned base model id or local snapshot"),
-    base_revision: str = typer.Option(..., help="Immutable 40-64 hex base revision"),
-    tokenizer_id: str | None = typer.Option(
-        None, help="Tokenizer id (defaults to --base-model-id)"
-    ),
-    tokenizer_revision: str | None = typer.Option(
-        None, help="Tokenizer revision (defaults to --base-revision)"
-    ),
-    context_window: int = typer.Option(..., help="Prompt token budget for the base arm"),
-    max_new_tokens: int = typer.Option(..., help="Decoding max_new_tokens for the base arm"),
-    seed: int = typer.Option(17, help="Decoding seed"),
-    truncation_policy: Annotated[
-        TruncationPolicy, typer.Option(help="reject or mark_unsupported")
-    ] = "mark_unsupported",
-    device_map: str = typer.Option("auto", help="Transformers device_map"),
-    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
+    split_manifest: _SplitManifestOption,
+    output_dir: Annotated[str, typer.Option(help="New g0/<run_name> bundle directory")],
+    experiment_id: Annotated[str, typer.Option(help="Pre-registered experiment identifier")],
+    base_model_id: _BaseModelIdOption,
+    base_revision: _BaseRevisionOption,
+    context_window: Annotated[int, typer.Option(help="Prompt token budget for the base arm")],
+    max_new_tokens: Annotated[int, typer.Option(help="Decoding max_new_tokens for the base arm")],
+    tokenizer_id: _TokenizerIdOption = None,
+    tokenizer_revision: _TokenizerRevisionOption = None,
+    seed: Annotated[int, typer.Option(help="Decoding seed")] = 17,
+    truncation_policy: _TruncationPolicyOption = "mark_unsupported",
+    device_map: _DeviceMapOption = "auto",
+    trust_remote_code: _TrustRemoteCodeOption = False,
 ):
     """Run base-only generation on frozen held-out membership before SFT exists."""
     options = _ModelEvalOptions(
@@ -282,39 +292,39 @@ def g0_held_out_eval(
 
 @app.command("held-out-eval")
 def held_out_eval(
-    split_manifest: str = typer.Option(..., help="Frozen split_manifest.json"),
-    sft_artifact: str = typer.Option(..., help="PEFT adapter or merged-model bundle"),
-    output_dir: str = typer.Option(..., help="New eval/<run_name> bundle directory"),
-    base_model_id: str = typer.Option(..., help="Pinned base model id or local snapshot"),
-    base_revision: str = typer.Option(..., help="Immutable 40-64 hex base revision"),
-    tokenizer_id: str | None = typer.Option(
-        None, help="Tokenizer id (defaults to --base-model-id)"
-    ),
-    tokenizer_revision: str | None = typer.Option(
-        None, help="Tokenizer revision (defaults to --base-revision)"
-    ),
-    context_window: int = typer.Option(..., help="Prompt token budget for both arms"),
-    max_new_tokens: int = typer.Option(128, help="Decoding max_new_tokens for both arms"),
-    seed: int = typer.Option(17, help="Decoding seed for both arms"),
-    truncation_policy: Annotated[
-        TruncationPolicy, typer.Option(help="reject or mark_unsupported")
-    ] = "mark_unsupported",
-    device_map: str = typer.Option("auto", help="Transformers device_map"),
-    trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
+    split_manifest: _SplitManifestOption,
+    sft_artifact: Annotated[str, typer.Option(help="PEFT adapter or merged-model bundle")],
+    output_dir: Annotated[str, typer.Option(help="New eval/<run_name> bundle directory")],
+    base_model_id: _BaseModelIdOption,
+    base_revision: _BaseRevisionOption,
+    context_window: Annotated[int, typer.Option(help="Prompt token budget for both arms")],
+    tokenizer_id: _TokenizerIdOption = None,
+    tokenizer_revision: _TokenizerRevisionOption = None,
+    max_new_tokens: Annotated[
+        int, typer.Option(help="Decoding max_new_tokens for both arms")
+    ] = 128,
+    seed: Annotated[int, typer.Option(help="Decoding seed for both arms")] = 17,
+    truncation_policy: _TruncationPolicyOption = "mark_unsupported",
+    device_map: _DeviceMapOption = "auto",
+    trust_remote_code: _TrustRemoteCodeOption = False,
 ):
     """Run base then SFT generation on frozen held-out membership and write the eval bundle."""
-    options = _ModelEvalOptions(
-        base_model_id,
-        base_revision,
-        tokenizer_id,
-        tokenizer_revision,
-        context_window,
-        max_new_tokens,
-        seed,
-        truncation_policy,
-        device_map,
-        trust_remote_code,
-    )
     _run_held_out_eval_command(
-        _HeldOutEvalRequest(split_manifest, sft_artifact, output_dir, options)
+        _HeldOutEvalRequest(
+            split_manifest,
+            sft_artifact,
+            output_dir,
+            _ModelEvalOptions(
+                base_model_id=base_model_id,
+                base_revision=base_revision,
+                tokenizer_id=tokenizer_id,
+                tokenizer_revision=tokenizer_revision,
+                context_window=context_window,
+                max_new_tokens=max_new_tokens,
+                seed=seed,
+                truncation_policy=truncation_policy,
+                device_map=device_map,
+                trust_remote_code=trust_remote_code,
+            ),
+        )
     )
