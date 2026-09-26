@@ -43,10 +43,9 @@ class _ArmCommon(TypedDict):
 
 
 @dataclass(frozen=True)
-class _HeldOutEvalRequest:
-    split_manifest: str
-    sft_artifact: str
-    output_dir: str
+class _ModelEvalOptions:
+    """CLI options shared by ``held-out-eval`` and ``g0-held-out-eval``."""
+
     base_model_id: str
     base_revision: str
     tokenizer_id: str | None
@@ -57,6 +56,22 @@ class _HeldOutEvalRequest:
     truncation_policy: TruncationPolicy
     device_map: str
     trust_remote_code: bool
+
+
+@dataclass(frozen=True)
+class _HeldOutEvalRequest:
+    split_manifest: str
+    sft_artifact: str
+    output_dir: str
+    options: _ModelEvalOptions
+
+
+@dataclass(frozen=True)
+class _G0HeldOutEvalRequest:
+    split_manifest: str
+    output_dir: str
+    experiment_id: str
+    options: _ModelEvalOptions
 
 
 @dataclass(frozen=True)
@@ -119,7 +134,33 @@ def _arm_common(inputs: _HeldOutArmInputs, tokenizer: Any, task_digest: str) -> 
     }
 
 
-def _evaluation_arms(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, EvaluationArm, Any]:
+def _arm_inputs(
+    options: _ModelEvalOptions, manifest_path: Path, artifact_root: Path
+) -> _HeldOutArmInputs:
+    return _HeldOutArmInputs(
+        manifest_path=manifest_path,
+        artifact_root=artifact_root,
+        base_model_id=options.base_model_id,
+        base_revision=options.base_revision,
+        tokenizer_id=options.tokenizer_id or options.base_model_id,
+        tokenizer_revision=options.tokenizer_revision or options.base_revision,
+        context_window=options.context_window,
+        max_new_tokens=options.max_new_tokens,
+        seed=options.seed,
+        truncation_policy=options.truncation_policy,
+        trust_remote_code=options.trust_remote_code,
+    )
+
+
+def _eval_runtime(options: _ModelEvalOptions, tokenizer: Any) -> HeldOutEvalRuntime:
+    return HeldOutEvalRuntime(
+        tokenizer=tokenizer,
+        trust_remote_code=options.trust_remote_code,
+        device_map=options.device_map,
+    )
+
+
+def _base_arm(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, _ArmCommon, Any]:
     manifest = validate_split_manifest_snapshot(
         inputs.manifest_path, inputs.manifest_path.read_bytes()
     )
@@ -127,6 +168,17 @@ def _evaluation_arms(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, Evaluati
         inputs.tokenizer_id, inputs.tokenizer_revision, inputs.trust_remote_code
     )
     common = _arm_common(inputs, tokenizer, logical_task_set_sha256(held_out_task_ids(manifest)))
+    base = EvaluationArm(
+        role="causal_base",
+        model_repository=inputs.base_model_id,
+        model_revision=inputs.base_revision,
+        **common,
+    )
+    return base, common, tokenizer
+
+
+def _evaluation_arms(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, EvaluationArm, Any]:
+    base, common, tokenizer = _base_arm(inputs)
     index_path = inputs.artifact_root / "artifact_index.json"
     if not index_path.is_file():
         raise ValueError(f"SFT artifact requires artifact_index.json: {index_path}")
@@ -134,12 +186,6 @@ def _evaluation_arms(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, Evaluati
         kind=_infer_artifact_kind(inputs.artifact_root),
         artifact_index_path=str(index_path),
         artifact_index_sha256=sha256_file(index_path),
-    )
-    base = EvaluationArm(
-        role="causal_base",
-        model_repository=inputs.base_model_id,
-        model_revision=inputs.base_revision,
-        **common,
     )
     sft = EvaluationArm(
         role="causal_sft",
@@ -151,73 +197,28 @@ def _evaluation_arms(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, Evaluati
     return base, sft, tokenizer
 
 
+def _g0_base_arm(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, Any]:
+    base, _common, tokenizer = _base_arm(inputs)
+    return base, tokenizer
+
+
 def _run_held_out_eval_command(request: _HeldOutEvalRequest) -> None:
     try:
         manifest_path = resolve_existing_path(request.split_manifest, must_be_file=True)
         artifact_root = resolve_existing_path(request.sft_artifact, must_be_dir=True)
         destination = resolve_absent_output_directory(request.output_dir)
         base, sft, tokenizer = _evaluation_arms(
-            _HeldOutArmInputs(
-                manifest_path=manifest_path,
-                artifact_root=artifact_root,
-                base_model_id=request.base_model_id,
-                base_revision=request.base_revision,
-                tokenizer_id=request.tokenizer_id or request.base_model_id,
-                tokenizer_revision=request.tokenizer_revision or request.base_revision,
-                context_window=request.context_window,
-                max_new_tokens=request.max_new_tokens,
-                seed=request.seed,
-                truncation_policy=request.truncation_policy,
-                trust_remote_code=request.trust_remote_code,
-            )
+            _arm_inputs(request.options, manifest_path, artifact_root)
         )
         published = run_held_out_eval(
             manifest_path=manifest_path,
             output_dir=destination,
             arms=(base, sft),
-            runtime=HeldOutEvalRuntime(
-                tokenizer=tokenizer,
-                trust_remote_code=request.trust_remote_code,
-                device_map=request.device_map,
-            ),
+            runtime=_eval_runtime(request.options, tokenizer),
         )
     except (*CLI_PATH_ERRORS, TypeError) as exc:
         exit_on_error(exc)
     logger.info("wrote held-out eval bundle %s", published)
-
-
-@dataclass(frozen=True)
-class _G0HeldOutEvalRequest:
-    split_manifest: str
-    output_dir: str
-    experiment_id: str
-    base_model_id: str
-    base_revision: str
-    tokenizer_id: str | None
-    tokenizer_revision: str | None
-    context_window: int
-    max_new_tokens: int
-    seed: int
-    truncation_policy: TruncationPolicy
-    device_map: str
-    trust_remote_code: bool
-
-
-def _g0_base_arm(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, Any]:
-    manifest = validate_split_manifest_snapshot(
-        inputs.manifest_path, inputs.manifest_path.read_bytes()
-    )
-    tokenizer = _load_pinned_tokenizer(
-        inputs.tokenizer_id, inputs.tokenizer_revision, inputs.trust_remote_code
-    )
-    common = _arm_common(inputs, tokenizer, logical_task_set_sha256(held_out_task_ids(manifest)))
-    base = EvaluationArm(
-        role="causal_base",
-        model_repository=inputs.base_model_id,
-        model_revision=inputs.base_revision,
-        **common,
-    )
-    return base, tokenizer
 
 
 def _run_g0_held_out_eval_command(request: _G0HeldOutEvalRequest) -> None:
@@ -225,33 +226,15 @@ def _run_g0_held_out_eval_command(request: _G0HeldOutEvalRequest) -> None:
         manifest_path = resolve_existing_path(request.split_manifest, must_be_file=True)
         destination = resolve_absent_output_directory(request.output_dir)
         base, tokenizer = _g0_base_arm(
-            _HeldOutArmInputs(
-                manifest_path=manifest_path,
-                artifact_root=manifest_path.parent,
-                base_model_id=request.base_model_id,
-                base_revision=request.base_revision,
-                tokenizer_id=request.tokenizer_id or request.base_model_id,
-                tokenizer_revision=request.tokenizer_revision or request.base_revision,
-                context_window=request.context_window,
-                max_new_tokens=request.max_new_tokens,
-                seed=request.seed,
-                truncation_policy=request.truncation_policy,
-                trust_remote_code=request.trust_remote_code,
-            )
+            _arm_inputs(request.options, manifest_path, manifest_path.parent)
         )
-        published = run_g0_base_eval(
-            G0BaseEvalSpec(
-                manifest_path=manifest_path,
-                output_dir=destination,
-                experiment_id=request.experiment_id,
-                base=base,
-            ),
-            runtime=HeldOutEvalRuntime(
-                tokenizer=tokenizer,
-                trust_remote_code=request.trust_remote_code,
-                device_map=request.device_map,
-            ),
+        spec = G0BaseEvalSpec(
+            manifest_path=manifest_path,
+            output_dir=destination,
+            experiment_id=request.experiment_id,
+            base=base,
         )
+        published = run_g0_base_eval(spec, runtime=_eval_runtime(request.options, tokenizer))
     except (*CLI_PATH_ERRORS, TypeError) as exc:
         exit_on_error(exc)
     logger.info("wrote G0 held-out eval bundle %s", published)
@@ -280,22 +263,20 @@ def g0_held_out_eval(
     trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
 ):
     """Run base-only generation on frozen held-out membership before SFT exists."""
+    options = _ModelEvalOptions(
+        base_model_id,
+        base_revision,
+        tokenizer_id,
+        tokenizer_revision,
+        context_window,
+        max_new_tokens,
+        seed,
+        truncation_policy,
+        device_map,
+        trust_remote_code,
+    )
     _run_g0_held_out_eval_command(
-        _G0HeldOutEvalRequest(
-            split_manifest,
-            output_dir,
-            experiment_id,
-            base_model_id,
-            base_revision,
-            tokenizer_id,
-            tokenizer_revision,
-            context_window,
-            max_new_tokens,
-            seed,
-            truncation_policy,
-            device_map,
-            trust_remote_code,
-        )
+        _G0HeldOutEvalRequest(split_manifest, output_dir, experiment_id, options)
     )
 
 
@@ -322,20 +303,18 @@ def held_out_eval(
     trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
 ):
     """Run base then SFT generation on frozen held-out membership and write the eval bundle."""
+    options = _ModelEvalOptions(
+        base_model_id,
+        base_revision,
+        tokenizer_id,
+        tokenizer_revision,
+        context_window,
+        max_new_tokens,
+        seed,
+        truncation_policy,
+        device_map,
+        trust_remote_code,
+    )
     _run_held_out_eval_command(
-        _HeldOutEvalRequest(
-            split_manifest,
-            sft_artifact,
-            output_dir,
-            base_model_id,
-            base_revision,
-            tokenizer_id,
-            tokenizer_revision,
-            context_window,
-            max_new_tokens,
-            seed,
-            truncation_policy,
-            device_map,
-            trust_remote_code,
-        )
+        _HeldOutEvalRequest(split_manifest, sft_artifact, output_dir, options)
     )
