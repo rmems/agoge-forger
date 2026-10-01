@@ -1,0 +1,55 @@
+{
+  "runs": [
+    {
+      "name": "local_granite_smoke_tiny",
+      "config": "/home/raulmc/agoge-data/scratch/smoke/local_granite_smoke.yaml",
+      "split": "/home/raulmc/agoge-data/splits/tiny-sft-smoke-v1",
+      "split_counts": {
+        "train": 72,
+        "validation": 9,
+        "held_out": 9
+      },
+      "max_seq_length": 512,
+      "adapter_dir": "/home/raulmc/agoge-data/scratch/smoke/adapters/local_granite_smoke_tiny",
+      "adapter_model_sha256": "c3cc0a328442a5d10d33f33d8199a010a73e3d610952054428cb60bb897f0eaf",
+      "producer_provenance": {
+        "base_model_name_or_path": "/home/raulmc/.models/ibm-granite/granite-4.1-3b-base",
+        "revision": "dacb9cb9157bec98e99b09f285c92a4d58405c96",
+        "training_split_manifest_sha256": "6bf70170b97f4686a5adb5b86db9956fa41d26731f9dd326df827f562e6c08e0",
+        "training_split_name": "train",
+        "training_split_sha256": "95f821bcb1fecdd961f58e1d0017437473761b0c118c78a8f72646d140950f6a"
+      },
+      "train_loss": 1.046,
+      "train_runtime_s": 14.52,
+      "max_vram_gib": 3.38,
+      "global_step": 36,
+      "seed": 42
+    },
+    {
+      "name": "local_granite_r2egym_cap512",
+      "config": "/home/raulmc/agoge-data/scratch/smoke/local_granite_r2egym_cap512.yaml",
+      "split": "/home/raulmc/agoge-data/splits/r2egym-sft-cap512-v1",
+      "split_counts": {
+        "train": 407,
+        "validation": 53,
+        "held_out": 52
+      },
+      "max_seq_length": 2048,
+      "adapter_dir": "/home/raulmc/agoge-data/scratch/smoke/adapters/local_granite_r2egym_cap512",
+      "adapter_model_sha256": "d769822d864d5ca145d101f9b79e0c7587fdf6299ebada56f3d2057f0bc9aeb6",
+      "producer_provenance": {
+        "base_model_name_or_path": "/home/raulmc/.models/ibm-granite/granite-4.1-3b-base",
+        "revision": "dacb9cb9157bec98e99b09f285c92a4d58405c96",
+        "training_split_manifest_sha256": "356a9b28aac57ef46616eccb91b5f5ab3030501716261f1bc6b88ff0d97d6289",
+        "training_split_name": "train",
+        "training_split_sha256": "50dfbde70b3d77810cc9d1aade44ff4933c389747fdabe8c9109eb3633fe9055"
+      },
+      "train_loss": 0.3726,
+      "train_runtime_s": 468.4,
+      "max_vram_gib": 6.36,
+      "global_step": 102,
+      "seed": 42
+    }
+  ],
+  "recorded_at": "2026-09-11T05:08:24.870418+00:00"
+}

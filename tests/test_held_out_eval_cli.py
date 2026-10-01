@@ -140,3 +140,52 @@ def test_held_out_eval_cli_wires_library_path(tmp_path, monkeypatch):
     assert seen["run"]["arms"] == (base, sft)
     runtime = seen["run"]["runtime"]
     assert runtime.trust_remote_code is False
+
+
+def test_g0_held_out_eval_cli_wires_library_path(tmp_path, monkeypatch):
+    manifest_path, _manifest, base, _sft = canary_evaluation_case(tmp_path)
+    seen: dict[str, object] = {}
+
+    def fake_arm(inputs):
+        seen["inputs"] = inputs
+        return base, object()
+
+    def fake_run(spec, *, runtime):
+        seen["spec"] = spec
+        seen["runtime"] = runtime
+        output = Path(spec.output_dir)
+        output.mkdir(parents=True)
+        return output
+
+    monkeypatch.setattr("agoge_forger._cli_eval._g0_base_arm", fake_arm)
+    monkeypatch.setattr("agoge_forger._cli_eval.run_g0_base_eval", fake_run)
+    output = tmp_path / "g0" / "cli"
+    result = CliRunner().invoke(
+        app,
+        [
+            "g0-held-out-eval",
+            "--split-manifest",
+            str(manifest_path),
+            "--output-dir",
+            str(output),
+            "--experiment-id",
+            "rm-760-g0",
+            "--base-model-id",
+            "example/base-model",
+            "--base-revision",
+            "abcdef0123456789abcdef0123456789abcdef01",
+            "--context-window",
+            "4096",
+            "--max-new-tokens",
+            "64",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    inputs = seen["inputs"]
+    assert inputs.tokenizer_id == "example/base-model"
+    assert inputs.tokenizer_revision == "abcdef0123456789abcdef0123456789abcdef01"
+    assert inputs.max_new_tokens == 64
+    assert seen["spec"].experiment_id == "rm-760-g0"
+    assert seen["spec"].base is base
+    assert seen["runtime"].trust_remote_code is False
+    assert seen["runtime"].device_map == "auto"

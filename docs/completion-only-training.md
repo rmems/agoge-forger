@@ -40,7 +40,8 @@ lacks causal context, even if later content tokens could receive loss. A BOS
 or actual prompt token can supply that context. Rows with no content targets
 after causal shifting, unsupported added special tokens, or more than
 `max_seq_length` tokens including EOS are refused
-before trainer construction. There is no truncation option in this path.
+before trainer construction. Over-budget rows are dropped from the prepared
+set; if none remain, construction fails. There is no truncation option in this path.
 
 Caller-provided `labels`, `assistant_masks`, and `seq_lengths` are reserved and
 refused to prevent overriding verified supervision. Input token IDs and completion
@@ -48,7 +49,10 @@ masks are regenerated from the exact text and declared boundary.
 
 The trainer receives pretokenized IDs, internally derived labels (`-100` for
 masked tokens), and a backwards-compatible completion mask with explicit
-`SFTConfig.completion_only_loss=True`. Explicit labels also support TRL versions
+`SFTConfig.completion_only_loss=True`. Optional YAML `loss_type: chunked_nll`
+uses the same NLL without materializing full-sequence `lm_head` logits;
+`activation_offloading: true` offloads decoder activations. Default remains
+`loss_type: nll`. Explicit labels also support TRL versions
 that build labels during dataset preparation instead of in the collator.
 Before trainer construction,
 `completion_preprocessing.json` records the boundary unit, no-truncation policy,

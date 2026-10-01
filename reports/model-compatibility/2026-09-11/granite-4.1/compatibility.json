@@ -1,0 +1,33 @@
+{
+  "model_id": "/home/raulmc/.models/ibm-granite/granite-4.1-3b-base",
+  "hub_id": "ibm-granite/granite-4.1-3b-base",
+  "revision": "dacb9cb9157bec98e99b09f285c92a4d58405c96",
+  "status": "pass_mechanical",
+  "note": "Bounded QLoRA train+save+clean reload+smoke-eval generation succeeded (tiny + prior R2EGym cap-512 train). Compatibility only \u2014 not a model-quality claim.",
+  "lora_target_modules": [
+    "down_proj",
+    "gate_proj",
+    "k_proj",
+    "o_proj",
+    "q_proj",
+    "up_proj",
+    "v_proj"
+  ],
+  "qlora": {
+    "load_in_4bit": true,
+    "bnb_4bit_quant_type": "nf4",
+    "compute_dtype": "bfloat16",
+    "double_quant": true
+  },
+  "machine": {
+    "host": "ShipOfTheseus",
+    "gpu": "NVIDIA GeForce RTX 5080 16GB"
+  },
+  "agoge_main_at_report": "6d779e9f031d0f3fbce9e92fe47b7370d4bd43d7",
+  "blocker_133": {
+    "gh": 133,
+    "linear": "RM-1032",
+    "state": "CLOSED/Done",
+    "via_pr": 138
+  }
+}

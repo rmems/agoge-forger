@@ -30,7 +30,14 @@ from .contract import (
     compose_evaluation_contract,
     validate_evaluation_contract,
 )
-from .harness import run_held_out_eval
+from .experiment_contract import (
+    ExperimentContract,
+    build_experiment_contract,
+    load_experiment_contract,
+    split_pin_from_manifest,
+    validate_experiment_contract,
+)
+from .harness import run_g0_base_eval, run_held_out_eval
 from .score import OBJECTIVE_SCORING_VERSION
 
 __all__ = [
@@ -42,20 +49,26 @@ __all__ = [
     "DecodingContract",
     "EntryIdentity",
     "EvaluationArm",
+    "ExperimentContract",
     "FrozenEvaluationModel",
     "PairedEvaluationContract",
     "VerifiedAdapterSource",
     "build_evaluation_contract",
+    "build_experiment_contract",
     "compose_evaluation_contract",
     "hash_relative_file",
+    "load_experiment_contract",
     "open_bundle",
     "portable_artifact_path",
     "portable_contract_reference",
     "read_relative_file",
     "require_adapter_source_tensor_schema",
     "require_descriptor_support",
+    "run_g0_base_eval",
     "run_held_out_eval",
     "scan_bundle",
+    "split_pin_from_manifest",
     "validate_evaluation_contract",
+    "validate_experiment_contract",
     "verified_adapter_source",
 ]

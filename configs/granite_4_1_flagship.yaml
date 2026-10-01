@@ -3,6 +3,7 @@ model_id: "ibm-granite/granite-4.1-3b-base"
 trust_remote_code: false
 dataset_path: "../datasets/samples/tiny_sft.jsonl"
 dataset_text_field: "text"
+completion_only_loss: true
 output_dir: "adapters"
 run_name: "granite_4_1_flagship"
 load_in_4bit: true

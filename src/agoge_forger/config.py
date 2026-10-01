@@ -41,6 +41,17 @@ class TrainingConfig(BaseModel):
     save_total_limit: int | None = 2
     resume_from_latest_checkpoint: bool = False
     resume_checkpoint_path: str | None = None
+    # TRL SFTConfig passthrough. ``chunked_nll`` is the same NLL as ``nll``
+    # but never materializes [seq, vocab] logits (needed for 16GB / long SFT).
+    loss_type: str = "nll"
+    activation_offloading: bool = False
+
+    @field_validator("loss_type")
+    @classmethod
+    def _allowed_loss_type(cls, value: str) -> str:
+        if value not in {"nll", "chunked_nll"}:
+            raise ValueError("loss_type must be 'nll' or 'chunked_nll'")
+        return value
 
 
 class QuantizationConfig(BaseModel):
@@ -153,6 +164,8 @@ def load_config(yaml_path: str) -> ExperimentConfig:
             save_total_limit=data.get("save_total_limit", 2),
             resume_from_latest_checkpoint=data.get("resume_from_latest_checkpoint", False),
             resume_checkpoint_path=data.get("resume_checkpoint_path"),
+            loss_type=data.get("loss_type", "nll"),
+            activation_offloading=data.get("activation_offloading", False),
         ),
         lora=LoraConfigModel(
             lora_r=data.get("lora_r", 16),

@@ -126,6 +126,16 @@ def test_shared_training_fields_survive_the_sft_config_switch(config, tmp_path):
     assert args.save_total_limit == 4
     assert args.gradient_checkpointing is True
     assert args.bf16 is False
+    assert args.loss_type == "nll"
+    assert args.activation_offloading is False
+
+
+def test_chunked_nll_and_activation_offloading_reach_sft_config(config, tmp_path):
+    config.training.loss_type = "chunked_nll"
+    config.training.activation_offloading = True
+    args = _build_training_args(config, str(tmp_path))
+    assert args.loss_type == "chunked_nll"
+    assert args.activation_offloading is True
 
 
 def test_build_sft_trainer_constructs_against_installed_trl(
@@ -234,6 +244,34 @@ def test_completion_refuses_unusable_rows(config, model, tokenizer, tmp_path, ca
     rows = Dataset.from_list([{"text": text, "completion_start_char": offset}])
     with pytest.raises(ValueError, match=reason):
         _build_sft_trainer(model, rows, tokenizer, args)
+
+
+def test_completion_drops_over_budget_rows_and_keeps_fitting(config, model, tokenizer, tmp_path):
+    import json
+
+    args = completion_args(config, tmp_path)
+    args.max_length = 4
+    rows = Dataset.from_list(
+        [
+            {
+                "text": "hello world agoge hello",
+                "completion_start_char": 12,
+                "canonical_id": "dropped",
+            },
+            {
+                "text": "hello world agoge",
+                "completion_start_char": 12,
+                "canonical_id": "kept",
+            },
+        ]
+    )
+    trainer = _build_sft_trainer(model, rows, tokenizer, args)
+    assert len(trainer.train_dataset) == 1
+    assert trainer.train_dataset[0]["canonical_id"] == "kept"
+    evidence = json.loads((tmp_path / "completion_preprocessing.json").read_text())
+    assert evidence["dropped_over_max_seq_length"] == 1
+    assert evidence["source_rows"] == 2
+    assert evidence["rows"] == 1
 
 
 @pytest.mark.parametrize("case", [("é world é world agoge", 16), ("hello ### world ### agoge", 20)])
