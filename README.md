@@ -154,6 +154,23 @@ uv run agoge held-out-eval \
 
 See [Frozen split and evaluation contracts](docs/frozen_split_and_eval_contracts.md) for the bundle layout and local GPU steps. `smoke-eval` remains a toy hardcoded-prompt check and is not this harness.
 
+## First Granite 4.1 SFT comparison
+
+The measured flagship comparison is one frozen intervention: untouched `ibm-granite/granite-4.1-3b-base` (G0) versus that checkpoint plus the pre-registered code-repair SFT budget (G1). Freeze the contract before inspecting G0. The runner refuses to train until G0 has been published, and it refuses to start without a passing Granite qualification report.
+
+```bash
+uv run agoge freeze-granite-first-sft \
+  --experiment-id granite-4-1-first \
+  --output-dir reports/granite-4.1-first-sft/granite-4-1-first \
+  --split-manifest /path/to/split_manifest.json \
+  --qualification-report /path/to/granite-compatibility.json
+
+uv run agoge run-granite-first-sft \
+  --contract reports/granite-4.1-first-sft/granite-4-1-first/experiment-contract.json
+```
+
+See [Granite 4.1 first SFT](docs/granite_4_1_first_sft.md). CI proves the protocol with fixture generations. It does not download Granite or record a measured result.
+
 ## Verify a reproducibility bundle offline
 
 A sealed experiment directory can be checked without network access or loading
