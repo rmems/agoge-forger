@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Amp orb setup for agoge-forger.
+#
+# Amp runs this from the repository root when it builds a project orb snapshot
+# (Debian 12, CPU only: orbs have no GPU). It must finish within 20 minutes and
+# be safe to run more than once. See https://ampcode.com/docs/orbs/customizing
+#
+# Installs only what this repo's CI and manifests need:
+#   - uv + Python 3.12
+#   - uv venv + uv pip install -e ".[dev]" (as in every CI job)
+#
+# It ends with a dependency fetch/prebuild, not a test run.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# --- Python (uv) ---
+export PATH="$HOME/.local/bin:$PATH"
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+fi
+# python_smoke_test.yml uses 3.12 (other jobs use the ubuntu runner default, also 3.12).
+uv python install 3.12
+# CI forces CPU; keep torch/bitsandbytes off any GPU probing during install.
+export CUDA_VISIBLE_DEVICES=-1
+if [ ! -x .venv/bin/python ]; then
+  uv venv --python 3.12 .venv
+fi
+uv pip install --python .venv/bin/python -e ".[dev]"
+
+echo "Amp orb setup for agoge-forger finished."
