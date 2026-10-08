@@ -1,0 +1,4 @@
+{
+  "name": "agoge-forger",
+  "install": "bash .cursor/install.sh"
+}
