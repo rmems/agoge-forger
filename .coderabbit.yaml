@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Draft CodeRabbit config for rmems/agoge-forger (generated locally, not pushed).
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  fail_commit_status: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+  - '!runs/**'
+  - '!merged/**'
+  - '!gguf/**'
+  - '!adapters/**'
+  - '!**/*.safetensors'
+  - '!**/*.gguf'
+  - '!**/*.pt'
+  path_instructions:
+  - path: '**/*.py'
+    instructions: 'Python >=3.10 (CI smoke uses 3.12; env managed with uv). CI gate: `uv pip install -e ".[dev]"` then `.venv/bin/pytest tests/` and `uv run python scripts/smoke_test.py`. Keep code compatible with the declared Python floor. Tests and CI run CPU-only with `CUDA_VISIBLE_DEVICES=-1`: any torch/bitsandbytes/transformers path must degrade to CPU or skip cleanly, never assume a GPU at import time.'
+  - path: pyproject.toml
+    instructions: Dependencies are declared here and locked in `uv.lock`; do not add a second requirements file. Flag heavy new deps and first-party CUDA/Rust/Julia/Terraform additions (out of scope per AGENTS.md).
+  - path: configs/**
+    instructions: Training/config contracts are checked by the config-contract and consumer-contract CI gates; flag schema or key changes that are not reflected in tests.
+  - path: '**/Dockerfile'
+    instructions: Dockerfile. Keep secrets out of layers and build args, and keep toolchain versions in line with the CI pins.
+  - path: .github/workflows/**
+    instructions: GitHub Actions workflows. Keep `permissions:` least-privilege and job commands in sync with the local gates documented in the repo. Every `uses:` is pinned to a full commit SHA today; new or bumped actions must be too. Jobs must keep `CUDA_VISIBLE_DEVICES=-1` for hosted runners.
+  tools:
+    ruff:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    pylint:
+      enabled: false
+    flake8:
+      enabled: false
