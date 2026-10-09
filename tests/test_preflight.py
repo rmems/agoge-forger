@@ -149,6 +149,35 @@ def test_source_scan_skips_blank_lines_and_rejects_an_empty_dataset(tmp_path):
         validate_dataset_text_field_in_source(str(empty), "text")
 
 
+@pytest.mark.parametrize("output_exists", [False, True], ids=["fresh", "existing"])
+def test_collect_disk_pressure_report_defaults_to_hf_cache_and_run_output(
+    tmp_path, monkeypatch, output_exists
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    cache = tmp_path / ".cache" / "huggingface"
+    cache.mkdir(parents=True)
+    (cache / "blob.bin").write_bytes(b"x" * 32)
+    output = tmp_path / "run-output"
+    if output_exists:
+        output.mkdir()
+        (output / "adapter.bin").write_bytes(b"y" * 17)
+    config = ExperimentConfig(
+        model_id="test-model", dataset_path="dataset.jsonl", output_dir="run-output"
+    )
+
+    report = collect_disk_pressure_report(config)
+
+    assert report["paths"] == [
+        {"path": str(cache), "exists": True, "size_gb": 32 / BYTES_PER_GB},
+        {
+            "path": str(output),
+            "exists": output_exists,
+            "size_gb": (17 if output_exists else 0) / BYTES_PER_GB,
+        },
+    ]
+
+
 def test_collect_disk_pressure_report_uses_monitored_paths(tmp_path):
     hot_path = tmp_path / "huggingface"
     hot_path.mkdir()
@@ -161,6 +190,7 @@ def test_collect_disk_pressure_report_uses_monitored_paths(tmp_path):
     report = collect_disk_pressure_report(config, monitored_paths=[str(hot_path)])
 
     assert report["output_dir"] == str(tmp_path)
+    assert len(report["paths"]) == 1
     assert report["paths"][0]["path"] == str(hot_path)
     assert report["paths"][0]["exists"] is True
     assert report["paths"][0]["size_gb"] > 0
@@ -177,6 +207,7 @@ def test_collect_disk_pressure_report_handles_fresh_output_dir(tmp_path):
     report = collect_disk_pressure_report(config, monitored_paths=[])
 
     assert report["output_dir"] == str(fresh_output)
+    assert report["paths"] == []
     assert report["free_gb"] > 0
 
 
