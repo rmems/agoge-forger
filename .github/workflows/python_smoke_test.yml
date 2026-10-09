@@ -68,21 +68,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
 
       - name: Install dev dependencies
-        # Use `uv pip install -e .[dev]` rather than `uv sync --dev`
-        # so the project is installed in editable mode and the test
-        # scripts (which `from agoge_forger.X import Y`) can import
-        # the package directly. `uv sync --dev` only installs the
-        # dependencies, not the project itself.
-        run: |
-          uv venv
-          uv pip install -e ".[dev]"
+        # Frozen sync includes the editable project and the locked dev extra.
+        run: uv sync --python 3.14 --frozen --extra dev
 
       - name: Config check
         if: ${{ !inputs.dry_run }}

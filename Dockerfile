@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+FROM python:3.14-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -43,8 +43,8 @@ USER app
 # Avoid persisting uv's package cache inside the image; rely on the lockfile
 # and fail the build if uv.lock is not consistent with pyproject.toml.
 ENV UV_NO_CACHE=1
-RUN uv venv /app/.venv \
-    && uv sync --no-dev --no-editable --locked
+RUN uv venv --python 3.14 /app/.venv \
+    && uv sync --python 3.14 --no-dev --no-editable --locked
 
 ENV UV_NO_CACHE="" \
     PATH="/app/.venv/bin:$PATH"
