@@ -10,6 +10,7 @@ from typing import Any
 from .._atomic_file import publish_bytes_replace
 from .._run_status_safetensors import safetensors_usable
 from .._run_status_trainer_metadata import _trainer_state_step
+from .._strict_json import decode_bounded_json
 from ..artifacts.safetensors_io import assert_no_unsafe_weight_bins
 from ..config import normalize_revision
 from ..logging import logger
@@ -128,7 +129,7 @@ def _load_adapter_config(adapter_path: PathLike) -> dict:
     adapter_dir = Path(adapter_path)
     config_path = adapter_dir / ADAPTER_CONFIG_FILENAME
     with config_path.open() as handle:
-        return json.load(handle)
+        return decode_bounded_json(handle.read())
 
 
 def infer_base_model_from_adapter(adapter_path: PathLike) -> str:

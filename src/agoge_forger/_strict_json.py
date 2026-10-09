@@ -1,9 +1,39 @@
-"""Strict JSON decoding helpers for immutable provenance inputs."""
+"""JSON decoding helpers for untrusted metadata and immutable provenance inputs."""
 
 from __future__ import annotations
 
 import json
 from typing import Any
+
+_MAX_JSON_DEPTH = 128
+
+
+def decode_bounded_json(raw: str) -> Any:
+    """Reject excessive container nesting before allocating the decoded tree.
+
+    Python 3.14's C decoder can accept very deep JSON on large-stack hosts;
+    RecursionError alone is no longer a portable metadata resource limit.
+    """
+    depth = 0
+    quoted = False
+    escaped = False
+    for character in raw:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quoted = False
+        elif character == '"':
+            quoted = True
+        elif character in "{[":
+            depth += 1
+            if depth > _MAX_JSON_DEPTH:
+                raise ValueError("JSON nesting exceeds 128 levels")
+        elif character in "}]":
+            depth -= 1
+    return json.loads(raw)
 
 
 class DuplicateJsonKey(ValueError):

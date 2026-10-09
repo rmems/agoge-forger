@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +31,7 @@ from ._run_status_pretrained import offline_pretrained as _offline_pretrained
 from ._run_status_pretrained import tokenizer_usable as _tokenizer_usable
 from ._run_status_safetensors import has_complete_merged_weights, safetensors_shapes
 from ._run_status_torch_archive import torch_mapping
+from ._strict_json import decode_bounded_json
 from .config import normalize_revision
 
 PathLike = str | Path
@@ -41,7 +41,7 @@ def _load_json_object(path: Path) -> dict[str, Any] | None:
     if path.is_symlink() or not path.is_file():
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = decode_bounded_json(path.read_text(encoding="utf-8"))
     except (RecursionError, ValueError):
         return None
     return payload if isinstance(payload, dict) else None
