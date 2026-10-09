@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+from transformers import AutoTokenizer
 
 from datasets import Dataset  # type: ignore[attr-defined]
 
@@ -120,10 +121,8 @@ def iter_normalized_rows(path: str):
 
 
 def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):
-    from .models.load import load_base_model
-
     logger.info("Loading tokenizer for dataset stats...")
-    _, tokenizer = load_base_model(model_id, trust_remote_code, quant_config=None, bf16=False)
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
 
     dataset = load_jsonl_dataset(path, tokenizer)
     lengths: list[int] = []
