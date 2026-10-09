@@ -21,6 +21,11 @@ dependencies = [
     "datasets>=2.19.0",
     "bitsandbytes>=0.43.0",
     "safetensors>=0.7.0",
+    # Imported directly by runtime modules, not just transitive dependencies.
+    "numpy",
+    "huggingface-hub",
+    "tokenizers",
+    "typing-extensions",
     "pyyaml",
     "rich",
     "typer>=0.9.0",

@@ -22,6 +22,4 @@ bootstrap: >-
   UV_LINK_MODE=copy
   /data/cache/bin/uv sync --python 3.12 --frozen &&
   /data/project/.venv/bin/python -m ensurepip --upgrade
-# The pull-request-only zero-new-issues threshold lives in the workflow.
-# Applying it globally here would make main fail on the existing debt before a
-# reviewed baseline is committed.
+# The zero-problem threshold lives in the workflow for PR and full scans alike.
