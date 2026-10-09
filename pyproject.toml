@@ -9,7 +9,7 @@ description = "A reproducible Python/PyTorch platform for post-training, evaluat
 authors = [{name = "Raul Montoya Cardenas"}]
 license = "Apache-2.0"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
     "torch>=2.0.0",
     # Transformers 5 / TRL 1 are hard floors: the trainer builds `trl.SFTConfig`
@@ -42,6 +42,9 @@ Issues = "https://github.com/rmems/agoge-forger/issues"
 
 [tool.ruff]
 line-length = 100
+# Preserve the existing source syntax policy for Qlty's RadarLint parser.
+# Runtime and dependency resolution still require Python 3.14.
+target-version = "py310"
 
 [tool.mypy]
 ignore_missing_imports = true

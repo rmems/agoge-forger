@@ -1,7 +1,7 @@
 .PHONY: setup check check-torch train-smoke eval-smoke test lint
 
 setup:
-	uv sync --all-groups --extra dev
+	uv sync --python 3.14 --frozen --extra dev
 
 check: check-torch
 

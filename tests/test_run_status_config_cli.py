@@ -48,16 +48,20 @@ def test_malformed_adapter_config_yields_null_base_model(runner, tmp_path):
     assert json.loads(result.stdout)["schema_version"] == 1
 
 
-def test_deeply_nested_adapter_config_yields_null_base_model(tmp_path):
+@pytest.mark.parametrize(
+    ("depth", "expected_base"), [(127, "org/model"), (128, None), (100_000, None)]
+)
+def test_nested_adapter_config_has_bounded_depth(tmp_path, depth, expected_base):
     run_dir = _make_run_dir(tmp_path)
     (run_dir / "adapter_model.safetensors").write_bytes(_minimal_safetensors())
-    nested = '{"base_model_name_or_path":"org/model","nested":' + "[" * 100_000
-    nested += "0" + "]" * 100_000 + "}"
+    # Quoted brackets and escaped quotes/backslashes are not container nesting.
+    nested = '{"base_model_name_or_path":"org/model","note":' + json.dumps('["\\' * 200)
+    nested += ',"nested":' + "[" * depth + "0" + "]" * depth + "}"
     (run_dir / "adapter_config.json").write_text(nested)
 
     report = build_run_status(str(run_dir))
 
-    assert report["base_model"] is None
+    assert report["base_model"] == expected_base
     assert report["base_revision"] is None
     assert report["export"]["ready"] is False
 
