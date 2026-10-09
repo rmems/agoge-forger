@@ -1,6 +1,6 @@
 # Agoge Forger
 
-Agoge Forger is a Python/PyTorch-first post-training research platform for reproducible SFT, evaluation, checkpoints, experiment manifests, and Hugging Face model releases. It is designed for local RTX 5080 development with Transformers, TRL, PEFT, bitsandbytes, and vLLM-compatible model export.
+Agoge Forger is a Python/PyTorch-first post-training research platform for reproducible SFT, evaluation, checkpoints, experiment manifests, and Hugging Face model releases. It is designed for local RTX 5080 development with Transformers, TRL, PEFT, and bitsandbytes.
 
 ## Repository boundaries
 
@@ -41,15 +41,6 @@ uv run agoge inspect-lora-targets --model-id openbmb/MiniCPM5-1B-Base
 Every training run records a reproducibility manifest, GPU telemetry, and artifact digests. Safetensors is the default artifact format; path validation rejects traversal before model, dataset, adapter, checkpoint, and output paths are used.
 
 Optional **bounded CUDA profile windows** are off unless you pass `--profile-window` or `AGOGE_PROFILE_WINDOW`. See [Bounded CUDA profiling windows](docs/cuda_profiling_windows.md) and [F0 correlation markers](docs/contracts/f0_correlation_markers.md). The profiler is not a requirement for ordinary Agoge runs.
-
-## vLLM compatibility smoke
-
-```bash
-uv run agoge serve-vllm --model merged/<run_name>
-uv run agoge smoke-vllm --model merged/<run_name> --run-name smoke_<run_name>
-```
-
-See [vLLM model compatibility](docs/vllm_model_compatibility.md) for supported artifact forms.
 
 ## Inspect run readiness
 

@@ -76,8 +76,8 @@ def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
             )
 
     def gen():
-        with dataset_path.open("r") as f:
-            for i, line in enumerate(f, 1):
+        with dataset_path.open("r") as rows_file:
+            for i, line in enumerate(rows_file, 1):
                 if not line.strip():
                     continue
                 try:
@@ -123,7 +123,7 @@ def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):
     from .models.load import load_base_model
 
     logger.info("Loading tokenizer for dataset stats...")
-    _, tokenizer = load_base_model(model_id, trust_remote_code, quant_config=None, bf16=False)
+    _, tokenizer = load_base_model(model_id, trust_remote_code, quant_config=None)
 
     dataset = load_jsonl_dataset(path, tokenizer)
     lengths: list[int] = []

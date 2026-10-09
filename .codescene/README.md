@@ -11,8 +11,6 @@ its CLI flags** — one parameter per `--flag`, each carrying its own help text:
 | Command | Parameters | What they are |
 | --- | --- | --- |
 | `freeze-split` | 14 | `--source`, `--seed`, `--salt`, the three split weights, … |
-| `smoke-vllm` | 13 | `--model`, `--prompt`, `--stream/--no-stream`, … |
-| `serve-vllm` | 9 | `--model`, `--host`, `--port`, `--dtype`, … |
 | `export-final-model` | 8 | `--out-dir`, `--run-dir`, `--adapter-path`, … |
 | `merge-adapter` | 5 | `--base-model`, `--adapter-path`, `--out-dir`, … |
 

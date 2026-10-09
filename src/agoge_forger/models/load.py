@@ -1,5 +1,13 @@
+from collections.abc import Callable
+from typing import cast
+
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    PreTrainedTokenizerBase,
+)
 
 from ..logging import logger
 
@@ -20,21 +28,27 @@ def load_base_model(
     model_id: str,
     trust_remote_code: bool,
     quant_config=None,
-    bf16: bool = True,
+    *,
     revision: str | None = None,
     local_files_only: bool = False,
     attn_implementation: str | None = None,
     torch_dtype_str: str = "auto",
     device_map: str = "auto",
 ):
+    """Load weights with explicit dtype or the 4-bit quantization compute dtype.
 
+    Training mixed precision belongs to SFTConfig, not this loader.
+    """
     if trust_remote_code:
         logger.warning(
             "trust_remote_code=True: Hugging Face may execute arbitrary Python from the model repo."
         )
 
     logger.info(f"Loading tokenizer {model_id}")
-    tokenizer = AutoTokenizer.from_pretrained(
+    # The dynamic AutoTokenizer factory is incorrectly inferred as returning None.
+    tokenizer = cast(
+        Callable[..., PreTrainedTokenizerBase], cast(object, AutoTokenizer.from_pretrained)
+    )(
         model_id,
         trust_remote_code=trust_remote_code,
         revision=revision,
