@@ -14,6 +14,7 @@ from agoge_forger.train.preflight import (
     validate_dataset_text_field,
     validate_dataset_text_field_in_source,
     validate_lora_targets_exist,
+    warn_on_disk_pressure,
 )
 
 
@@ -178,6 +179,55 @@ def test_collect_disk_pressure_report_handles_fresh_output_dir(tmp_path):
 
     assert report["output_dir"] == str(fresh_output)
     assert report["free_gb"] > 0
+
+
+@pytest.mark.parametrize(
+    ("free_bytes", "expected"),
+    [
+        (
+            5 * 1024**3 // 4,
+            [
+                (
+                    "Disk preflight: only 1.25 GB free under {output_dir}; "
+                    "configured warning threshold is 2.75 GB."
+                ),
+                (
+                    "Disk preflight: free space 1.25 GB is below the checkpoint buffer "
+                    "of 1.50 GB. Checkpoint saves may fail."
+                ),
+            ],
+        ),
+        (
+            3 * 1024**3 // 2,
+            [
+                (
+                    "Disk preflight: only 1.50 GB free under {output_dir}; "
+                    "configured warning threshold is 2.75 GB."
+                ),
+            ],
+        ),
+        (11 * 1024**3 // 4, []),
+    ],
+)
+def test_disk_pressure_log_text_and_thresholds(tmp_path, monkeypatch, caplog, free_bytes, expected):
+    import logging
+    from types import SimpleNamespace
+
+    config = ExperimentConfig(
+        model_id="test-model", dataset_path="dataset.jsonl", output_dir=str(tmp_path)
+    )
+    config.runtime.disk_free_warning_gb = 2.75
+    config.runtime.checkpoint_disk_buffer_gb = 1.5
+    monkeypatch.setattr(
+        "agoge_forger.train.preflight.shutil.disk_usage",
+        lambda _: SimpleNamespace(free=free_bytes),
+    )
+
+    with caplog.at_level(logging.INFO):
+        report = warn_on_disk_pressure(config, monitored_paths=[])
+
+    assert caplog.messages == [message.format(output_dir=tmp_path) for message in expected]
+    assert report["free_gb"] == free_bytes / 1024**3
 
 
 def test_get_gpu_report_uses_binary_gib_not_decimal_gb(monkeypatch):

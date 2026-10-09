@@ -139,7 +139,7 @@ def _finalize_training_run(config, finalization: _TrainingFinalization):
     index_path = write_artifact_index(out_dir, producer_provenance=provenance)
     logger.info(f"Artifact index written to {index_path}")
 
-    vram_used = torch.cuda.max_memory_allocated() / BYTES_PER_GB
+    vram_used: float = torch.cuda.max_memory_allocated() / BYTES_PER_GB
     logger.info(f"Max VRAM used: {vram_used:.2f} GiB")
 
     metrics = {
