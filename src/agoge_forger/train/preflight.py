@@ -1,14 +1,30 @@
 import os
 import re
 import shutil
+from typing import TypedDict
 
 import torch
 
+from ..config import ExperimentConfig
 from ..datasets import iter_normalized_rows
 from ..logging import logger
 
 BYTES_PER_GB = 1024**3
 COMMON_LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+
+class DiskPathUsage(TypedDict):
+    path: str
+    exists: bool
+    size_gb: float
+
+
+class DiskPressureReport(TypedDict):
+    output_dir: str
+    free_gb: float
+    warning_threshold_gb: float
+    checkpoint_buffer_gb: float
+    paths: list[DiskPathUsage]
 
 
 def check_cuda_available(required=True):
@@ -85,7 +101,9 @@ def directory_size_bytes(path: str, *, follow_symlinks: bool = True) -> int:
     return total
 
 
-def collect_disk_pressure_report(config, monitored_paths=None):
+def collect_disk_pressure_report(
+    config: ExperimentConfig, monitored_paths: list[str] | None = None
+) -> DiskPressureReport:
     """Report disk usage; override ``monitored_paths`` to replace default Unsloth/HF cache roots."""
     if monitored_paths is None:
         monitored_paths = [
@@ -98,7 +116,7 @@ def collect_disk_pressure_report(config, monitored_paths=None):
         parent = os.path.dirname(disk_path) or "."
         disk_path = parent if os.path.exists(parent) else "."
     disk = shutil.disk_usage(disk_path)
-    report = {
+    report: DiskPressureReport = {
         "output_dir": output_root,
         "free_gb": disk.free / BYTES_PER_GB,
         "warning_threshold_gb": config.runtime.disk_free_warning_gb,
@@ -107,7 +125,7 @@ def collect_disk_pressure_report(config, monitored_paths=None):
     }
 
     for path in monitored_paths:
-        entry = {"path": path, "exists": os.path.exists(path), "size_gb": 0.0}
+        entry: DiskPathUsage = {"path": path, "exists": os.path.exists(path), "size_gb": 0.0}
         if entry["exists"]:
             entry["size_gb"] = directory_size_bytes(path) / BYTES_PER_GB
         report["paths"].append(entry)
@@ -115,7 +133,9 @@ def collect_disk_pressure_report(config, monitored_paths=None):
     return report
 
 
-def warn_on_disk_pressure(config, monitored_paths=None):
+def warn_on_disk_pressure(
+    config: ExperimentConfig, monitored_paths: list[str] | None = None
+) -> DiskPressureReport:
     report = collect_disk_pressure_report(config, monitored_paths=monitored_paths)
     free_gb = report["free_gb"]
 
