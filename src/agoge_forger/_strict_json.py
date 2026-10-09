@@ -29,18 +29,14 @@ def decode_bounded_json(raw: str) -> Any:
 def _unquoted_json_characters(raw: str) -> Iterator[str]:
     """Yield characters outside JSON strings, respecting escaped string content."""
     quoted = False
-    escaped = False
-    for character in raw:
-        if escaped:
-            escaped = False
-            continue
-        if quoted and character == "\\":
-            escaped = True
-            continue
+    characters = iter(raw)
+    for character in characters:
         if character == '"':
             quoted = not quoted
-            continue
-        if not quoted:
+        elif quoted and character == "\\":
+            # An escape consumes the next character, even an escaped quote.
+            next(characters, None)
+        elif not quoted:
             yield character
 
 
