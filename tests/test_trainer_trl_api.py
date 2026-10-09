@@ -130,6 +130,21 @@ def test_shared_training_fields_survive_the_sft_config_switch(config, tmp_path):
     assert args.activation_offloading is False
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_yaml_bf16_reaches_sft_config(tmp_path, monkeypatch, enabled):
+    from agoge_forger.config import load_config
+
+    # Only bypass the GPU capability check; construct the real SFTConfig on CPU.
+    monkeypatch.setattr("transformers.training_args.is_torch_bf16_gpu_available", lambda: True)
+    (tmp_path / "rows.jsonl").write_text('{"text":"hello world"}\n')
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"model_id: local\ndataset_path: rows.jsonl\nbf16: {str(enabled).lower()}\n"
+    )
+    cfg = load_config(str(config_path))
+    assert _build_training_args(cfg, str(tmp_path / "out")).bf16 is enabled
+
+
 def test_chunked_nll_and_activation_offloading_reach_sft_config(config, tmp_path):
     config.training.loss_type = "chunked_nll"
     config.training.activation_offloading = True

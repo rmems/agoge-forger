@@ -4,7 +4,7 @@ from .load import load_base_model
 
 def inspect_model(model_id: str, trust_remote_code: bool = False):
     logger.info(f"Inspecting {model_id}...")
-    model, _ = load_base_model(model_id, trust_remote_code, quant_config=None, bf16=True)
+    model, _ = load_base_model(model_id, trust_remote_code, quant_config=None)
 
     logger.info(f"Architecture: {model.config.architectures}")
     parameters_billions: float = model.num_parameters() / 1e9
