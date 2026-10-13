@@ -17,8 +17,10 @@ There are no first-party CUDA, Rust, Julia, JAX, or cloud-infrastructure impleme
 
 ## Quickstart
 
+Use Python 3.14 (uv can install it automatically if it is not available locally).
+
 ```bash
-uv sync --all-groups
+uv sync --python 3.14 --frozen --extra dev
 uv run agoge check-torch
 uv run agoge train-qlora --config configs/minicpm5_canary.yaml
 ```

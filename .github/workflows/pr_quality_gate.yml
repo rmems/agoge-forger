@@ -25,12 +25,12 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Check lockfile consistency
+        run: uv lock --check --python 3.14
+
       - name: Install dev dependencies
-        # Editable install into .venv so pytest/ruff/mypy are on PATH without
-        # `uv run` / `uv sync` spawn quirks.
-        run: |
-          uv venv
-          uv pip install -e ".[dev]"
+        # Frozen sync installs the locked dev extra and the editable project.
+        run: uv sync --python 3.14 --frozen --extra dev
 
       - name: Ruff check
         run: .venv/bin/ruff check .
