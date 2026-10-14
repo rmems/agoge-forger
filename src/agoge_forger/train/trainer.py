@@ -145,6 +145,40 @@ def _optional_label_tensor(value: Any) -> torch.Tensor | None:
     raise TypeError("CPU SFT scoring expected tensor labels")
 
 
+def _needs_cpu_logprob(model: torch.nn.Module) -> bool:
+    if not _model_parameters_are_on_cpu(model):
+        return False
+    return _forward_uses_fused_lm_head(model)
+
+
+def _score_targets_missing(labels: torch.Tensor | None, shift_labels: torch.Tensor | None) -> bool:
+    if labels is not None:
+        return False
+    return shift_labels is None
+
+
+def _delegate_to_unfused_forward(
+    fused_lm_head: bool, labels: torch.Tensor | None, shift_labels: torch.Tensor | None
+) -> bool:
+    if not fused_lm_head:
+        return True
+    return _score_targets_missing(labels, shift_labels)
+
+
+def _restore_forward_kwargs(
+    kwargs: dict[str, Any],
+    labels: torch.Tensor | None,
+    shift_labels: torch.Tensor | None,
+    num_items_in_batch: Any,
+) -> None:
+    if labels is not None:
+        kwargs["labels"] = labels
+    if shift_labels is not None:
+        kwargs["shift_labels"] = shift_labels
+    if num_items_in_batch is not None:
+        kwargs["num_items_in_batch"] = num_items_in_batch
+
+
 def _score_cpu_tokens_in_pytorch(model: torch.nn.Module) -> None:
     """Replace TRL's Triton fused head when the model is on CPU.
 
@@ -152,7 +186,7 @@ def _score_cpu_tokens_in_pytorch(model: torch.nn.Module) -> None:
     Triton driver, so the bounded CPU trainer tests cannot take a step. GPU
     training keeps the fused head.
     """
-    if not _model_parameters_are_on_cpu(model) or not _forward_uses_fused_lm_head(model):
+    if not _needs_cpu_logprob(model):
         return
     replacement = _pytorch_cpu_forward(model, model.forward)
     model.forward = types.MethodType(replacement, model)
@@ -167,13 +201,8 @@ def _pytorch_cpu_forward(
         labels = _optional_label_tensor(kwargs.pop("labels", None))
         shift_labels = _optional_label_tensor(kwargs.pop("shift_labels", None))
         num_items_in_batch = kwargs.pop("num_items_in_batch", None)
-        if not fused_lm_head or (labels is None and shift_labels is None):
-            if labels is not None:
-                kwargs["labels"] = labels
-            if shift_labels is not None:
-                kwargs["shift_labels"] = shift_labels
-            if num_items_in_batch is not None:
-                kwargs["num_items_in_batch"] = num_items_in_batch
+        if _delegate_to_unfused_forward(fused_lm_head, labels, shift_labels):
+            _restore_forward_kwargs(kwargs, labels, shift_labels, num_items_in_batch)
             return fused_forward(*args, fused_lm_head=False, **kwargs)
         return _cpu_token_scores(
             _CpuScoreCall(
