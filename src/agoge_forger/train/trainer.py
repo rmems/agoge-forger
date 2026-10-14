@@ -197,7 +197,6 @@ def _execute_training(config, producer_provenance, session):
         config.model_id,
         config.trust_remote_code,
         config.quantization,
-        config.training.bf16,
         revision=config.revision,
     )
     model = _prepare_peft_model(config, model)
