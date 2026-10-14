@@ -131,10 +131,12 @@ def test_shared_training_fields_survive_the_sft_config_switch(config, tmp_path):
 
 
 def test_chunked_nll_and_activation_offloading_reach_sft_config(config, tmp_path):
+    """Keep the YAML alias and send TRL the loss name it still accepts."""
     config.training.loss_type = "chunked_nll"
     config.training.activation_offloading = True
     args = _build_training_args(config, str(tmp_path))
-    assert args.loss_type == "chunked_nll"
+    assert config.training.loss_type == "chunked_nll"
+    assert args.loss_type == "nll"
     assert args.activation_offloading is True
 
 
