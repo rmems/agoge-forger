@@ -69,6 +69,7 @@ def test_dataset_stats_counts_local_jsonl_without_loading_model(
 
     def checked_load_tokenizer(*args, **kwargs):
         assert kwargs["trust_remote_code"] is trust_remote_code
+        assert kwargs["revision"] is None
         return load_tokenizer(*args, **kwargs)
 
     def forbidden_load_model(*args, **kwargs):
@@ -88,3 +89,31 @@ def test_dataset_stats_counts_local_jsonl_without_loading_model(
     assert "Min Tokens: 3" in caplog.messages
     assert "Max Tokens: 8" in caplog.messages
     assert f"Mean Tokens: {'5.50' if trust_remote_code else '6.00'}" in caplog.messages
+
+
+def test_dataset_stats_pins_tokenizer_revision(tmp_path, monkeypatch):
+    path = tmp_path / "data.jsonl"
+    path.write_text(json.dumps({"text": "hi"}) + "\n")
+    seen: dict[str, object] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def recording_load_tokenizer(*args, **kwargs):
+        seen.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(AutoTokenizer, "from_pretrained", recording_load_tokenizer)
+    args = [
+        "dataset-stats",
+        "--path",
+        str(path),
+        "--model-id",
+        "org/model",
+        "--revision",
+        " abc123 ",
+    ]
+    result = CliRunner().invoke(app, args)
+
+    assert isinstance(result.exception, _Stop)
+    assert seen["revision"] == "abc123"

@@ -5,6 +5,7 @@ from transformers import AutoTokenizer
 
 from datasets import Dataset  # type: ignore[attr-defined]
 
+from .config import normalize_revision
 from .logging import logger
 from .path_safety import resolve_existing_path
 
@@ -120,9 +121,19 @@ def iter_normalized_rows(path: str):
             yield i, normalize_row(row, None, index=i)
 
 
-def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):
+def dataset_stats(
+    path: str,
+    model_id: str,
+    trust_remote_code: bool = False,
+    *,
+    revision: str | None = None,
+):
     logger.info("Loading tokenizer for dataset stats...")
-    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_id,
+        trust_remote_code=trust_remote_code,
+        revision=normalize_revision(revision),
+    )
 
     dataset = load_jsonl_dataset(path, tokenizer)
     lengths: list[int] = []
