@@ -9,7 +9,7 @@
 #
 # Installs only what this repo's CI and manifests need:
 #   - apt: curl, ca-certificates
-#   - uv + Python 3.12
+#   - uv 0.12.7 (GitHub release digest checked) + Python 3.12
 #   - uv venv + uv pip install -e ".[dev]" (as in every CI job)
 #   - tool directories exposed to later shells (/etc/profile.d + /usr/local/bin links)
 #
@@ -41,17 +41,53 @@ apt_install() {
 apt_install curl ca-certificates
 
 # --- Python (uv) ---
+# Same uv release as .github/workflows/qodana_code_quality.yml. Digests are the
+# GitHub release checksums for that tag, checked before the binaries are installed.
 export PATH="$HOME/.local/bin:$PATH"
-if ! command -v uv >/dev/null 2>&1; then
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+UV_VERSION="0.12.7"
+install_pinned_uv() {
+  local target archive digest tmp
+  case "$(uname -m)" in
+    x86_64) target="x86_64-unknown-linux-gnu" ;;
+    aarch64) target="aarch64-unknown-linux-gnu" ;;
+    *)
+      echo "unsupported architecture for uv: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+  archive="uv-${target}.tar.gz"
+  case "$target" in
+    x86_64-unknown-linux-gnu)
+      digest="788f18abea7c5f55d6216e4f5613fd89d4d59b631efeec117b2b07fe72f1da21"
+      ;;
+    aarch64-unknown-linux-gnu)
+      digest="66393193038dd7eb108abd7a218d9cec04ac70ab98242b0720fa94de19223b7c"
+      ;;
+  esac
+  tmp="$(mktemp -d)"
+  curl -fsSL "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${archive}" -o "${tmp}/${archive}"
+  echo "${digest}  ${tmp}/${archive}" | sha256sum -c -
+  tar -xzf "${tmp}/${archive}" -C "$tmp"
+  mkdir -p "$HOME/.local/bin"
+  install -m 0755 "${tmp}/uv-${target}/uv" "$HOME/.local/bin/uv"
+  install -m 0755 "${tmp}/uv-${target}/uvx" "$HOME/.local/bin/uvx"
+  rm -rf "$tmp"
+}
+if ! command -v uv >/dev/null 2>&1 || [[ "$(uv --version 2>/dev/null || true)" != "uv ${UV_VERSION} "* ]]; then
+  install_pinned_uv
 fi
+# Drop a hashed path to any older uv found before the pinned binary was installed.
+hash -r
 # python_smoke_test.yml uses 3.12 (other jobs use the ubuntu runner default, also 3.12).
 uv python install 3.12
 # CI forces CPU; keep torch/bitsandbytes off any GPU probing during install.
 export CUDA_VISIBLE_DEVICES=-1
-if [ ! -x .venv/bin/python ]; then
-  uv venv --python 3.12 .venv
+# A reused snapshot can keep a .venv from another Python. Recreate it unless it is 3.12.
+if ! { [ -x .venv/bin/python ] && .venv/bin/python -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)'; }; then
+  uv venv --python 3.12 --clear .venv
 fi
+# Match CI's editable install. `uv sync --frozen` aborts while uv.lock disagrees
+# with pyproject.toml (ruff 0.16.7 vs ==0.16.8); refreshing the lock is out of scope.
 uv pip install --python .venv/bin/python -e ".[dev]"
 
 # --- Expose the tools to later shells ---
@@ -62,8 +98,13 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 # The links skip python and pip so the system python3 stays the default elsewhere.
 repo_root="$(pwd)"
 tool_dirs=("$repo_root/.venv/bin" "$HOME/.local/bin")
+quoted_dirs=()
+for dir in "${tool_dirs[@]}"; do
+  # Quote each directory so a special character stays inside one PATH entry.
+  quoted_dirs+=("$(printf '%q' "$dir")")
+done
 # shellcheck disable=SC2016 # $PATH must expand when the profile is sourced, not now.
-printf 'export PATH=%q:$PATH\n' "$(IFS=:; echo "${tool_dirs[*]}")" |
+printf 'export PATH=%s:$PATH\n' "$(IFS=:; echo "${quoted_dirs[*]}")" |
   $SUDO tee /etc/profile.d/cursor-env-agoge-forger.sh >/dev/null
 for dir in "${tool_dirs[@]}"; do
   [ -d "$dir" ] || continue
