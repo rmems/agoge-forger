@@ -1,9 +1,9 @@
 {
-    "name": "agoge-forger Python 3.12",
+    "name": "agoge-forger Python 3.14",
     "build": {
         "dockerfile": "Dockerfile"
     },
-    "postCreateCommand": "uv venv && uv pip install -e \".[dev]\"",
+    "postCreateCommand": "uv sync --python 3.14 --frozen --extra dev",
     "containerUser": "vscode",
     "remoteUser": "vscode",
     "features": {

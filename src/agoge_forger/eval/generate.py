@@ -136,7 +136,6 @@ def _load_pretrained(
         repository,
         trust_remote_code=trust_remote_code,
         quant_config=None,
-        bf16=True,
         revision=revision,
         device_map=device_map,
         local_files_only=revision is None,

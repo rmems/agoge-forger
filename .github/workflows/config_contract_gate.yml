@@ -45,11 +45,8 @@ jobs:
           enable-cache: true
 
       - name: Install dev dependencies
-        # Match pr_quality_gate.yml: editable install into .venv so the
-        # interpreter and pytest are invoked directly, without `uv run`.
-        run: |
-          uv venv
-          uv pip install -e ".[dev]"
+        # Match pr_quality_gate.yml: locked dev extra and editable project.
+        run: uv sync --python 3.14 --frozen --extra dev
 
       - name: Validate training configs
         # Must run from the repo root: `load_config` resolves a relative
