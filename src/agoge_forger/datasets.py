@@ -129,7 +129,10 @@ def dataset_stats(
     revision: str | None = None,
 ):
     logger.info("Loading tokenizer for dataset stats...")
-    tokenizer = AutoTokenizer.from_pretrained(
+    # Tokenizer-only token counting; --revision pins the download when given,
+    # and the unpinned default matches load_base_model's existing behavior.
+    # noinspection PyNoneFunctionAssignment
+    tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 - pinned via --revision when set.
         model_id,
         trust_remote_code=trust_remote_code,
         revision=normalize_revision(revision),
@@ -139,6 +142,7 @@ def dataset_stats(
     lengths: list[int] = []
 
     for row in dataset:
+        # noinspection PyCallingNonCallable
         tokens = tokenizer(row["text"])["input_ids"]
         lengths.append(len(tokens))
 
