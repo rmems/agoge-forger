@@ -41,8 +41,9 @@ class TrainingConfig(BaseModel):
     save_total_limit: int | None = 2
     resume_from_latest_checkpoint: bool = False
     resume_checkpoint_path: str | None = None
-    # TRL SFTConfig passthrough. ``chunked_nll`` remains a YAML alias of ``nll``
-    # (same math); ``_build_training_args`` remaps it before constructing SFTConfig.
+    # Existing YAML may still say ``chunked_nll``. TRL 1.15 treats that name as a
+    # deprecated alias of ``nll``, and ``nll`` no longer materializes [seq, vocab]
+    # logits. ``_build_training_args`` sends ``nll``.
     loss_type: str = "nll"
     activation_offloading: bool = False
 
