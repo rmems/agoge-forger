@@ -158,8 +158,10 @@ def _peft_context(provenance: ArtifactProducerProvenance) -> ArtifactValidationC
 
 
 def test_train_path_writes_index_that_passes_require_artifact_index(
-    tmp_path, cached_test_base_config, monkeypatch
+    tmp_path, cached_test_base_config, monkeypatch, caplog
 ):
+    import logging
+
     config = _frozen_train_config(tmp_path)
     provenance = producer_provenance_from_config(config)
     output_dir = tmp_path / "adapters" / "prov"
@@ -172,8 +174,12 @@ def test_train_path_writes_index_that_passes_require_artifact_index(
     trainer.model.dtype = "float32"
     trainer.model.num_parameters.return_value = 1
     trainer.train_dataset = []
-    monkeypatch.setattr("agoge_forger.train.trainer.torch.cuda.max_memory_allocated", lambda: 0)
+    monkeypatch.setattr(
+        "agoge_forger.train.trainer.torch.cuda.max_memory_allocated",
+        lambda: 13 * 1024**3 // 4,
+    )
     monkeypatch.setattr("agoge_forger.train.trainer.write_run_manifest", lambda *a, **k: None)
+    caplog.set_level(logging.INFO)
 
     _finalize_training_run(
         config,
@@ -188,6 +194,7 @@ def test_train_path_writes_index_that_passes_require_artifact_index(
     index_path = output_dir / "artifact_index.json"
     require_artifact_index(index_path, sha256_file(index_path), _peft_context(provenance))
     assert producer_provenance_from_adapter(output_dir) == provenance
+    assert "Max VRAM used: 3.25 GiB" in caplog.messages
 
 
 def test_train_qlora_and_lora_pass_constructed_provenance(tmp_path, monkeypatch):

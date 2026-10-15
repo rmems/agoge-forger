@@ -72,7 +72,6 @@ def merge_adapter(
         base_model_id,
         trust_remote_code=trust_remote_code,
         quant_config=None,
-        bf16=True,
         revision=revision,
     )
     model = PeftModel.from_pretrained(model, adapter_path)
