@@ -151,7 +151,8 @@ def _run_inference_request(
             model, trust_remote_code=trust_remote_code, device_map="cpu"
         )
         prompt = f"Hello world request {idx}"
-        inputs = tokenizer(prompt, return_tensors="pt")
+        # The dynamic AutoTokenizer factory is incorrectly inferred as returning None.
+        inputs = cast(PreTrainedTokenizerBase, cast(object, tokenizer))(prompt, return_tensors="pt")
         t0 = time.monotonic()
         output_ids = pt_model.generate(**inputs, max_new_tokens=32)
         elapsed = (time.monotonic() - t0) * 1000

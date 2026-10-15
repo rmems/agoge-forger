@@ -1,18 +1,11 @@
-from collections.abc import Callable
-from typing import cast
-
 import torch
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    PreTrainedTokenizerBase,
-)
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
+from ..config import QuantizationConfig
 from ..logging import logger
 
 
-def get_bnb_config(quant_config):
+def get_bnb_config(quant_config: QuantizationConfig) -> BitsAndBytesConfig | None:
     if not quant_config.load_in_4bit:
         return None
     compute_dtype = getattr(torch, quant_config.bnb_4bit_compute_dtype)
@@ -27,7 +20,7 @@ def get_bnb_config(quant_config):
 def load_base_model(
     model_id: str,
     trust_remote_code: bool,
-    quant_config=None,
+    quant_config: QuantizationConfig | None = None,
     *,
     revision: str | None = None,
     local_files_only: bool = False,
@@ -38,6 +31,8 @@ def load_base_model(
     """Load weights with explicit dtype or the 4-bit quantization compute dtype.
 
     Training mixed precision belongs to SFTConfig, not this loader.
+    Parameters after ``quant_config`` are keyword-only so an obsolete positional
+    ``bf16`` cannot be read as ``revision``.
     """
     if trust_remote_code:
         logger.warning(
@@ -45,10 +40,7 @@ def load_base_model(
         )
 
     logger.info(f"Loading tokenizer {model_id}")
-    # The dynamic AutoTokenizer factory is incorrectly inferred as returning None.
-    tokenizer = cast(
-        Callable[..., PreTrainedTokenizerBase], cast(object, AutoTokenizer.from_pretrained)
-    )(
+    tokenizer = AutoTokenizer.from_pretrained(
         model_id,
         trust_remote_code=trust_remote_code,
         revision=revision,

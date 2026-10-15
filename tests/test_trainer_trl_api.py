@@ -22,9 +22,10 @@ from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import AutoModelForCausalLM, LlamaConfig, PreTrainedTokenizerFast
+from transformers.utils import is_torch_bf16_gpu_available
 from trl import SFTConfig
 
-from agoge_forger.config import ExperimentConfig
+from agoge_forger.config import ExperimentConfig, load_config
 from agoge_forger.train.trainer import _build_sft_trainer, _build_training_args
 from datasets import Dataset, disable_progress_bars, enable_progress_bars
 
@@ -131,25 +132,33 @@ def test_shared_training_fields_survive_the_sft_config_switch(config, tmp_path):
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-def test_yaml_bf16_reaches_sft_config(tmp_path, monkeypatch, enabled):
-    from agoge_forger.config import load_config
+def test_yaml_bf16_reaches_sft_config(tmp_path, enabled):
+    """Forward YAML bf16 into the real SFTConfig without patching Transformers.
 
-    # Only bypass the GPU capability check; construct the real SFTConfig on CPU.
-    monkeypatch.setattr("transformers.training_args.is_torch_bf16_gpu_available", lambda: True)
+    On hardware without bf16, Transformers rejects ``bf16=True`` unless
+    ``use_cpu`` is set. That rejection is the proof the flag was forwarded.
+    """
     (tmp_path / "rows.jsonl").write_text('{"text":"hello world"}\n')
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         f"model_id: local\ndataset_path: rows.jsonl\nbf16: {str(enabled).lower()}\n"
     )
     cfg = load_config(str(config_path))
+    assert cfg.training.bf16 is enabled
+    if enabled and not is_torch_bf16_gpu_available():
+        with pytest.raises(ValueError, match="support bf16"):
+            _build_training_args(cfg, str(tmp_path / "out"))
+        return
     assert _build_training_args(cfg, str(tmp_path / "out")).bf16 is enabled
 
 
 def test_chunked_nll_and_activation_offloading_reach_sft_config(config, tmp_path):
+    """Keep the YAML alias and send TRL the loss name it still accepts."""
     config.training.loss_type = "chunked_nll"
     config.training.activation_offloading = True
     args = _build_training_args(config, str(tmp_path))
-    assert args.loss_type == "chunked_nll"
+    assert config.training.loss_type == "chunked_nll"
+    assert args.loss_type == "nll"
     assert args.activation_offloading is True
 
 
@@ -308,8 +317,6 @@ def test_completion_requires_offsets(config, model, tokenizer, tmp_path):
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_flat_yaml_completion_mode(tmp_path, enabled):
-    from agoge_forger.config import load_config
-
     source = tmp_path / "rows.jsonl"
     source.write_text('{"text":"hello world","completion_start_char":6}\n')
     config_path = tmp_path / "config.yaml"
