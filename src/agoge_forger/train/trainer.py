@@ -47,6 +47,11 @@ def _build_training_args(config, out_dir):
     """
     if config.training.completion_only_loss and config.dataset_text_field != "text":
         raise ValueError("completion_only_loss requires dataset_text_field=text")
+    # TRL 1.x remaps deprecated ``chunked_nll`` to ``nll`` (same math). Translate
+    # at this boundary so YAML stays compatible without the FutureWarning.
+    loss_type = config.training.loss_type
+    if loss_type == "chunked_nll":
+        loss_type = "nll"
     return SFTConfig(
         output_dir=out_dir,
         per_device_train_batch_size=config.training.batch_size,
@@ -63,7 +68,7 @@ def _build_training_args(config, out_dir):
         max_length=config.training.max_seq_length,
         dataset_text_field=config.dataset_text_field,
         completion_only_loss=config.training.completion_only_loss,
-        loss_type=config.training.loss_type,
+        loss_type=loss_type,
         activation_offloading=config.training.activation_offloading,
     )
 

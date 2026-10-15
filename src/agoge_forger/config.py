@@ -41,8 +41,8 @@ class TrainingConfig(BaseModel):
     save_total_limit: int | None = 2
     resume_from_latest_checkpoint: bool = False
     resume_checkpoint_path: str | None = None
-    # TRL SFTConfig passthrough. ``chunked_nll`` is the same NLL as ``nll``
-    # but never materializes [seq, vocab] logits (needed for 16GB / long SFT).
+    # TRL SFTConfig passthrough. ``chunked_nll`` remains a YAML alias of ``nll``
+    # (same math); ``_build_training_args`` remaps it before constructing SFTConfig.
     loss_type: str = "nll"
     activation_offloading: bool = False
 

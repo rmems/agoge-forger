@@ -131,10 +131,11 @@ def test_shared_training_fields_survive_the_sft_config_switch(config, tmp_path):
 
 
 def test_chunked_nll_and_activation_offloading_reach_sft_config(config, tmp_path):
+    """YAML may still say chunked_nll; TRL 1.x treats it as nll at the boundary."""
     config.training.loss_type = "chunked_nll"
     config.training.activation_offloading = True
     args = _build_training_args(config, str(tmp_path))
-    assert args.loss_type == "chunked_nll"
+    assert args.loss_type == "nll"
     assert args.activation_offloading is True
 
 
