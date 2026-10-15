@@ -160,7 +160,12 @@ def test_collect_disk_pressure_report_defaults_to_hf_cache_and_run_output(
     cache = tmp_path / ".cache" / "huggingface"
     cache.mkdir(parents=True)
     (cache / "blob.bin").write_bytes(b"x" * 32)
-    output = tmp_path / "run-output"
+    output_root = tmp_path / "run-output"
+    output = output_root / "run"
+    # A sibling run under the same output root must not count toward this run.
+    sibling = output_root / "other-run"
+    sibling.mkdir(parents=True)
+    (sibling / "adapter.bin").write_bytes(b"z" * 1000)
     if output_exists:
         output.mkdir()
         (output / "adapter.bin").write_bytes(b"y" * 17)

@@ -106,10 +106,11 @@ def collect_disk_pressure_report(
 ) -> DiskPressureReport:
     """Report disk usage; override ``monitored_paths`` to replace the HF cache/run output defaults."""
     output_root = os.path.abspath(config.output_dir)
+    run_output = os.path.join(output_root, config.run_name)
     if monitored_paths is None:
         monitored_paths = [
             os.path.expanduser("~/.cache/huggingface"),
-            output_root,
+            run_output,
         ]
     disk_path = output_root
     if not os.path.exists(disk_path):
