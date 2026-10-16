@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-# Draft CodeRabbit config for rmems/agoge-forger (generated locally, not pushed).
+# CodeRabbit review config for rmems/agoge-forger (committed; applies to every non-draft PR).
 language: en-US
 reviews:
   profile: chill
