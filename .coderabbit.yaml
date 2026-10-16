@@ -22,7 +22,7 @@ reviews:
   - path: pyproject.toml
     instructions: Dependencies are declared here and locked in `uv.lock`; do not add a second requirements file. Flag heavy new deps and first-party CUDA/Rust/Julia/Terraform additions (out of scope per AGENTS.md).
   - path: configs/**
-    instructions: Training/config contracts are checked by the config-contract and consumer-contract CI gates; flag schema or key changes that are not reflected in tests.
+    instructions: Top-level training configs (`configs/*.yaml`) are checked by the config-contract CI gate (`Path("configs").glob("*.yaml")` / `load_config`). The consumer-contract gate covers consumer parser paths and fixtures, not `configs/**`. Nested `configs/serving/**` and `configs/prompts/**` use other schemas and are not loaded by config-contract — flag schema or key changes there because they lack that CI coverage.
   - path: '**/Dockerfile'
     instructions: Dockerfile. Keep secrets out of layers and build args, and keep toolchain versions in line with the CI pins.
   - path: .github/workflows/**
