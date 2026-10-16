@@ -76,8 +76,8 @@ def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
             )
 
     def gen():
-        with dataset_path.open("r") as f:
-            for i, line in enumerate(f, 1):
+        with dataset_path.open("r") as rows_file:
+            for i, line in enumerate(rows_file, 1):
                 if not line.strip():
                     continue
                 try:
