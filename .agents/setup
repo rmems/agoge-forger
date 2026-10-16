@@ -48,15 +48,21 @@ if ! command -v uv >/dev/null 2>&1; then
   sh "$uv_installer"
   rm -f "$uv_installer"
   trap - EXIT
+  # Installer may update PATH only for login shells; re-export for this process.
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+if ! command -v uv >/dev/null 2>&1; then
+  echo "error: uv not found on PATH after install (expected under \$HOME/.local/bin)" >&2
+  exit 1
 fi
 # pyproject.toml requires Python >=3.14 and every CI job installs on 3.14.
 uv python install 3.14
-# CI forces CPU; keep torch/bitsandbytes off any GPU probing during install.
-export CUDA_VISIBLE_DEVICES=-1
+# CUDA_VISIBLE_DEVICES=-1 applies only to this sync (not later Amp shells).
+# Set it in the Amp project env for agent sessions; orbs have no GPU.
 # Install from uv.lock, as CI does, so every orb rebuild gets the reviewed dependency
 # graph. --locked fails if uv.lock is stale. uv sync creates or replaces .venv as
 # needed and installs the project itself editable.
-uv sync --python 3.14 --locked --extra dev
+CUDA_VISIBLE_DEVICES=-1 uv sync --python 3.14 --locked --extra dev
 
 # --- Expose the tools to later shells ---
 # The PATH exports above last only for this script; Amp starts the agent's shell
