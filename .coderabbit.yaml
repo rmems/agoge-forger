@@ -26,7 +26,7 @@ reviews:
   - path: '**/Dockerfile'
     instructions: Dockerfile. Keep secrets out of layers and build args, and keep toolchain versions in line with the CI pins.
   - path: .github/workflows/**
-    instructions: GitHub Actions workflows. Keep `permissions:` least-privilege and job commands in sync with the local gates documented in the repo. Every `uses:` is pinned to a full commit SHA today; new or bumped actions must be too. Jobs must keep `CUDA_VISIBLE_DEVICES=-1` for hosted runners.
+    instructions: GitHub Actions workflows. Keep `permissions:` least-privilege and job commands in sync with the local gates documented in the repo. Every `uses:` is pinned to a full commit SHA today; new or bumped actions must be too. Only the consumer-contract job currently sets `CUDA_VISIBLE_DEVICES=-1`; preserve that env where it already exists. Do not require the CUDA mask on other hosted workflows (pr_quality_gate, config_contract_gate, python_smoke_test, qodana) unless those jobs are explicitly moved onto the same CPU-only env contract.
   tools:
     ruff:
       enabled: true
