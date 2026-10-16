@@ -1,5 +1,7 @@
 import json
 import logging
+import subprocess  # nosec B404 - isolated interpreter import regression
+import sys
 
 import pytest
 from tokenizers import Tokenizer
@@ -117,3 +119,20 @@ def test_dataset_stats_pins_tokenizer_revision(tmp_path, monkeypatch):
 
     assert isinstance(result.exception, _Stop)
     assert seen["revision"] == "abc123"
+
+
+def test_datasets_module_import_does_not_load_transformers():
+    """Data-only consumers import agoge_forger.datasets; keep transformers lazy."""
+    code = (
+        "import sys\n"
+        "import agoge_forger.datasets\n"
+        "assert 'transformers' not in sys.modules, 'transformers imported eagerly'\n"
+    )
+    result = subprocess.run(  # nosec B603 - fixed interpreter and import-only script
+        [sys.executable, "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr

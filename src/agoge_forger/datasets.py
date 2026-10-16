@@ -1,7 +1,6 @@
 import json
 
 import numpy as np
-from transformers import AutoTokenizer
 
 from datasets import Dataset  # type: ignore[attr-defined]
 
@@ -128,6 +127,10 @@ def dataset_stats(
     *,
     revision: str | None = None,
 ):
+    # Lazy import: data-only consumers (consumer_contract, split_materialize)
+    # import this module and must not pull transformers/torch at import time.
+    from transformers import AutoTokenizer
+
     logger.info("Loading tokenizer for dataset stats...")
     # Tokenizer-only token counting; --revision pins the download when given,
     # and the unpinned default matches load_base_model's existing behavior.
