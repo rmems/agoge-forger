@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Amp orb setup for agoge-forger.
+#
+# Amp runs this from the repository root when it builds a project orb snapshot
+# (Debian 12, CPU only: orbs have no GPU). It must finish within 20 minutes and
+# be safe to run more than once. See https://ampcode.com/docs/orbs/customizing
+#
+# Installs only what this repo's CI and manifests need:
+#   - apt: curl, ca-certificates
+#   - uv + Python 3.14
+#   - uv sync --python 3.14 --locked --extra dev (the uv.lock graph, as CI installs it)
+#   - tool directories exposed to later shells (/etc/profile.d + /usr/local/bin links)
+#
+# It ends with a dependency fetch/prebuild, not a test run.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+  SUDO="sudo"
+fi
+
+# Install Debian packages that are not already present.
+apt_install() {
+  local missing=() pkg
+  for pkg in "$@"; do
+    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+      missing+=("$pkg")
+    fi
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    $SUDO apt-get -o Acquire::Retries=5 update -qq
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 install -y --no-install-recommends "${missing[@]}"
+  fi
+}
+
+# --- System packages (curl + CA certs for the installers below) ---
+apt_install curl ca-certificates
+
+# --- Python (uv) ---
+export PATH="$HOME/.local/bin:$PATH"
+if ! command -v uv >/dev/null 2>&1; then
+  # Pin a release-specific installer and verify its SHA-256 before executing.
+  # Matches CI's content-pinning intent (workflows pin astral-sh/setup-uv by commit SHA).
+  UV_VERSION="0.13.1"
+  UV_INSTALLER_SHA256="7c482d409673a53f4d9bd34ae95c9166be3b8d89ca82f27dd7bca3cab457afff"
+  uv_installer="$(mktemp)"
+  trap 'rm -f "$uv_installer"' EXIT
+  # Release asset URL (not the floating astral.sh/uv/install.sh tip).
+  curl -LsSf "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-installer.sh" -o "$uv_installer"
+  echo "${UV_INSTALLER_SHA256}  ${uv_installer}" | sha256sum -c -
+  sh "$uv_installer"
+  rm -f "$uv_installer"
+  trap - EXIT
+  # Installer may update PATH only for login shells; re-export for this process.
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+if ! command -v uv >/dev/null 2>&1; then
+  echo "error: uv not found on PATH after install (expected under \$HOME/.local/bin)" >&2
+  exit 1
+fi
+# pyproject.toml requires Python >=3.14 and every CI job installs on 3.14.
+uv python install 3.14
+# CUDA_VISIBLE_DEVICES=-1 applies only to this sync (not later Amp shells).
+# Set it in the Amp project env for agent sessions; orbs have no GPU.
+# Install from uv.lock, as CI does, so every orb rebuild gets the reviewed dependency
+# graph. --locked fails if uv.lock is stale. uv sync creates or replaces .venv as
+# needed and installs the project itself editable.
+CUDA_VISIBLE_DEVICES=-1 uv sync --python 3.14 --locked --extra dev
+
+# --- Expose the tools to later shells ---
+# The PATH exports above last only for this script; Amp starts the agent's shell
+# separately. Login shells get these directories from /etc/profile.d, and every other
+# shell finds the entry points through symlinks in /usr/local/bin (on the default PATH).
+# In login shells the venv's bin comes first, so python3 is the venv's Python.
+# The links skip python and pip so the system python3 stays the default elsewhere.
+repo_root="$(pwd)"
+tool_dirs=("$repo_root/.venv/bin" "$HOME/.local/bin")
+# shellcheck disable=SC2016 # $PATH must expand when the profile is sourced, not now.
+printf 'export PATH=%q:$PATH\n' "$(IFS=:; echo "${tool_dirs[*]}")" |
+  $SUDO tee /etc/profile.d/amp-orb-agoge-forger.sh >/dev/null
+for dir in "${tool_dirs[@]}"; do
+  [ -d "$dir" ] || continue
+  for tool in "$dir"/*; do
+    name="${tool##*/}"
+    case "$name" in
+      # uv's installer also drops env/env.fish (sourced, not run) in ~/.local/bin.
+      python* | pip* | activate* | deactivate | Activate.ps1 | env | env.fish) continue ;;
+    esac
+    if [ -f "$tool" ] && [ -x "$tool" ]; then
+      $SUDO ln -sfn "$tool" "/usr/local/bin/$name"
+    fi
+  done
+done
+
+echo "Amp orb setup for agoge-forger finished."
