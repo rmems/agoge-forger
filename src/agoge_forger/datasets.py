@@ -61,8 +61,9 @@ def load_jsonl_dataset(path: str, tokenizer=None):
     Schema ``ValueError``s from ``normalize_row`` are re-raised unwrapped (HF
     wraps them in ``DatasetGenerationError``).
     """
-    from datasets import Dataset  # type: ignore[attr-defined]
     from datasets.exceptions import DatasetGenerationError
+
+    from datasets import Dataset  # type: ignore[attr-defined]
 
     dataset_path = resolve_existing_path(path, must_be_file=True)
 
