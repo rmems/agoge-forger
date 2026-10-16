@@ -142,7 +142,6 @@ def _run_inference_request(
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
 
-        # noinspection PyNoneFunctionAssignment
         tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=trust_remote_code)
         pt_model = AutoModelForCausalLM.from_pretrained(
             model, trust_remote_code=trust_remote_code, device_map="cpu"
