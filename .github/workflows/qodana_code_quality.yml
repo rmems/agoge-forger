@@ -62,8 +62,10 @@ jobs:
       - name: Qodana scan
         uses: JetBrains/qodana-action@3e8d76ff0e0241618abd808682f426afe84bab3f # v2026.2.2
         with:
-          # Pull requests fail on new problems; full main/release scans fail
-          # on any problem now that the existing findings have been cleared.
+          # --fail-threshold 0 applies to every event and there is no baseline.
+          # In pr-mode Qodana analyzes only the files the pull request changed,
+          # and a PR fails on any problem Qodana reports for them; push and
+          # dispatch scans analyze the whole project and fail on any problem.
           # The -e argument crosses QODANA_PYTHON_PATH into the native linter;
           # setting it only on this Actions step does not configure its SDK.
           pr-mode: ${{ github.event_name == 'pull_request' }}
