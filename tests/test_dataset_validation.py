@@ -121,12 +121,15 @@ def test_dataset_stats_pins_tokenizer_revision(tmp_path, monkeypatch):
     assert seen["revision"] == "abc123"
 
 
-def test_datasets_module_import_does_not_load_transformers():
-    """Data-only consumers import agoge_forger.datasets; keep transformers lazy."""
+def test_datasets_module_import_does_not_load_heavy_deps():
+    """Data-only consumers import agoge_forger.datasets; keep heavy deps lazy."""
     code = (
         "import sys\n"
         "import agoge_forger.datasets\n"
         "assert 'transformers' not in sys.modules, 'transformers imported eagerly'\n"
+        "assert 'torch' not in sys.modules, 'torch imported eagerly'\n"
+        "assert 'datasets' not in sys.modules, 'HF datasets imported eagerly'\n"
+        "assert 'numpy' not in sys.modules, 'numpy imported eagerly'\n"
     )
     result = subprocess.run(  # nosec B603 - fixed interpreter and import-only script
         [sys.executable, "-c", code],

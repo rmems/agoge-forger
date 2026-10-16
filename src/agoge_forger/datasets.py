@@ -1,9 +1,5 @@
 import json
 
-import numpy as np
-
-from datasets import Dataset  # type: ignore[attr-defined]
-
 from .config import normalize_revision
 from .logging import logger
 from .path_safety import resolve_existing_path
@@ -57,7 +53,7 @@ def normalize_row(row, tokenizer=None, index=0):
         )
 
 
-def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
+def load_jsonl_dataset(path: str, tokenizer=None):
     """Load JSONL via ``Dataset.from_generator`` (disk-backed Arrow cache).
 
     Empty / blank-only files raise a clear ``ValueError`` without switching to
@@ -65,6 +61,7 @@ def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
     Schema ``ValueError``s from ``normalize_row`` are re-raised unwrapped (HF
     wraps them in ``DatasetGenerationError``).
     """
+    from datasets import Dataset  # type: ignore[attr-defined]
     from datasets.exceptions import DatasetGenerationError
 
     dataset_path = resolve_existing_path(path, must_be_file=True)
@@ -128,7 +125,9 @@ def dataset_stats(
     revision: str | None = None,
 ):
     # Lazy import: data-only consumers (consumer_contract, split_materialize)
-    # import this module and must not pull transformers/torch at import time.
+    # import this module and must not pull transformers/torch, HF datasets, or
+    # numpy at import time.
+    import numpy as np
     from transformers import AutoTokenizer
 
     logger.info("Loading tokenizer for dataset stats...")
