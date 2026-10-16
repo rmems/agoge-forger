@@ -41,7 +41,13 @@ apt_install curl ca-certificates
 # --- Python (uv) ---
 export PATH="$HOME/.local/bin:$PATH"
 if ! command -v uv >/dev/null 2>&1; then
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+  # Download fully before executing so a truncated transfer cannot run under pipefail.
+  uv_installer="$(mktemp)"
+  trap 'rm -f "$uv_installer"' EXIT
+  curl -LsSf https://astral.sh/uv/install.sh -o "$uv_installer"
+  sh "$uv_installer"
+  rm -f "$uv_installer"
+  trap - EXIT
 fi
 # pyproject.toml requires Python >=3.14 and every CI job installs on 3.14.
 uv python install 3.14
