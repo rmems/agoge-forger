@@ -276,24 +276,39 @@ against the scorer that produced it. Three objective scorers are registered in
 | --- | --- | --- |
 | `exact-match-v1` | CRLF to LF, strip trailing whitespace, compare raw text. **Frozen**: its behavior never changes, so past results stay reproducible. | Re-running or auditing pre-existing experiments only. |
 | `exact-match-v2` | `exact-match-v1` after unwrapping a markdown code fence that leads the reply (any language tag, backtick or tilde, applied to both sides). The first fenced block wins; text after it is ignored; an unterminated fence runs to the end; a reply that does not start with a fence is compared exactly as `exact-match-v1` would (leading blank lines included); CRLF, lone CR, and LF all count as line breaks when looking for the fence. | Tasks whose answer is a fixed expected text. |
-| `doctest-v1` | Unwraps the fence as above, then runs `doctest` over the candidate module in a sandboxed subprocess (10 s wall clock, scrubbed environment, throwaway directory, no network or process creation). `correct` iff every example passes. Records `n_examples`, `n_failed`, and `error` per task. | Code-repair tasks whose docstring examples are the spec. |
+| `doctest-v1` | Unwraps the fence as above, then runs `doctest` over the candidate module in a sandboxed subprocess (10 s wall clock, scrubbed environment, throwaway directory, POSIX resource limits, and an audit hook that denies sockets, process creation, and the imports that reach them). `correct` iff at least one example ran and every example passed. Records `n_examples`, `n_failed`, and `error` per task. | Code-repair tasks whose docstring examples are the spec. |
 
-`doctest-v1` verdicts: a syntax error, a timeout, or a worker that dies without a
-result is `invalid` (excluded from accuracy, like an unsupported prompt); a module
-that raises while loading, has malformed doctests (for example an unknown
-`# doctest:` directive), has no examples, fails one, or drops, rewrites, or moves
-an example from the reference module is `incorrect`. The example check compares
-the exact `(source, expected output)` pairs the worker's `doctest` discovery
-actually ran, so an example kept only in a nested function or other code `doctest`
-never visits does not count. It exists because deleting or editing a failing
-doctest would otherwise pass. The worker reports its result through a file the
-sandbox cannot write, stamped with a one-time token sent on stdin; a result without
-that token is treated as a crash. The sandbox is a guard
-against accidents (a generated module that opens a socket or writes elsewhere),
-not a security boundary against code written to escape it (for example, it does
-not intercept importing a compiled extension module, and code that deliberately
-inspects the worker's frames can reach the result file and token): run it in a
-container or VM if the generations are adversarial.
+`doctest-v1` verdicts distinguish what the candidate can bring about from what it
+cannot. Anything the candidate causes is `incorrect`: a syntax error, raising while
+loading, malformed doctests (for example an unknown `# doctest:` directive), no
+examples, a failed example, dropping/rewriting/moving an example from the reference
+module, a timeout, killing its own worker, or tampering with the scoring harness.
+`invalid` (excluded from accuracy, like an unsupported prompt) is reserved for what
+the candidate cannot cause: a reference module with no usable examples, or a worker
+that never started. A candidate that deliberately crashes or invalidates its own run
+therefore counts as a failure, not a shrunk denominator. The example check compares
+the exact `(source, expected output)` pairs the worker's runner actually ran, so an
+example kept only in a nested function or other code `doctest` never visits does not
+count; it exists because deleting or editing a failing doctest would otherwise pass.
+A reference that does not parse or has no examples fails closed to `invalid` rather
+than silently checking nothing.
+
+The worker reports its result through a file in a parent-owned directory the sandbox
+cannot write, stamped with a one-time token sent on stdin and written through
+encoder/descriptor bindings captured before the candidate runs; a result missing the
+token, with the wrong structure, or produced after the candidate rebound any harness
+namespace is rejected. The sandbox is a guard against accidental and naive gaming (a
+generated module that opens a socket, spawns a process, writes outside its directory,
+or monkeypatches `json`/`doctest` to forge a pass), **not** a security boundary
+against a determined attacker. Audit hooks in CPython are not a complete boundary: the
+hook denies socket creation and use, process creation and signalling, `ctypes` loading,
+writes outside the sandbox directory, and imports of the modules that reach those
+facilities without an audit event (`socket`, `subprocess`, `_posixsubprocess`,
+`ctypes`, `sqlite3`, `multiprocessing`, …), and it drops `os.mkfifo`/`os.mknod`; but it
+does not stop code that digs the open descriptor or token out of the worker's frames,
+in-process patching outside the snapshotted namespaces, or loading a compiled extension
+module that is not on the import denylist. Run the scorer inside a container or VM if
+the generations are adversarial.
 
 **Future experiment contracts must name a scorer that is invariant to output
 formatting** (`exact-match-v2`, `doctest-v1`, or a later one). `exact-match-v1` is
