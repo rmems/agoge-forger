@@ -21,7 +21,7 @@ checkout on Linux, CPU only, no GPU.
 | `uv run agoge check-torch` / `make check` | not run (needs a working torch/CUDA setup) |
 | `uv run agoge train-qlora --config configs/minicpm5_canary.yaml` / `make train-smoke` | not run (needs the RTX 5080 and Hub downloads) |
 | `make eval-smoke` | not run (needs a trained adapter under `adapters/`) |
-| `python scripts/smoke_test.py` | not run (CI `workflow_dispatch` only; needs a model) |
+| `uv run python scripts/smoke_test.py --model <hf-model-id>` | not run (CI `workflow_dispatch` only; `--model` is required and needs a downloaded model) |
 
 CI: `pr_quality_gate.yml` runs the lock check, ruff, mypy, and pytest above. `config_contract_gate.yml`
 loads every top-level `configs/*.yaml` and runs three test files. `consumer_contract.yml` runs
