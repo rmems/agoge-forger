@@ -60,6 +60,7 @@ def compare_arms(
 ) -> ComparisonSummary:
     require_supported_scoring_version(scoring_version)
     _require_matching_task_ids(base_scores, sft_scores)
+    _require_scores_use_version(scoring_version, (*base_scores, *sft_scores))
     outcomes = tuple(
         compare_example(base, sft) for base, sft in zip(base_scores, sft_scores, strict=True)
     )
@@ -85,6 +86,14 @@ def _require_paired_scores(base: ExampleScore, sft: ExampleScore) -> None:
         raise ValueError("paired comparison requires matching task IDs")
     if base.scoring_version != sft.scoring_version:
         raise ValueError("paired comparison scoring versions drifted")
+
+
+def _require_scores_use_version(scoring_version: str, scores: tuple[ExampleScore, ...]) -> None:
+    drifted = sorted({score.scoring_version for score in scores} - {scoring_version})
+    if drifted:
+        raise ValueError(
+            f"paired comparison requested {scoring_version} but scores came from: {drifted}"
+        )
 
 
 def _pair_outcome(base_verdict: str, sft_verdict: str) -> PairOutcome:

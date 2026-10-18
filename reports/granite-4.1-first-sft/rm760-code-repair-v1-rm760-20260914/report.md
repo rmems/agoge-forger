@@ -57,12 +57,16 @@ them as a diagnostic of the confound, not as a replacement result.
 - 16 held-out tasks cannot separate a 1-3 task difference from noise; none of these deltas is significant.
 
 Files: `comparison.exact-match-v2.json`, `comparison.doctest-v1.json` (per-task verdicts, plus
-`n_examples` / `n_failed` / `error` for doctest). Regenerate with:
+`n_examples` / `n_failed` / `error` for doctest). `rescore-held-out` never overwrites a file, so
+check reproducibility by writing to a scratch path and diffing against the committed file:
 
 ```bash
+scratch="$(mktemp -d)"
 for v in exact-match-v2 doctest-v1; do
   uv run agoge rescore-held-out reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g1-eval \
-    --scoring-version "$v" \
-    --output reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/comparison."$v".json
+    --scoring-version "$v" --output "$scratch/comparison.$v.json"
+  diff "$scratch/comparison.$v.json" \
+    reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/comparison."$v".json \
+    && echo "$v reproduces"
 done
 ```

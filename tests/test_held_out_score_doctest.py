@@ -1,10 +1,20 @@
 """The ``doctest-v1`` scorer: sandboxed execution of the candidate module's doctests."""
 
+import importlib.util
+import json
 import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
 
 import pytest
 
+from agoge_forger.eval import _doctest_runner
 from agoge_forger.eval._doctest_runner import (
+    _kill,
+    _read_result,
     docstring_examples,
     missing_reference_examples,
     run_doctests,
@@ -16,6 +26,13 @@ from agoge_forger.eval.score import (
     score_doctest,
     score_generation,
 )
+
+_spec = importlib.util.spec_from_file_location(
+    "_doctest_worker_under_test", Path(_doctest_runner.__file__).with_name("_doctest_worker.py")
+)
+assert _spec is not None and _spec.loader is not None
+worker = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(worker)  # only defines functions unless run as a script
 
 REFERENCE = '''def add(a, b):
     """
@@ -204,8 +221,199 @@ def test_example_extraction_is_static_and_tolerates_bad_source():
     counted = docstring_examples(REFERENCE)
     assert counted is not None
     assert sum(counted.values()) == 2
-    assert not missing_reference_examples(REFERENCE, REFERENCE)
-    assert sum(missing_reference_examples(REFERENCE, "x = 1").values()) == 2
+    assert not missing_reference_examples(REFERENCE, counted)
+    assert sum(missing_reference_examples(REFERENCE, ()).values()) == 2
+
+
+def test_malformed_doctest_directive_is_a_per_task_verdict_not_an_abort():
+    malformed = REFERENCE.replace(">>> add(1, 2)", ">>> add(1, 2)  # doctest: +NOPE")
+    assert docstring_examples(malformed) is None  # the static reference path tolerates it too
+    score = _score(malformed)
+    assert score.verdict == "incorrect"
+    assert score.reason == "candidate has a malformed doctest"
+    assert "+NOPE" in (score.error or "")
+
+
+def test_examples_kept_only_in_a_nested_function_do_not_count():
+    decoy = '''def add(a, b):
+    """
+    >>> 1 + 1
+    2
+    """
+    def inner():
+        """
+        >>> add(1, 2)
+        3
+        >>> add(0, 0)
+        0
+        """
+    return a - b
+'''
+    score = _score(decoy)
+    assert score.verdict == "incorrect"
+    assert score.reason == "candidate dropped or rewrote 2 reference doctest example(s)"
+
+
+def test_expected_output_whitespace_is_part_of_the_preserved_example():
+    reference = 'def f():\n    """\n    >>> print("a  b")\n    a  b\n    """\n    print("a  b")\n'
+    squeezed = reference.replace('    a  b\n    """', '    a b\n    """')
+    assert squeezed != reference
+    assert _score(reference, reference).verdict == "correct"
+    assert _score(squeezed, reference).verdict == "incorrect"
+
+
+def test_reindenting_a_docstring_is_still_the_same_example():
+    reindented = (
+        REFERENCE.replace("\n    >>>", "\n        >>>")
+        .replace("\n    3", "\n        3")
+        .replace("\n    0\n", "\n        0\n")
+    )
+    assert reindented != REFERENCE
+    assert _score(reindented).verdict == "correct"
+
+
+def test_text_that_cannot_be_written_as_utf8_is_invalid_not_an_abort():
+    assert _score(REFERENCE + "\n# \ud800\n").verdict == "invalid"
+
+
+_FORGED = (
+    "import json, os\n"
+    'json.dump({"status": "ok", "n_examples": 5, "n_failed": 0, "error": None}, '
+    'open("result.json", "w"))\n'
+    "os._exit(0)\n"
+)
+
+
+def test_candidate_cannot_forge_the_result_in_its_working_directory():
+    assert run_doctests(BUGGY + _FORGED).status == "crashed"
+    assert _score(BUGGY + _FORGED).verdict == "invalid"
+
+
+def test_candidate_cannot_write_the_result_file_or_guess_a_token():
+    path_forgery = BUGGY + (
+        "import json, os, sys\n"
+        'forged = {"status": "ok", "n_examples": 5, "n_failed": 0, "error": None, "token": ""}\n'
+        "try:\n"
+        "    json.dump(forged, open(sys.argv[2], 'w'))\n"
+        "except PermissionError:\n"
+        "    pass\n"
+        "os._exit(0)\n"
+    )
+    assert run_doctests(path_forgery).status == "crashed"
+
+
+def test_outcomes_are_not_accepted_without_the_matching_token(tmp_path):
+    result = tmp_path / "result.json"
+    payload = {"status": "ok", "n_examples": 1, "n_failed": 0, "error": None}
+    result.write_text(json.dumps({**payload, "token": "other"}), encoding="utf-8")
+    assert _read_result(result, "expected").status == "crashed"
+    result.write_text(json.dumps({**payload, "token": "expected"}), encoding="utf-8")
+    assert _read_result(result, "expected").status == "ok"
+    result.write_text(json.dumps({**payload, "status": "timeout", "token": "expected"}))
+    assert _read_result(result, "expected").status == "crashed"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file semantics")
+def test_descriptor_and_dir_fd_tricks_cannot_touch_files_outside(tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious", encoding="utf-8")
+    victim.chmod(0o640)
+    os.utime(victim, (1_000_000, 1_000_000))
+    before = victim.stat()
+    source = f"""
+import os
+VICTIM = {str(victim)!r}
+def attempt(action):
+    try:
+        action()
+    except OSError:
+        pass
+read_fd = os.open(VICTIM, os.O_RDONLY)
+dir_fd = os.open({str(tmp_path)!r}, os.O_RDONLY)
+attempt(lambda: os.ftruncate(read_fd, 0))
+attempt(lambda: os.fchmod(read_fd, 0o777))
+attempt(lambda: os.chmod(read_fd, 0o777))
+attempt(lambda: os.utime(read_fd, (1, 1)))
+attempt(lambda: os.utime(VICTIM, (1, 1)))
+attempt(lambda: os.chmod("victim.txt", 0o777, dir_fd=dir_fd))
+attempt(lambda: os.truncate(VICTIM, 0))
+attempt(lambda: os.setxattr(VICTIM, "user.x", b"1"))
+attempt(lambda: os.unlink("victim.txt", dir_fd=dir_fd))
+def f():
+    '''
+    >>> 1 + 1
+    2
+    '''
+"""
+    assert run_doctests(source).status == "ok"
+    after = victim.stat()
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert (after.st_mode, after.st_mtime) == (before.st_mode, before.st_mtime)
+
+
+def test_the_audit_hook_fails_closed_on_unexpected_event_shapes():
+    policy = worker._PathPolicy("/sandbox-root")
+    assert worker._denial("os.remove", (), policy) is not None
+    assert worker._denial("os.remove", ("/sandbox-root/x", 7), policy) is not None
+    assert worker._denial("os.remove", ("/sandbox-root/x", -1), policy) is None
+    assert worker._denial("os.chmod", (3, 0o777, -1), policy) is not None
+    assert worker._denial("open", (), policy) is None  # no write flags, nothing to refuse
+    assert worker._denial("socket.connect", (object(), ("h", 1)), policy) is not None
+
+
+def test_a_missing_standard_stream_original_does_not_break_the_restore(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker, "_install_audit_hook", lambda _sandbox: None)
+    monkeypatch.setattr(sys, "__stdout__", None)
+    monkeypatch.setattr(sys, "__stderr__", None)
+    monkeypatch.setitem(sys.modules, "candidate", sys.modules.get("candidate", worker))
+    stdout, stderr = sys.stdout, sys.stderr
+    result = worker._run("x = 1\n", str(tmp_path))
+    assert result["status"] == "ok"
+    assert (sys.stdout, sys.stderr) == (stdout, stderr)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups")
+def test_kill_falls_back_to_the_worker_when_the_group_cannot_be_signalled(monkeypatch):
+    def refuse(_pid, _signal):
+        raise PermissionError
+
+    monkeypatch.setattr(os, "killpg", refuse)
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+    _kill(process)
+    assert process.returncode == -signal.SIGKILL
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups")
+def test_kill_takes_down_the_whole_process_group(tmp_path):
+    marker = tmp_path / "child.pid"
+    parent = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
+        "time.sleep(60)\n"
+    )
+    process = subprocess.Popen([sys.executable, "-c", parent], start_new_session=True)
+    deadline = time.monotonic() + 10
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    child_pid = int(marker.read_text(encoding="utf-8"))
+    _kill(process)
+    time.sleep(0.2)
+    assert not _is_running(child_pid)
+
+
+def _is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:  # an unreaped (zombie) orphan is dead; /proc tells the two apart on Linux
+        state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
+    except OSError:
+        return True
+    return state != "Z"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX resource limits")

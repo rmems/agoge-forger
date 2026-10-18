@@ -212,6 +212,7 @@ def _g0_base_arm(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, Any]:
 
 def _run_held_out_eval_command(request: _HeldOutEvalRequest) -> None:
     try:
+        require_supported_scoring_version(request.options.scoring_version)  # before any model work
         manifest_path = resolve_existing_path(request.split_manifest, must_be_file=True)
         artifact_root = resolve_existing_path(request.sft_artifact, must_be_dir=True)
         destination = resolve_absent_output_directory(request.output_dir)
@@ -231,6 +232,7 @@ def _run_held_out_eval_command(request: _HeldOutEvalRequest) -> None:
 
 def _run_g0_held_out_eval_command(request: _G0HeldOutEvalRequest) -> None:
     try:
+        require_supported_scoring_version(request.options.scoring_version)  # before any model work
         manifest_path = resolve_existing_path(request.split_manifest, must_be_file=True)
         destination = resolve_absent_output_directory(request.output_dir)
         base, tokenizer = _g0_base_arm(

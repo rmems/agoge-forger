@@ -10,6 +10,7 @@ score as wrong (see #183). The other two are additive and never change v1 result
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Literal
 
 from ._artifact_schema import FrozenEvaluationModel
@@ -85,15 +86,28 @@ def score_generation(
     record: GenerationRecord, *, scoring_version: str = OBJECTIVE_SCORING_VERSION
 ) -> ExampleScore:
     require_supported_scoring_version(scoring_version)
-    if record.status != "ok":
-        return _invalid(record, scoring_version, record.reason or record.status)
-    if record.expected_completion is None or record.completion is None:
-        return _invalid(record, scoring_version, "missing expected or predicted completion")
-    expected = normalize_completion(record.expected_completion)
-    if expected == "":
-        return _invalid(record, scoring_version, "empty expected completion")
+    problem = _unscorable_reason(record)
+    if problem is not None:
+        return _invalid(record, scoring_version, problem)
     if scoring_version == DOCTEST_V1_SCORING_VERSION:
         return score_doctest(record)
+    return _score_exact_match(record, scoring_version)
+
+
+def _unscorable_reason(record: GenerationRecord) -> str | None:
+    if record.status != "ok":
+        return record.reason or record.status
+    if record.expected_completion is None or record.completion is None:
+        return "missing expected or predicted completion"
+    if normalize_completion(record.expected_completion) == "":
+        return "empty expected completion"
+    return None
+
+
+def _score_exact_match(record: GenerationRecord, scoring_version: str) -> ExampleScore:
+    if record.expected_completion is None or record.completion is None:
+        raise ValueError("exact-match scoring needs expected and predicted completions")
+    expected = normalize_completion(record.expected_completion)
     predicted = normalize_completion(record.completion)
     if scoring_version == EXACT_MATCH_V2_SCORING_VERSION:
         # Both sides are unwrapped so the verdict cannot depend on which one carries a fence.
@@ -101,11 +115,10 @@ def score_generation(
         if expected == "":
             return _invalid(record, scoring_version, "empty expected completion")
         predicted = normalize_completion(extract_fenced_code(predicted))
-    correct = predicted == expected
     return ExampleScore(
         task_id=record.task_id,
         scoring_version=scoring_version,
-        verdict="correct" if correct else "incorrect",
+        verdict="correct" if predicted == expected else "incorrect",
         expected_completion=record.expected_completion,
         predicted_completion=record.completion,
     )
@@ -137,9 +150,8 @@ def score_doctest(
     reference, completion = record.expected_completion, record.completion
     if reference is None or completion is None:
         raise ValueError("doctest scoring needs expected and predicted completions")
-    candidate = extract_fenced_code(completion)
-    dropped = missing_reference_examples(extract_fenced_code(reference), candidate)
-    outcome = run_doctests(candidate, timeout_seconds=timeout_seconds)
+    outcome = run_doctests(extract_fenced_code(completion), timeout_seconds=timeout_seconds)
+    dropped = missing_reference_examples(extract_fenced_code(reference), outcome.examples)
     verdict, reason = _doctest_verdict(outcome, sum(dropped.values()))
     return ExampleScore(
         task_id=record.task_id,
@@ -154,15 +166,26 @@ def score_doctest(
     )
 
 
+_FIXED_STATUS_VERDICTS: dict[str, tuple[ExampleVerdict, str]] = {
+    "syntax_error": ("invalid", "candidate module does not parse"),
+    "import_error": ("incorrect", "candidate module raised while loading"),
+    "malformed_doctest": ("incorrect", "candidate has a malformed doctest"),
+}
+
+
 def _doctest_verdict(
     outcome: DoctestOutcome, n_dropped_reference_examples: int
 ) -> tuple[ExampleVerdict, str | None]:
-    if outcome.status == "syntax_error":
-        return "invalid", "candidate module does not parse"
     if outcome.status in {"timeout", "crashed"}:
         return "invalid", outcome.error or outcome.status
-    if outcome.status == "import_error":
-        return "incorrect", "candidate module raised while loading"
+    if outcome.status in _FIXED_STATUS_VERDICTS:
+        return _FIXED_STATUS_VERDICTS[outcome.status]
+    return _executed_verdict(outcome, n_dropped_reference_examples)
+
+
+def _executed_verdict(
+    outcome: DoctestOutcome, n_dropped_reference_examples: int
+) -> tuple[ExampleVerdict, str | None]:
     if outcome.n_examples == 0:
         return "incorrect", "candidate has no doctest examples"
     if n_dropped_reference_examples:
@@ -182,9 +205,8 @@ def score_arm(
     scoring_version: str = OBJECTIVE_SCORING_VERSION,
 ) -> tuple[tuple[ExampleScore, ...], ArmMetrics]:
     scores = tuple(score_generation(record, scoring_version=scoring_version) for record in records)
-    n_correct = sum(score.verdict == "correct" for score in scores)
-    n_incorrect = sum(score.verdict == "incorrect" for score in scores)
-    n_invalid = sum(score.verdict == "invalid" for score in scores)
+    counts = Counter(score.verdict for score in scores)
+    n_correct, n_incorrect, n_invalid = counts["correct"], counts["incorrect"], counts["invalid"]
     n_scored = n_correct + n_incorrect
     accuracy = None if n_scored == 0 else n_correct / n_scored
     metrics = ArmMetrics(

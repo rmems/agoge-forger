@@ -275,17 +275,25 @@ against the scorer that produced it. Three objective scorers are registered in
 | Version | What it does | Use it for |
 | --- | --- | --- |
 | `exact-match-v1` | CRLF to LF, strip trailing whitespace, compare raw text. **Frozen**: its behavior never changes, so past results stay reproducible. | Re-running or auditing pre-existing experiments only. |
-| `exact-match-v2` | `exact-match-v1` after unwrapping a markdown code fence that leads the reply (any language tag, backtick or tilde, applied to both sides). The first fenced block wins; text after it is ignored; an unterminated fence runs to the end; a reply that does not start with a fence is compared unchanged. | Tasks whose answer is a fixed expected text. |
+| `exact-match-v2` | `exact-match-v1` after unwrapping a markdown code fence that leads the reply (any language tag, backtick or tilde, applied to both sides). The first fenced block wins; text after it is ignored; an unterminated fence runs to the end; a reply that does not start with a fence is compared exactly as `exact-match-v1` would (leading blank lines included); CRLF, lone CR, and LF all count as line breaks when looking for the fence. | Tasks whose answer is a fixed expected text. |
 | `doctest-v1` | Unwraps the fence as above, then runs `doctest` over the candidate module in a sandboxed subprocess (10 s wall clock, scrubbed environment, throwaway directory, no network or process creation). `correct` iff every example passes. Records `n_examples`, `n_failed`, and `error` per task. | Code-repair tasks whose docstring examples are the spec. |
 
 `doctest-v1` verdicts: a syntax error, a timeout, or a worker that dies without a
 result is `invalid` (excluded from accuracy, like an unsupported prompt); a module
-that raises while loading, has no examples, fails one, or drops or rewrites an
-example from the reference module is `incorrect`. The example check exists because
-deleting or editing a failing doctest would otherwise pass. The sandbox is a guard
+that raises while loading, has malformed doctests (for example an unknown
+`# doctest:` directive), has no examples, fails one, or drops, rewrites, or moves
+an example from the reference module is `incorrect`. The example check compares
+the exact `(source, expected output)` pairs the worker's `doctest` discovery
+actually ran, so an example kept only in a nested function or other code `doctest`
+never visits does not count. It exists because deleting or editing a failing
+doctest would otherwise pass. The worker reports its result through a file the
+sandbox cannot write, stamped with a one-time token sent on stdin; a result without
+that token is treated as a crash. The sandbox is a guard
 against accidents (a generated module that opens a socket or writes elsewhere),
-not a security boundary against code written to escape it: run it in a container
-or VM if the generations are adversarial.
+not a security boundary against code written to escape it (for example, it does
+not intercept importing a compiled extension module, and code that deliberately
+inspects the worker's frames can reach the result file and token): run it in a
+container or VM if the generations are adversarial.
 
 **Future experiment contracts must name a scorer that is invariant to output
 formatting** (`exact-match-v2`, `doctest-v1`, or a later one). `exact-match-v1` is
@@ -303,7 +311,8 @@ uv run agoge rescore-held-out eval/<run_name> --scoring-version doctest-v1
 # writes eval/<run_name>/comparison.doctest-v1.json; never overwrites a file
 ```
 
-The original `comparison.json` and the experiment contract are left as they are, so
+`rescore-held-out` refuses to run unless both generation files cover exactly the
+`logical_task_ids` in the bundle's `contract.json`. The original `comparison.json` and the experiment contract are left as they are, so
 several scorers can coexist next to each other. A post-hoc scorer is a diagnostic:
 the pre-registered scorer's result remains the pre-registered conclusion.
 

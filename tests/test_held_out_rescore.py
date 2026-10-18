@@ -2,12 +2,15 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from agoge_forger import _cli_eval as cli_eval
 from agoge_forger.cli import app
+from agoge_forger.eval.compare import compare_arms
 from agoge_forger.eval.harness import HeldOutEvalRuntime, run_held_out_eval
 from agoge_forger.eval.rescore import rescore_paired_bundle
 from agoge_forger.eval.score import (
@@ -15,6 +18,7 @@ from agoge_forger.eval.score import (
     EXACT_MATCH_V2_SCORING_VERSION,
     OBJECTIVE_SCORING_VERSION,
     SUPPORTED_SCORING_VERSIONS,
+    ExampleScore,
     GenerationRecord,
 )
 from tests.held_out_eval_cases import canary_evaluation_case, scripted_generator
@@ -37,8 +41,13 @@ def _generation(task_id, completion) -> dict:
 
 
 def _write_bundle(root: Path, base: list[str], sft: list[str]) -> Path:
+    root.mkdir(parents=True)
+    task_ids = [f"t{i}" for i in range(len(base))]
+    (root / "contract.json").write_text(
+        json.dumps({"logical_task_ids": task_ids}), encoding="utf-8"
+    )
     for arm, completions in (("base", base), ("sft", sft)):
-        (root / arm).mkdir(parents=True)
+        (root / arm).mkdir()
         rows = [_generation(f"t{i}", text) for i, text in enumerate(completions)]
         (root / arm / "generations.jsonl").write_text(
             "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
@@ -221,3 +230,96 @@ def test_rm760_committed_secondary_scoring_is_reproducible(tmp_path, version):
     for key in ("arms", "outcomes", "conclusion", "delta_accuracy", "rescored_from"):
         assert rescored[key] == committed[key], key
     assert _verdicts(rescored) == _verdicts(committed)
+
+
+def test_compare_arms_rejects_scores_from_another_scorer():
+    score = ExampleScore(task_id="t0", scoring_version="exact-match-v1", verdict="correct")
+    with pytest.raises(ValueError, match="requested exact-match-v2 but scores came from"):
+        compare_arms((score,), (score,), scoring_version="exact-match-v2")
+    mixed = score.model_copy(update={"scoring_version": "exact-match-v2"})
+    with pytest.raises(ValueError, match="scoring versions drifted|requested"):
+        compare_arms((score,), (mixed,), scoring_version="exact-match-v2")
+    assert compare_arms((score,), (score,)).scoring_version == "exact-match-v1"
+
+
+def test_rescore_refuses_a_bundle_that_omits_contract_tasks(fenced_base_bundle):
+    for arm in ("base", "sft"):
+        path = fenced_base_bundle / arm / "generations.jsonl"
+        path.write_text(path.read_text(encoding="utf-8").splitlines()[0] + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not cover exactly the 2 task"):
+        rescore_paired_bundle(fenced_base_bundle, scoring_version="exact-match-v2")
+    assert not (fenced_base_bundle / "comparison.exact-match-v2.json").exists()
+
+
+def test_rescore_refuses_a_bundle_without_its_contract(fenced_base_bundle):
+    (fenced_base_bundle / "contract.json").unlink()
+    with pytest.raises(FileNotFoundError, match="bundle contract not found"):
+        rescore_paired_bundle(fenced_base_bundle, scoring_version="exact-match-v2")
+
+
+def test_rescored_from_hashes_the_bytes_that_were_scored(fenced_base_bundle, monkeypatch):
+    path = fenced_base_bundle / "base" / "generations.jsonl"
+    scored_bytes = path.read_bytes()
+    reads = []
+    original = Path.read_bytes
+
+    def read_then_change(self):
+        content = original(self)
+        if self == path:
+            reads.append(content)
+            self.write_bytes(b"")  # the file changes right after it is read
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", read_then_change)
+    out = rescore_paired_bundle(fenced_base_bundle, scoring_version="exact-match-v2")
+    payload = json.loads(original(out))
+    assert len(reads) == 1
+    assert (
+        payload["rescored_from"]["base/generations.jsonl"]
+        == hashlib.sha256(scored_bytes).hexdigest()
+    )
+
+
+def test_a_failed_write_leaves_nothing_behind_and_can_be_retried(fenced_base_bundle, monkeypatch):
+    real_fsync = os.fsync
+
+    def failing_fsync(_fd):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "fsync", failing_fsync)
+    with pytest.raises(OSError, match="disk full"):
+        rescore_paired_bundle(fenced_base_bundle, scoring_version="exact-match-v2")
+    assert not list(fenced_base_bundle.glob("comparison.*")) and not list(
+        fenced_base_bundle.glob(".comparison*")
+    )
+    monkeypatch.setattr(os, "fsync", real_fsync)
+    assert rescore_paired_bundle(fenced_base_bundle, scoring_version="exact-match-v2").is_file()
+
+
+@pytest.mark.parametrize(
+    ("command", "extra"),
+    [
+        ("held-out-eval", ["--sft-artifact", "a"]),
+        ("g0-held-out-eval", ["--experiment-id", "e", "--max-new-tokens", "8"]),
+    ],
+)
+def test_an_unknown_scorer_is_rejected_before_any_tokenizer_work(monkeypatch, command, extra):
+    def must_not_load(*_args, **_kwargs):
+        raise AssertionError("tokenizer loaded for an invalid scorer")
+
+    monkeypatch.setattr(cli_eval, "_load_pinned_tokenizer", must_not_load)
+    result = CliRunner().invoke(
+        app,
+        [
+            command,
+            "--split-manifest", "m.json",
+            "--output-dir", "out",
+            "--base-model-id", "b",
+            "--base-revision", "r",
+            "--context-window", "8",
+            "--scoring-version", "nope-v9",
+            *extra,
+        ],
+    )  # fmt: skip
+    assert result.exit_code == 1, result.output
+    assert "unsupported objective scoring version" in result.output

@@ -67,8 +67,19 @@ def test_wrapper_variants_extract_to_the_same_code(text):
     assert extract_fenced_code(text) == CODE
 
 
-def test_extraction_keeps_indentation_of_unfenced_first_line():
-    assert extract_fenced_code("\n\n    x = 1\n") == "    x = 1"
+def test_unfenced_replies_are_returned_as_v1_would_see_them():
+    # Only CRLF -> LF and trailing whitespace change: leading blank lines and the
+    # indentation of the first line survive, so v2 stays "v1 plus fence unwrapping".
+    assert extract_fenced_code("\n\n    x = 1\n") == "\n\n    x = 1"
+    assert extract_fenced_code("x = 1\r\ny = 2\r\n") == "x = 1\ny = 2"
+
+
+def test_lone_cr_line_endings_still_find_the_fence():
+    assert extract_fenced_code("```python\rx = 1\ry = 2\r```") == "x = 1\ny = 2"
+
+
+def test_v2_does_not_equate_unfenced_replies_that_differ_by_leading_blank_lines():
+    assert _v2(f"\n\n{CODE}").verdict == "incorrect"
 
 
 def test_longer_fence_can_wrap_a_literal_fence_line():
