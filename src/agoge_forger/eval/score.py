@@ -17,7 +17,7 @@ from ._artifact_schema import FrozenEvaluationModel
 from ._doctest_runner import (
     DOCTEST_TIMEOUT_SECONDS,
     DoctestOutcome,
-    missing_reference_examples,
+    reference_examples,
     run_doctests,
 )
 from ._fence import extract_fenced_code
@@ -142,16 +142,22 @@ def score_doctest(
 
     The reference module's docstring examples are the task's spec, so a candidate that
     deletes or rewrites one of them is ``incorrect`` instead of passing trivially, and a
-    candidate with no examples never passes. A syntax error, a timeout, or a worker that
-    dies without a result is ``invalid``. ``record`` must already be ``status="ok"`` with
-    both completions present (``score_generation`` guarantees that).
+    candidate with no examples never passes. Everything the candidate can bring about
+    (a syntax error, a timeout, killing the worker, tampering with the harness) is
+    ``incorrect``; ``invalid`` is reserved for what it cannot: a reference with no usable
+    examples, or a worker that never started. ``record`` must already be ``status="ok"``
+    with both completions present (``score_generation`` guarantees that).
     """
 
     reference, completion = record.expected_completion, record.completion
     if reference is None or completion is None:
         raise ValueError("doctest scoring needs expected and predicted completions")
+    try:
+        wanted = reference_examples(extract_fenced_code(reference))
+    except ValueError as exc:
+        return _invalid(record, DOCTEST_V1_SCORING_VERSION, str(exc))
     outcome = run_doctests(extract_fenced_code(completion), timeout_seconds=timeout_seconds)
-    dropped = missing_reference_examples(extract_fenced_code(reference), outcome.examples)
+    dropped = wanted - Counter(outcome.examples)
     verdict, reason = _doctest_verdict(outcome, sum(dropped.values()))
     return ExampleScore(
         task_id=record.task_id,
@@ -167,17 +173,20 @@ def score_doctest(
 
 
 _FIXED_STATUS_VERDICTS: dict[str, tuple[ExampleVerdict, str]] = {
-    "syntax_error": ("invalid", "candidate module does not parse"),
+    "syntax_error": ("incorrect", "candidate module does not parse"),
     "import_error": ("incorrect", "candidate module raised while loading"),
     "malformed_doctest": ("incorrect", "candidate has a malformed doctest"),
+    "tampered": ("incorrect", "candidate modified the scoring harness"),
 }
 
 
 def _doctest_verdict(
     outcome: DoctestOutcome, n_dropped_reference_examples: int
 ) -> tuple[ExampleVerdict, str | None]:
-    if outcome.status in {"timeout", "crashed"}:
+    if outcome.status == "worker_error":  # the scorer, not the candidate, failed
         return "invalid", outcome.error or outcome.status
+    if outcome.status in {"timeout", "crashed"}:
+        return "incorrect", outcome.error or outcome.status
     if outcome.status in _FIXED_STATUS_VERDICTS:
         return _FIXED_STATUS_VERDICTS[outcome.status]
     return _executed_verdict(outcome, n_dropped_reference_examples)

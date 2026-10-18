@@ -4,8 +4,8 @@ The candidate is model-generated and therefore untrusted. It is never imported o
 executed in this process: it is parsed with :mod:`ast` here, then run by
 ``_doctest_worker.py`` in a separate interpreter with a wall-clock timeout, a
 scrubbed environment, a throwaway working directory, resource limits, and an audit
-hook that denies network access and process creation (see the worker docstring for
-what that does and does not guarantee).
+hook that denies socket use, process creation, and the imports that reach them (see
+the worker docstring for what that does and does not guarantee).
 """
 
 from __future__ import annotations
@@ -31,10 +31,21 @@ _ERROR_CHARS = 500
 _WINDOWS_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
 DoctestStatus = Literal[
-    "ok", "syntax_error", "import_error", "malformed_doctest", "timeout", "crashed"
+    "ok",
+    "syntax_error",
+    "import_error",
+    "malformed_doctest",
+    "tampered",
+    "timeout",
+    "crashed",
+    "worker_error",
 ]
-# Statuses the worker itself may report; ``timeout`` and ``crashed`` are decided here.
-_WORKER_STATUSES = frozenset({"ok", "syntax_error", "import_error", "malformed_doctest"})
+# Statuses the worker itself may report. ``timeout`` and ``crashed`` (the worker started
+# and then died or left an unusable result) and ``worker_error`` (it never started, so
+# the candidate was not at fault) are decided here.
+_WORKER_STATUSES = frozenset(
+    {"ok", "syntax_error", "import_error", "malformed_doctest", "tampered"}
+)
 ExamplePair = tuple[str, str]
 
 
@@ -44,7 +55,7 @@ class DoctestOutcome:
     n_examples: int = 0
     n_failed: int = 0
     error: str | None = None
-    # The ``(source, want)`` pairs the worker's ``DocTestFinder`` discovered and ran.
+    # The ``(source, want)`` pairs the worker's runner actually executed.
     examples: tuple[ExamplePair, ...] = ()
 
 
@@ -93,16 +104,32 @@ def docstring_examples(source: str) -> Counter[ExamplePair] | None:
     return examples
 
 
+def reference_examples(reference: str) -> Counter[ExamplePair]:
+    """The doctest examples a reference module specifies; the task's spec.
+
+    Raises ``ValueError`` when the reference does not parse, has a malformed doctest, or
+    has no examples at all: a reference like that cannot check a candidate, and silently
+    checking nothing would let any candidate with one passing self-written example pass.
+    """
+
+    examples = docstring_examples(reference)
+    if examples is None:
+        raise ValueError("reference module does not parse or has a malformed doctest")
+    if not examples:
+        raise ValueError("reference module has no doctest examples")
+    return examples
+
+
 def missing_reference_examples(reference: str, ran: Iterable[ExamplePair]) -> Counter[ExamplePair]:
     """Reference doctest examples that the candidate did not actually run.
 
-    ``ran`` is what the sandboxed worker's ``DocTestFinder`` discovered in the candidate
+    ``ran`` is what the sandboxed worker's runner executed in the candidate
     (``DoctestOutcome.examples``), so an example that was dropped, rewritten, or moved
     somewhere ``doctest`` never looks (a nested function, dead code) counts as missing.
+    Raises ``ValueError`` for a reference ``reference_examples`` rejects.
     """
 
-    wanted = docstring_examples(reference) or Counter()
-    return wanted - Counter(ran)
+    return reference_examples(reference) - Counter(ran)
 
 
 def run_doctests(
@@ -185,8 +212,15 @@ def _run_worker(launch: _WorkerLaunch, timeout_seconds: float) -> DoctestOutcome
         except subprocess.TimeoutExpired:
             _kill(process)
             return DoctestOutcome("timeout", error=f"timed out after {timeout_seconds:g}s")
-    # ``Popen.__exit__`` has waited for the worker, so ``returncode`` is set here.
+    # ``Popen.__exit__`` has waited for the worker, so ``returncode`` is set here. The
+    # worker creates the result file before the candidate runs, so a missing file means it
+    # never got that far; an empty or unreadable one means the candidate took it down.
     if not launch.result_path.is_file():
+        return DoctestOutcome(
+            "worker_error",
+            error=f"doctest worker exited with code {process.returncode} before it started",
+        )
+    if launch.result_path.stat().st_size == 0:
         return DoctestOutcome(
             "crashed",
             error=f"doctest worker exited with code {process.returncode} without a result",

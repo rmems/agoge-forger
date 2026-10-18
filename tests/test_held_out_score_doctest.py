@@ -1,5 +1,6 @@
 """The ``doctest-v1`` scorer: sandboxed execution of the candidate module's doctests."""
 
+import doctest
 import importlib.util
 import json
 import os
@@ -98,21 +99,21 @@ def test_unfixed_module_is_incorrect():
     assert (score.verdict, score.n_examples, score.n_failed) == ("incorrect", 2, 1)
 
 
-def test_syntax_error_is_invalid():
+def test_syntax_error_is_incorrect():
     score = _score("def add(a, b:\n    return a + b\n")
-    assert score.verdict == "invalid"
+    assert score.verdict == "incorrect"
     assert score.reason == "candidate module does not parse"
     assert "SyntaxError" in (score.error or "")
 
 
-def test_unclosed_docstring_from_a_truncated_reply_is_invalid():
-    assert _score('```python\ndef add(a, b):\n    """\n    >>> add(1, 2)\n').verdict == "invalid"
+def test_unclosed_docstring_from_a_truncated_reply_is_incorrect():
+    assert _score('```python\ndef add(a, b):\n    """\n    >>> add(1, 2)\n').verdict == "incorrect"
 
 
-def test_timeout_is_invalid():
+def test_timeout_is_incorrect():
     looping = REFERENCE.replace("return a + b", "while True:\n        pass")
     score = score_doctest(_record(looping), timeout_seconds=1)
-    assert score.verdict == "invalid"
+    assert score.verdict == "incorrect"
     assert "timed out after 1s" in (score.reason or "")
 
 
@@ -166,7 +167,7 @@ def test_arm_metrics_count_invalid_separately():
     records = (
         _record(REFERENCE, task_id="a"),
         _record(BUGGY, task_id="b"),
-        _record("def (:", task_id="c"),
+        _record(None, task_id="c", status="unsupported", reason="overflow"),
     )
     _, metrics = score_arm("causal_sft", records, scoring_version=DOCTEST_V1_SCORING_VERSION)
     assert (metrics.n_correct, metrics.n_incorrect, metrics.n_invalid) == (1, 1, 1)
@@ -272,8 +273,8 @@ def test_reindenting_a_docstring_is_still_the_same_example():
     assert _score(reindented).verdict == "correct"
 
 
-def test_text_that_cannot_be_written_as_utf8_is_invalid_not_an_abort():
-    assert _score(REFERENCE + "\n# \ud800\n").verdict == "invalid"
+def test_text_that_cannot_be_written_as_utf8_is_incorrect_not_an_abort():
+    assert _score(REFERENCE + "\n# \ud800\n").verdict == "incorrect"
 
 
 _FORGED = (
@@ -286,7 +287,7 @@ _FORGED = (
 
 def test_candidate_cannot_forge_the_result_in_its_working_directory():
     assert run_doctests(BUGGY + _FORGED).status == "crashed"
-    assert _score(BUGGY + _FORGED).verdict == "invalid"
+    assert _score(BUGGY + _FORGED).verdict == "incorrect"
 
 
 def test_candidate_cannot_write_the_result_file_or_guess_a_token():
@@ -367,7 +368,7 @@ def test_a_missing_standard_stream_original_does_not_break_the_restore(monkeypat
     monkeypatch.setattr(sys, "__stderr__", None)
     monkeypatch.setitem(sys.modules, "candidate", sys.modules.get("candidate", worker))
     stdout, stderr = sys.stdout, sys.stderr
-    result = worker._run("x = 1\n", str(tmp_path))
+    result = worker._run("x = 1\n", str(tmp_path), worker._Harness(str(tmp_path / "result")))
     assert result["status"] == "ok"
     assert (sys.stdout, sys.stderr) == (stdout, stderr)
 
@@ -430,3 +431,182 @@ def test_worker_runs_with_safe_path_so_cwd_is_not_importable():
         'def f():\n    """\n    >>> import sys\n    >>> sys.flags.safe_path\n    True\n    """\n'
     )
     assert score_doctest(_record(module, reference=module)).verdict == "correct"
+
+
+# --- Bypasses an independent review executed against the first sandbox (PR #192) ---
+
+_SELF_TEST = 'def f():\n    """\n    >>> 1 + 1\n    2\n    """\n'
+
+
+def _blocked(module: str, *, outside: Path | None = None) -> None:
+    """Score ``module`` against itself; the sandbox must refuse it and keep its verdict."""
+
+    score = score_doctest(_record(module, reference=module))
+    assert score.verdict != "correct"
+    error = score.error or ""
+    assert "sandbox blocked" in error or "halted; None in sys.modules" in error
+    if outside is not None:
+        assert list(outside.iterdir()) == []
+
+
+def test_candidate_cannot_forge_the_result_by_reassigning_json_dump():
+    forged = BUGGY + (
+        "import json\n"
+        "json.dump = lambda obj, fp: fp.write(json.dumps({**obj, 'status': 'ok', "
+        "'n_examples': 2, 'n_failed': 0, "
+        "'examples': [['add(1, 2)\\n', '3\\n'], ['add(0, 0)\\n', '0\\n']]}))\n"
+    )
+    score = _score(forged)
+    assert score.verdict == "incorrect"
+    assert score.reason == "candidate modified the scoring harness"
+
+
+def test_candidate_cannot_forge_the_result_by_patching_the_doctest_runner():
+    forged = BUGGY + (
+        "import doctest\n"
+        "doctest.DocTestRunner.run = "
+        "lambda self, test, **kw: setattr(self, 'tries', len(test.examples))\n"
+    )
+    score = _score(forged)
+    assert score.verdict == "incorrect"
+    assert score.reason == "candidate modified the scoring harness"
+
+
+def test_candidate_cannot_forge_the_result_by_patching_the_json_encoder_internals():
+    forged = BUGGY + (
+        "import json.encoder\n"
+        "json.encoder.c_make_encoder = None\n"
+        "json.encoder._make_iterencode = lambda *a, **k: (lambda obj, level: "
+        "[json.dumps({**obj, 'n_failed': 0})])\n"
+    )
+    assert _score(forged).verdict == "incorrect"
+
+
+def test_patching_the_harness_from_inside_an_example_does_not_pass():
+    rewritten = REFERENCE.replace(
+        ">>> add(0, 0)\n    0",
+        ">>> add(0, 0)\n    0\n    >>> import doctest, json\n"
+        ">>> doctest.DocTestRunner.failures = property(lambda self: 0)\n",
+    )
+    score = _score(rewritten.replace("a + b", "a - b"))
+    assert score.verdict == "incorrect"
+
+
+def test_candidate_cannot_disable_the_hook_through_the_worker_module():
+    patched = BUGGY + "import __main__\n__main__._denial = lambda *args: None\n"
+    score = _score(patched)
+    assert score.verdict == "incorrect"
+    assert score.reason == "candidate modified the scoring harness"
+
+
+def test_candidate_cannot_send_udp_datagrams():
+    _blocked(
+        'def f():\n    """\n    >>> import socket\n'
+        "    >>> socket.socket(socket.AF_INET, socket.SOCK_DGRAM)"
+        '.sendto(b"x", ("127.0.0.1", 9))\n    1\n    """\n'
+    )
+
+
+def test_candidate_cannot_create_any_socket():
+    _blocked('def f():\n    """\n    >>> import socket\n    >>> s = socket.socket()\n    """\n')
+
+
+def test_candidate_cannot_reach_a_cached_socket_module_through_another_module():
+    _blocked(
+        'def f():\n    """\n    >>> import pdb, sys\n'
+        '    >>> s = sys.modules["pdb"].socket.socket()\n    """\n'
+    )
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["_posixsubprocess", "subprocess", "socket", "_socket", "ctypes", "sqlite3", "multiprocessing"],
+)
+def test_candidate_cannot_import_process_network_or_native_modules(module):
+    _blocked(f'def f():\n    """\n    >>> import {module}\n    """\n')
+    _blocked(
+        f'def f():\n    """\n    >>> import importlib\n    >>> importlib.import_module("{module}")\n    """\n'
+    )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="fork_exec is POSIX only")
+def test_candidate_cannot_fork_exec_a_shell(tmp_path):
+    marker = tmp_path / "pwned"
+    module = (
+        'def f():\n    """\n    >>> import _posixsubprocess, os\n'
+        f'    >>> _posixsubprocess.fork_exec([b"/bin/sh", b"-c", b"touch {marker}"], '
+        "[b'/bin/sh'], True, (), None, None, -1, -1, -1, -1, -1, -1, "
+        '*os.pipe(), False, False, -1, None, None, None, -1, None)\n    """\n'
+    )
+    _blocked(module, outside=tmp_path)
+
+
+def test_candidate_cannot_write_a_database_outside_its_directory(tmp_path):
+    module = (
+        'def f():\n    """\n    >>> import sqlite3\n'
+        f'    >>> sqlite3.connect({str(tmp_path / "x.db")!r}).execute("create table t(x)")\n'
+        '    """\n'
+    )
+    _blocked(module, outside=tmp_path)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="mkfifo is POSIX only")
+def test_candidate_cannot_create_fifos_or_device_nodes_outside_its_directory(tmp_path):
+    module = (
+        'def f():\n    """\n    >>> import os, posix\n'
+        f"    >>> os.mkfifo({str(tmp_path / 'fifo')!r})\n"
+        f'    >>> posix.mknod({str(tmp_path / "node")!r})\n    """\n'
+    )
+    score = score_doctest(_record(module, reference=module))
+    assert score.verdict == "incorrect"
+    assert "AttributeError" in (score.error or "")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_reference_that_does_not_parse_is_invalid_not_a_disabled_check():
+    for reference in ("def add(a, b:\n", 'def add(a, b):\n    """Adds."""\n'):
+        score = _score(_SELF_TEST, reference=reference)
+        assert score.verdict == "invalid"
+        assert "reference" in (score.reason or "")
+        assert score.n_examples is None  # the candidate was never run
+
+
+def test_a_reference_with_a_malformed_directive_is_invalid():
+    malformed = REFERENCE.replace(">>> add(1, 2)", ">>> add(1, 2)  # doctest: +NOPE")
+    assert _score(REFERENCE, reference=malformed).verdict == "invalid"
+
+
+def test_killing_the_worker_from_an_example_is_incorrect_not_invalid():
+    exiting = 'def f():\n    """\n    >>> import os\n    >>> os._exit(0)\n    """\n'
+    score = _score(exiting)
+    assert score.verdict == "incorrect"
+    assert "without a result" in (score.reason or "")
+
+
+def test_a_worker_that_never_started_is_invalid(monkeypatch):
+    monkeypatch.setattr(_doctest_runner, "_WORKER", Path("/nonexistent/_doctest_worker.py"))
+    outcome = run_doctests(REFERENCE)
+    assert outcome.status == "worker_error"
+    assert _score(REFERENCE).verdict == "invalid"
+
+
+def test_result_channel_ignores_json_patched_after_it_was_bound(tmp_path, monkeypatch):
+    channel = worker._ResultChannel(str(tmp_path / "result.json"))
+    forged = {"status": "ok", "n_failed": 0}
+    monkeypatch.setattr(json, "dump", lambda obj, fp, **kw: fp.write(json.dumps(forged)))
+    monkeypatch.setattr(json, "dumps", lambda obj, **kw: "forged")
+    monkeypatch.setattr(json.encoder, "c_make_encoder", None)
+    monkeypatch.setattr(json.encoder, "_make_iterencode", lambda *a, **k: lambda o, l: ["{}"])
+    channel.publish({"status": "import_error", "n_failed": 1, "error": None, "ok": [1, "x"]})
+    written = (tmp_path / "result.json").read_bytes()
+    assert written == b'{"status":"import_error","n_failed":1,"error":null,"ok":[1,"x"]}'
+
+
+def test_harness_snapshot_reports_rebound_and_removed_names_only(monkeypatch):
+    snapshot = worker._HarnessSnapshot()
+    assert snapshot.changes() == []
+    monkeypatch.setattr(json, "brand_new_name", 1, raising=False)  # additions are allowed
+    assert snapshot.changes() == []
+    monkeypatch.setattr(doctest.DocTestRunner, "run", lambda *a, **k: None)
+    monkeypatch.delattr(json, "dumps")
+    assert sorted(snapshot.changes()) == ["DocTestRunner.run", "json.dumps"]

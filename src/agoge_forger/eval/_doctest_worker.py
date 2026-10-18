@@ -7,18 +7,33 @@ timeout, a scrubbed environment, and a throwaway working directory; this process
 best-effort containment on top of that:
 
 * POSIX resource limits (CPU time, address space, file size, core dumps);
-* an audit hook that refuses network access, process creation, ``ctypes`` library
-  loading, and filesystem mutation outside the working directory. Importing a compiled
-  extension module is **not** intercepted (CPython raises no dedicated audit event for
-  it), so code that already has a ``.so`` on ``sys.path`` can still load it.
+* an audit hook that refuses socket creation and use, process creation and signalling,
+  ``ctypes`` library loading, filesystem mutation outside the working directory, and the
+  import of the modules that reach those facilities without an audit event of their own
+  (``_posixsubprocess``, ``socket``, ``subprocess``, ``ctypes``, ``sqlite3``,
+  ``multiprocessing``, ...; see ``_BLOCKED_IMPORTS``). Copies of those modules that the
+  standard library imported before the candidate ran are dropped from ``sys.modules`` so
+  the denylist bites a cached import too, and ``os.mkfifo`` / ``os.mknod`` (which raise
+  no audit event) are removed from ``os`` and ``posix``.
 
 The result is reported through ``RESULT``, a file in a *parent-owned directory outside
-the working directory*, opened before the candidate runs and stamped with the token the
-parent sent on stdin. The audit hook refuses writes outside the working directory, so
-candidate code cannot create or replace that file by path, and a result without the
-right token is discarded by the parent. What this does not stop: candidate code that
-deliberately digs the already-open file object or the token out of this process's frames
-or descriptors. That is the same class of attack as escaping the hook (see below).
+the working directory*. It is opened before the candidate runs, and the bytes are
+written with bindings (``os.write``, the file descriptor, a JSON encoder built from the
+C accelerator) captured at the same time, so reassigning ``json.dump`` or anything else
+in ``json``'s namespace cannot change what is written. The result is stamped with the
+token the parent sent on stdin; the audit hook refuses writes outside the working
+directory, so candidate code cannot create or replace the file by path, and a result
+without the right token is discarded by the parent. Finally the namespaces the scoring
+path relies on (``doctest``, ``json``, ``os``, ``builtins``, this module, and the
+``doctest`` classes) are snapshotted before the candidate runs and compared afterwards;
+a candidate that rebinds any of them is reported as ``tampered`` instead of scored.
+
+What this does **not** defend: code that digs the open descriptor, the token, or the
+harness bindings out of this process's frames (``sys._getframe``, ``gc.get_referrers``);
+in-process patching outside the snapshotted set (``linecache``, ``pdb``, ``sys``,
+``importlib`` internals, ``sys.modules`` itself); and compiled extension modules other
+than those in the import denylist, because CPython raises no dedicated audit event for
+loading one.
 
 This is a guard against accidents (a generated module that opens a socket, spawns a
 process, or writes outside its directory), **not** a security boundary against code
@@ -28,11 +43,14 @@ are adversarial.
 
 from __future__ import annotations
 
+import builtins
 import doctest
 import json
+import json.encoder
 import os
 import sys
 import types
+from collections.abc import Callable
 
 _MEMORY_LIMIT_BYTES = 2 * 1024**3
 _FILE_SIZE_LIMIT_BYTES = 4 * 1024**2
@@ -45,10 +63,13 @@ _BLOCKED_EVENTS = frozenset(
         "os.exec",
         "os.fork",
         "os.forkpty",
+        "os.kill",
+        "os.killpg",
         "os.posix_spawn",
         "os.spawn",
         "os.startfile",
         "os.system",
+        "socket.__new__",
         "socket.bind",
         "socket.connect",
         "socket.getaddrinfo",
@@ -56,9 +77,33 @@ _BLOCKED_EVENTS = frozenset(
         "socket.gethostbyname",
         "socket.getnameinfo",
         "socket.sendmsg",
+        "socket.sendto",
         "subprocess.Popen",
     }
 )
+# Top-level modules the candidate may not import: each reaches process creation, the
+# network, native code, or a database file through calls that raise no audit event.
+_BLOCKED_IMPORTS = frozenset(
+    {
+        "_ctypes",
+        "_multiprocessing",
+        "_posixsubprocess",
+        "_socket",
+        "_sqlite3",
+        "_winapi",
+        "ctypes",
+        "multiprocessing",
+        "socket",
+        "sqlite3",
+        "subprocess",
+    }
+)
+# Standard-library modules that hold references to blocked modules (``pdb`` pulls in
+# ``asyncio`` and ``ssl``); dropped from ``sys.modules`` so they are re-imported, and
+# then refused, if the candidate asks for them.
+_PURGED_IMPORTS = _BLOCKED_IMPORTS | {"asyncio", "ssl", "_ssl"}
+# ``os`` functions that mutate the filesystem without raising an audit event.
+_UNAUDITED_OS_FUNCTIONS = ("mkfifo", "mknod")
 # Events whose leading arguments are filesystem paths that must stay in the sandbox:
 # event -> (number of leading path arguments, positions of ``dir_fd`` arguments). A path
 # given as a bare descriptor (``os.fchmod``) or relative to another directory descriptor
@@ -79,6 +124,7 @@ _PATH_EVENTS: dict[str, tuple[int, tuple[int, ...]]] = {
     "shutil.copyfile": (2, ()),
     "shutil.move": (2, ()),
     "shutil.rmtree": (1, (2,)),
+    "sqlite3.connect": (1, ()),
 }
 _NO_DIR_FD = (None, -1)
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
@@ -154,6 +200,15 @@ def _path_event_denial(event: str, args: tuple[object, ...], policy: _PathPolicy
     return f"doctest-v1 sandbox blocked {event} outside its directory"
 
 
+def _import_denial(args: tuple[object, ...]) -> str | None:
+    name = args[0] if args else None
+    if not isinstance(name, str):  # an argument shape we do not recognise fails closed
+        return "doctest-v1 sandbox blocked an import it could not identify"
+    if name.partition(".")[0] in _BLOCKED_IMPORTS:
+        return f"doctest-v1 sandbox blocked import of {name}"
+    return None
+
+
 def _denial(event: str, args: tuple[object, ...], policy: _PathPolicy) -> str | None:
     """Return why the sandbox refuses ``event``, or ``None`` when it is allowed."""
 
@@ -161,6 +216,8 @@ def _denial(event: str, args: tuple[object, ...], policy: _PathPolicy) -> str | 
         return f"doctest-v1 sandbox blocked {event}"
     if event == "open":
         return _open_denial(args, policy)
+    if event == "import":
+        return _import_denial(args)
     if event in _PATH_EVENTS:
         return _path_event_denial(event, args, policy)
     return None
@@ -168,27 +225,52 @@ def _denial(event: str, args: tuple[object, ...], policy: _PathPolicy) -> str | 
 
 def _install_audit_hook(sandbox: str) -> None:
     policy = _PathPolicy(sandbox)
+    denial_of = _denial  # bound here so rebinding this module's global cannot disable it
 
     def hook(event: str, args: tuple[object, ...]) -> None:
-        denial = _denial(event, args, policy)
+        denial = denial_of(event, args, policy)
         if denial is not None:
             raise PermissionError(denial)
 
     sys.addaudithook(hook)
 
 
+def _remove_unaudited_facilities() -> None:
+    """Take the modules and functions the audit hook cannot see out of the candidate's reach."""
+
+    for name in list(sys.modules):
+        if name.partition(".")[0] in _PURGED_IMPORTS:
+            del sys.modules[name]
+    for name in _BLOCKED_IMPORTS:
+        # ``None`` makes every import path (including ``importlib.import_module``, which
+        # raises no audit event) fail with ``ModuleNotFoundError``.
+        sys.modules[name] = None  # type: ignore[assignment]
+    for module in (os, sys.modules.get("posix")):
+        for name in _UNAUDITED_OS_FUNCTIONS:
+            if module is not None and hasattr(module, name):
+                delattr(module, name)
+
+
 class _RecordingRunner(doctest.DocTestRunner):
-    """Runs examples quietly and keeps the first few failure descriptions."""
+    """Runs examples quietly; records what ran and the first few failure descriptions.
+
+    The counts and example pairs come from this class's own report callbacks rather than
+    from ``DocTestRunner``'s bookkeeping, which a candidate could reach through the class.
+    """
 
     def __init__(self) -> None:
         super().__init__(verbose=False)
         self.messages: list[str] = []
+        self.ran: list[list[str]] = []
+        self.n_failed = 0
 
     def report_start(self, out, test, example):
-        """Intentionally silent: doctest's per-example progress output is not wanted."""
+        """Silent except for recording the example ``doctest`` is about to run."""
+        self.ran.append([example.source, example.want])
 
     def report_success(self, out, test, example, got):
-        """Intentionally silent: only failures are recorded."""
+        """Intentionally silent: only failures are recorded, and the base class prints."""
+        # No body: a passing example needs no record beyond the ``report_start`` entry.
 
     def report_failure(self, out, test, example, got):
         self._note(
@@ -202,8 +284,117 @@ class _RecordingRunner(doctest.DocTestRunner):
         )
 
     def _note(self, message: str) -> None:
+        self.n_failed += 1
         if len(self.messages) < 3:
             self.messages.append(message)
+
+
+_HARNESS_CLASSES: tuple[type, ...] = (
+    doctest.DocTest,
+    doctest.DocTestFinder,
+    doctest.DocTestParser,
+    doctest.DocTestRunner,
+    doctest.Example,
+    doctest.OutputChecker,
+    _RecordingRunner,
+)
+_HARNESS_MODULES: tuple[types.ModuleType, ...] = (
+    builtins,
+    doctest,
+    json,
+    json.encoder,
+    os,
+    os.path,
+)
+# ``sys.displayhook`` legitimately rebinds ``builtins._`` while examples run.
+_VOLATILE_NAMES = frozenset({"_"})
+
+
+def _harness_namespaces() -> dict[str, dict[str, object]]:
+    """The live module namespaces the scoring path relies on, including this module's own."""
+
+    namespaces = {module.__name__: vars(module) for module in _HARNESS_MODULES}
+    namespaces["worker"] = globals()
+    return namespaces
+
+
+class _HarnessSnapshot:
+    """Identity snapshot of the namespaces the scoring path relies on."""
+
+    def __init__(self) -> None:
+        self._modules = {name: dict(live) for name, live in _harness_namespaces().items()}
+        self._classes = {cls: dict(vars(cls)) for cls in _HARNESS_CLASSES}
+
+    def changes(self) -> list[str]:
+        """Names rebound or removed since the snapshot (modules may gain names freely)."""
+
+        live = _harness_namespaces()
+        changed: list[str] = []
+        for name, saved in self._modules.items():
+            changed.extend(_rebound(name, saved, live[name], additions=False))
+        for cls, saved in self._classes.items():
+            changed.extend(_rebound(cls.__qualname__, saved, dict(vars(cls)), additions=True))
+        return changed
+
+
+def _rebound(
+    owner: str, saved: dict[str, object], current: dict[str, object], *, additions: bool
+) -> list[str]:
+    names = set(saved) | (set(current) if additions else set())
+    return sorted(
+        f"{owner}.{name}"
+        for name in names - _VOLATILE_NAMES
+        if name not in current or name not in saved or current[name] is not saved[name]
+    )
+
+
+def _bind_json_encoder() -> Callable[[object], str]:
+    """Return a JSON serializer whose call path no longer consults ``json``'s globals.
+
+    ``json.dumps`` looks up ``json.encoder.c_make_encoder`` and friends at call time, so a
+    candidate could redirect it; the C encoder instance built here does not.
+    """
+
+    make_encoder = getattr(json.encoder, "c_make_encoder", None)
+    encode_string = getattr(json.encoder, "c_encode_basestring_ascii", None)
+    if make_encoder is None or encode_string is None:  # pragma: no cover - pure-Python json
+        dumps = json.dumps
+        return dumps
+
+    def unsupported(value: object) -> object:
+        raise TypeError(f"result contains an unserialisable {type(value).__name__}")
+
+    chunks = make_encoder(None, unsupported, encode_string, None, ":", ",", False, False, False)
+    return lambda value: "".join(chunks(value, 0))
+
+
+class _ResultChannel:
+    """The result file, opened and bound before the candidate runs."""
+
+    def __init__(self, path: str) -> None:
+        self._fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        self._write = os.write
+        self._close = os.close
+        self._encode = _bind_json_encoder()
+
+    def publish(self, result: dict[str, object], *, _len: Callable[[bytes], int] = len) -> None:
+        """Write ``result`` through the bindings taken at construction only."""
+
+        data = self._encode(result).encode("utf-8")
+        written = 0
+        while written < _len(data):
+            written += self._write(self._fd, data[written:])
+        self._close(self._fd)
+
+
+class _Harness:
+    """Everything the worker needs after the candidate has run, bound before it runs."""
+
+    def __init__(self, result_path: str) -> None:
+        self.channel = _ResultChannel(result_path)
+        self.find = doctest.DocTestFinder.find
+        self.run = doctest.DocTestRunner.run
+        self.snapshot = _HarnessSnapshot()
 
 
 def _short(text: str) -> str:
@@ -229,27 +420,27 @@ def _load_candidate(code: types.CodeType, module: types.ModuleType) -> dict[str,
     return None
 
 
-def _run_examples(module: types.ModuleType) -> dict[str, object]:
+def _run_examples(module: types.ModuleType, harness: _Harness) -> dict[str, object]:
     try:
-        tests = doctest.DocTestFinder(recurse=True).find(module, "candidate")
+        tests = harness.find(doctest.DocTestFinder(recurse=True), module, "candidate")
     except ValueError as exc:  # e.g. a malformed ``# doctest: +NOPE`` directive
         return _failure("malformed_doctest", str(exc))
     runner = _RecordingRunner()
     for test in tests:
-        runner.run(test, out=lambda _text: None, clear_globs=True)
+        harness.run(runner, test, out=lambda _text: None, clear_globs=True)
     error = " | ".join(runner.messages) or None
     return {
         "status": "ok",
-        "n_examples": runner.tries,
-        "n_failed": runner.failures,
+        "n_examples": len(runner.ran),
+        "n_failed": runner.n_failed,
         "error": None if error is None else _short(error),
-        # The examples the finder actually discovered and ran, so the parent can check that
-        # the reference's examples were kept where they execute (not in dead or nested code).
-        "examples": [[e.source, e.want] for test in tests for e in test.examples],
+        # The examples the runner actually ran, so the parent can check that the
+        # reference's examples were kept where they execute (not in dead or nested code).
+        "examples": runner.ran,
     }
 
 
-def _run(source: str, sandbox: str) -> dict[str, object]:
+def _run(source: str, sandbox: str, harness: _Harness) -> dict[str, object]:
     try:
         code = compile(source, "candidate.py", "exec", dont_inherit=True)
     except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
@@ -264,9 +455,19 @@ def _run(source: str, sandbox: str) -> dict[str, object]:
     sys.stdout = sys.stderr = quiet
     try:
         _install_audit_hook(sandbox)
-        return _load_candidate(code, module) or _run_examples(module)
+        result = _load_candidate(code, module) or _run_examples(module, harness)
     finally:
         sys.stdout, sys.stderr = original_stdout, original_stderr
+    return _check_harness(result, harness)
+
+
+def _check_harness(result: dict[str, object], harness: _Harness) -> dict[str, object]:
+    """Replace ``result`` with a ``tampered`` failure if the candidate rebound the harness."""
+
+    changes = harness.snapshot.changes()
+    if not changes:
+        return result
+    return _failure("tampered", "candidate rebound " + ", ".join(changes))
 
 
 def main(argv: list[str]) -> int:
@@ -278,12 +479,13 @@ def main(argv: list[str]) -> int:
     sys.dont_write_bytecode = True
     sys.setrecursionlimit(2000)
     _apply_resource_limits(cpu_seconds)
-    # Opened before the audit hook exists: afterwards nothing outside the sandbox directory
-    # can be opened for writing, and this file lives outside it.
-    with open(result_path, "w", encoding="utf-8") as handle:
-        result = _run(source, sandbox)
-        result["token"] = token
-        json.dump(result, handle)
+    _remove_unaudited_facilities()
+    # Opened and bound before the audit hook exists: afterwards nothing outside the sandbox
+    # directory can be opened for writing, and this file lives outside it.
+    harness = _Harness(result_path)
+    result = _run(source, sandbox, harness)
+    result["token"] = token
+    harness.channel.publish(result)
     return 0
 
 
