@@ -242,8 +242,8 @@ unsafe-serialization opt-in.
 
 The executable canary is `agoge held-out-eval` / `run_held_out_eval`. It consumes
 the frozen held-out membership, generates with Transformers from the base arm
-then the SFT adapter or merged artifact, scores with deterministic
-`exact-match-v1`, and publishes:
+then the SFT adapter or merged artifact, scores with the deterministic
+scorer the contract names (see [Scorers](#scorers)), and publishes:
 
 ```text
 eval/<run_name>/
@@ -265,6 +265,47 @@ use the network.
 
 Paired arms cannot drift in task IDs, serializer, decoding, or scoring version.
 Heuristic or model-judge signals are not mixed into the objective verdict.
+
+### Scorers
+
+The scoring version is part of the contract, so a result is only reproducible
+against the scorer that produced it. Three objective scorers are registered in
+`agoge_forger.eval.score`; none uses a heuristic or a model judge.
+
+| Version | What it does | Use it for |
+| --- | --- | --- |
+| `exact-match-v1` | CRLF to LF, strip trailing whitespace, compare raw text. **Frozen**: its behavior never changes, so past results stay reproducible. | Re-running or auditing pre-existing experiments only. |
+| `exact-match-v2` | `exact-match-v1` after unwrapping a markdown code fence that leads the reply (any language tag, backtick or tilde, applied to both sides). The first fenced block wins; text after it is ignored; an unterminated fence runs to the end; a reply that does not start with a fence is compared unchanged. | Tasks whose answer is a fixed expected text. |
+| `doctest-v1` | Unwraps the fence as above, then runs `doctest` over the candidate module in a sandboxed subprocess (10 s wall clock, scrubbed environment, throwaway directory, no network or process creation). `correct` iff every example passes. Records `n_examples`, `n_failed`, and `error` per task. | Code-repair tasks whose docstring examples are the spec. |
+
+`doctest-v1` verdicts: a syntax error, a timeout, or a worker that dies without a
+result is `invalid` (excluded from accuracy, like an unsupported prompt); a module
+that raises while loading, has no examples, fails one, or drops or rewrites an
+example from the reference module is `incorrect`. The example check exists because
+deleting or editing a failing doctest would otherwise pass. The sandbox is a guard
+against accidents (a generated module that opens a socket or writes elsewhere),
+not a security boundary against code written to escape it: run it in a container
+or VM if the generations are adversarial.
+
+**Future experiment contracts must name a scorer that is invariant to output
+formatting** (`exact-match-v2`, `doctest-v1`, or a later one). `exact-match-v1` is
+deprecated for new experiments: it scores a correct answer wrapped in a markdown
+fence as wrong, which turned a formatting difference into a reported +0.625
+improvement in RM-760 (#183). Existing contracts are not edited.
+
+Select a scorer for a new run with `--scoring-version` on `agoge held-out-eval`
+and `agoge g0-held-out-eval` (the default stays `exact-match-v1` so existing
+invocations are unchanged). Re-score an existing bundle without regenerating, as a
+clearly labelled post-hoc result, with:
+
+```bash
+uv run agoge rescore-held-out eval/<run_name> --scoring-version doctest-v1
+# writes eval/<run_name>/comparison.doctest-v1.json; never overwrites a file
+```
+
+The original `comparison.json` and the experiment contract are left as they are, so
+several scorers can coexist next to each other. A post-hoc scorer is a diagnostic:
+the pre-registered scorer's result remains the pre-registered conclusion.
 
 ## Local GPU canary (not run in CI)
 

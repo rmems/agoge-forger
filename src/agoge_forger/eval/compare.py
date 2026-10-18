@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from ._artifact_schema import FrozenEvaluationModel
-from .score import OBJECTIVE_SCORING_VERSION, ExampleScore
+from .score import OBJECTIVE_SCORING_VERSION, ExampleScore, require_supported_scoring_version
 
 PairOutcome = Literal["improved", "regressed", "tied", "invalid"]
 EvalConclusion = Literal["improved", "regressed", "mixed", "null", "inconclusive"]
@@ -58,7 +58,7 @@ def compare_arms(
     *,
     scoring_version: str = OBJECTIVE_SCORING_VERSION,
 ) -> ComparisonSummary:
-    _require_scoring_version(scoring_version)
+    require_supported_scoring_version(scoring_version)
     _require_matching_task_ids(base_scores, sft_scores)
     outcomes = tuple(
         compare_example(base, sft) for base, sft in zip(base_scores, sft_scores, strict=True)
@@ -95,14 +95,6 @@ def _pair_outcome(base_verdict: str, sft_verdict: str) -> PairOutcome:
     if sft_verdict == "correct":
         return "improved"
     return "regressed"
-
-
-def _require_scoring_version(scoring_version: str) -> None:
-    if scoring_version != OBJECTIVE_SCORING_VERSION:
-        raise ValueError(
-            f"unsupported objective scoring version {scoring_version!r}; "
-            f"canary scorer is {OBJECTIVE_SCORING_VERSION}"
-        )
 
 
 def _require_matching_task_ids(
