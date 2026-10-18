@@ -11,10 +11,14 @@ best-effort containment on top of that:
   ``ctypes`` library loading, filesystem mutation outside the working directory, and the
   import of the modules that reach those facilities without an audit event of their own
   (``_posixsubprocess``, ``socket``, ``subprocess``, ``ctypes``, ``sqlite3``,
-  ``multiprocessing``, ...; see ``_BLOCKED_IMPORTS``). Copies of those modules that the
-  standard library imported before the candidate ran are dropped from ``sys.modules`` so
-  the denylist bites a cached import too, and ``os.mkfifo`` / ``os.mknod`` (which raise
-  no audit event) are removed from ``os`` and ``posix``.
+  ``multiprocessing``, ...; see ``_BLOCKED_IMPORTS``). A blocked import is refused as an
+  ``ImportError`` so a stdlib optional-import probe (``try: import _winapi``, reached by
+  ``pathlib``) falls back instead of crashing a valid candidate. Copies of those modules
+  that the standard library imported before the candidate ran are dropped from
+  ``sys.modules`` so the denylist bites a cached import too; ``os.mkfifo`` / ``os.mknod``
+  (which raise no audit event) are removed from ``os`` and ``posix``; and ``os.open`` is
+  wrapped to refuse a ``dir_fd`` (its ``open`` audit event omits ``dir_fd``, so a write
+  relative to a descriptor opened outside the sandbox would otherwise escape).
 
 The result is reported through ``RESULT``, a file in a *parent-owned directory outside
 the working directory*. It is opened before the candidate runs, and the bytes are
@@ -98,10 +102,12 @@ _BLOCKED_IMPORTS = frozenset(
         "subprocess",
     }
 )
-# Standard-library modules that hold references to blocked modules (``pdb`` pulls in
-# ``asyncio`` and ``ssl``); dropped from ``sys.modules`` so they are re-imported, and
-# then refused, if the candidate asks for them.
-_PURGED_IMPORTS = _BLOCKED_IMPORTS | {"asyncio", "ssl", "_ssl"}
+# Blocked modules (and their submodules) are dropped from ``sys.modules`` so a cached copy
+# cannot be handed back, then set to ``None`` so a fresh import is refused. ``asyncio`` /
+# ``ssl`` are deliberately *not* purged: legitimate modules import them (``unittest.mock``
+# pulls in ``asyncio``), and the only unaudited facility they expose indirectly — the
+# ``fork_exec`` process primitive — is revoked outright by ``_revoke_fork_exec``.
+_PURGED_IMPORTS = _BLOCKED_IMPORTS
 # ``os`` functions that mutate the filesystem without raising an audit event.
 _UNAUDITED_OS_FUNCTIONS = ("mkfifo", "mknod")
 # Events whose leading arguments are filesystem paths that must stay in the sandbox:
@@ -229,26 +235,106 @@ def _install_audit_hook(sandbox: str) -> None:
 
     def hook(event: str, args: tuple[object, ...]) -> None:
         denial = denial_of(event, args, policy)
-        if denial is not None:
-            raise PermissionError(denial)
+        if denial is None:
+            return
+        if event == "import":
+            # Raise an ``ImportError`` (not ``PermissionError``) so a stdlib optional-import
+            # probe such as ``try: import _winapi`` (reached by ``pathlib`` -> ``ntpath``)
+            # falls back cleanly; a candidate that actually needs the module still fails to
+            # import it, and the dangerous calls stay blocked by the other branches.
+            name = args[0] if args and isinstance(args[0], str) else None
+            raise ModuleNotFoundError(denial, name=name)
+        raise PermissionError(denial)
 
     sys.addaudithook(hook)
 
 
-def _remove_unaudited_facilities() -> None:
-    """Take the modules and functions the audit hook cannot see out of the candidate's reach."""
+def _strip_module_attrs(module: types.ModuleType | None, names: tuple[str, ...]) -> None:
+    """Delete each of ``names`` from ``module`` when present; a no-op if the module is absent.
 
-    for name in list(sys.modules):
-        if name.partition(".")[0] in _PURGED_IMPORTS:
-            del sys.modules[name]
+    Used for calls that mutate the filesystem without raising an audit event
+    (``os.mkfifo``, ``os.mknod``), so making them unavailable is the only defence.
+    """
+
+    if module is None:
+        return
+    for name in names:
+        if hasattr(module, name):
+            delattr(module, name)
+
+
+def _fence_dir_fd(module: types.ModuleType | None, name: str) -> None:
+    """Wrap ``module.name`` so a non-``None`` ``dir_fd`` is refused.
+
+    ``os.open``'s ``open`` audit event carries only the path and flags, not ``dir_fd``, so
+    the path-based hook cannot tell that ``os.open("x", O_WRONLY, dir_fd=outside_fd)`` writes
+    outside the sandbox. The ``*at`` events (``os.mkdir`` and friends) do carry ``dir_fd``
+    and are refused in ``_PATH_EVENTS``; this closes the one write path that does not.
+    """
+
+    if module is None:
+        return
+    original = getattr(module, name, None)
+    if not callable(original):
+        return
+
+    def guarded(*args: object, **kwargs: object) -> object:
+        if kwargs.get("dir_fd") is not None:
+            raise PermissionError("doctest-v1 sandbox blocked a dir_fd-relative open")
+        return original(*args, **kwargs)
+
+    setattr(module, name, guarded)
+
+
+def _revoke_fork_exec() -> None:
+    """Rebind every live reference to ``_posixsubprocess.fork_exec`` to a refusing stub.
+
+    ``fork_exec`` spawns a process but raises no audit event, so blocking the import of
+    ``_posixsubprocess`` is not enough: a cached ``subprocess`` (reachable through, e.g.,
+    ``asyncio.unix_events``) holds the callable directly as ``subprocess._fork_exec``.
+    Called before the modules are purged, while the holders are still reachable.
+    """
+
+    original = getattr(sys.modules.get("_posixsubprocess"), "fork_exec", None)
+    if original is None:
+        return
+
+    def refused(*args: object, **kwargs: object) -> object:
+        raise PermissionError("doctest-v1 sandbox blocked process creation via fork_exec")
+
+    for module in list(sys.modules.values()):
+        _rebind_attr(module, original, refused)
+
+
+def _rebind_attr(module: types.ModuleType | None, original: object, replacement: object) -> None:
+    """Replace any attribute of ``module`` that *is* ``original`` with ``replacement``."""
+
+    if module is None:
+        return
+    try:
+        names = [name for name, value in vars(module).items() if value is original]
+    except TypeError:  # a module without an inspectable ``__dict__``
+        return
+    for name in names:
+        try:
+            setattr(module, name, replacement)
+        except (AttributeError, TypeError):  # a read-only attribute: leave it
+            continue
+
+
+def _remove_unaudited_facilities() -> None:
+    """Take the modules and calls the audit hook cannot see out of the candidate's reach."""
+
+    _revoke_fork_exec()
+    for module in (os, sys.modules.get("posix")):
+        _strip_module_attrs(module, _UNAUDITED_OS_FUNCTIONS)
+        _fence_dir_fd(module, "open")
+    for name in [n for n in sys.modules if n.partition(".")[0] in _PURGED_IMPORTS]:
+        del sys.modules[name]
     for name in _BLOCKED_IMPORTS:
         # ``None`` makes every import path (including ``importlib.import_module``, which
         # raises no audit event) fail with ``ModuleNotFoundError``.
         sys.modules[name] = None  # type: ignore[assignment]
-    for module in (os, sys.modules.get("posix")):
-        for name in _UNAUDITED_OS_FUNCTIONS:
-            if module is not None and hasattr(module, name):
-                delattr(module, name)
 
 
 class _RecordingRunner(doctest.DocTestRunner):
@@ -268,9 +354,8 @@ class _RecordingRunner(doctest.DocTestRunner):
         """Silent except for recording the example ``doctest`` is about to run."""
         self.ran.append([example.source, example.want])
 
-    def report_success(self, out, test, example, got):
-        """Intentionally silent: only failures are recorded, and the base class prints."""
-        # No body: a passing example needs no record beyond the ``report_start`` entry.
+    # ``report_success`` is not overridden: the base method only writes when ``verbose`` is
+    # set, and this runner is quiet, so a passing example needs no handling here.
 
     def report_failure(self, out, test, example, got):
         self._note(
@@ -357,9 +442,12 @@ def _bind_json_encoder() -> Callable[[object], str]:
 
     make_encoder = getattr(json.encoder, "c_make_encoder", None)
     encode_string = getattr(json.encoder, "c_encode_basestring_ascii", None)
-    if make_encoder is None or encode_string is None:  # pragma: no cover - pure-Python json
-        dumps = json.dumps
-        return dumps
+    # Separate checks (not ``a is None or b is None``) so the analyzer narrows ``make_encoder``
+    # to a callable below; the C accelerator is always present on CPython.
+    if make_encoder is None:  # pragma: no cover - pure-Python json
+        return json.dumps
+    if encode_string is None:  # pragma: no cover - pure-Python json
+        return json.dumps
 
     def unsupported(value: object) -> object:
         raise TypeError(f"result contains an unserialisable {type(value).__name__}")

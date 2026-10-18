@@ -379,9 +379,8 @@ def test_kill_falls_back_to_the_worker_when_the_group_cannot_be_signalled(monkey
         raise PermissionError
 
     monkeypatch.setattr(os, "killpg", refuse)
-    process = subprocess.Popen(  # nosec B603 - fixed argv, no shell
-        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
-    )
+    argv = [sys.executable, "-c", "import time; time.sleep(60)"]
+    process = subprocess.Popen(argv, start_new_session=True)  # nosec B603 - fixed argv, no shell
     _kill(process)
     assert process.returncode == -signal.SIGKILL
 
@@ -395,9 +394,8 @@ def test_kill_takes_down_the_whole_process_group(tmp_path):
         f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
         "time.sleep(60)\n"
     )
-    process = subprocess.Popen(  # nosec B603 - fixed argv, no shell
-        [sys.executable, "-c", parent], start_new_session=True
-    )
+    argv = [sys.executable, "-c", parent]
+    process = subprocess.Popen(argv, start_new_session=True)  # nosec B603 - fixed argv, no shell
     deadline = time.monotonic() + 10
     while not marker.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
@@ -563,6 +561,31 @@ def test_candidate_cannot_create_fifos_or_device_nodes_outside_its_directory(tmp
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.skipif(os.name != "posix", reason="dir_fd-relative open is POSIX only")
+def test_candidate_cannot_write_through_a_dir_fd_relative_open(tmp_path):
+    # Open the target directory read-only (allowed), then try to create a file relative to
+    # that descriptor. The ``open`` audit event omits ``dir_fd``, so without the wrapper the
+    # path resolves against the sandbox cwd and the write escapes into ``tmp_path``.
+    marker = "escaped_x"
+    module = (
+        'def f():\n    """\n    >>> import os\n'
+        f"    >>> fd = os.open({str(tmp_path)!r}, os.O_RDONLY)\n"
+        f'    >>> os.open({marker!r}, os.O_WRONLY | os.O_CREAT, dir_fd=fd)\n    0\n    """\n'
+    )
+    score = score_doctest(_record(module, reference=module))
+    assert score.verdict != "correct"
+    assert "sandbox blocked" in (score.error or "")
+    assert not (tmp_path / marker).exists()
+
+
+def test_legitimate_standard_library_imports_still_score_correct():
+    # Blocked imports raise ImportError, so stdlib optional-import probes (pathlib -> ntpath
+    # -> _winapi, uuid -> ctypes) fall back instead of failing a valid candidate.
+    imports = "pathlib, uuid, unittest.mock, json, re, collections, dataclasses, typing, functools"
+    module = f'def f():\n    """\n    >>> import {imports}\n    >>> 1 + 1\n    2\n    """\n'
+    assert _score(module, reference=module).verdict == "correct"
+
+
 def test_a_reference_that_does_not_parse_is_invalid_not_a_disabled_check():
     for reference in ("def add(a, b:\n", 'def add(a, b):\n    """Adds."""\n'):
         score = _score(_SELF_TEST, reference=reference)
@@ -596,7 +619,7 @@ def test_result_channel_ignores_json_patched_after_it_was_bound(tmp_path, monkey
     monkeypatch.setattr(json, "dump", lambda obj, fp, **kw: fp.write(json.dumps(forged)))
     monkeypatch.setattr(json, "dumps", lambda obj, **kw: "forged")
     monkeypatch.setattr(json.encoder, "c_make_encoder", None)
-    monkeypatch.setattr(json.encoder, "_make_iterencode", lambda *a, **k: lambda o, l: ["{}"])
+    monkeypatch.setattr(json.encoder, "_make_iterencode", lambda *a, **k: lambda o, level: ["{}"])
     channel.publish({"status": "import_error", "n_failed": 1, "error": None, "ok": [1, "x"]})
     written = (tmp_path / "result.json").read_bytes()
     assert written == b'{"status":"import_error","n_failed":1,"error":null,"ok":[1,"x"]}'
