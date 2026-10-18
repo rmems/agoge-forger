@@ -55,6 +55,7 @@ import os
 import sys
 import types
 from collections.abc import Callable
+from typing import Any
 
 _MEMORY_LIMIT_BYTES = 2 * 1024**3
 _FILE_SIZE_LIMIT_BYTES = 4 * 1024**2
@@ -263,25 +264,64 @@ def _strip_module_attrs(module: types.ModuleType | None, names: tuple[str, ...])
             delattr(module, name)
 
 
-def _fence_dir_fd(module: types.ModuleType | None, name: str) -> None:
-    """Wrap ``module.name`` so a non-``None`` ``dir_fd`` is refused.
+def _inode_identity(path: str) -> tuple[int, int] | None:
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def _dir_fd_write_allowed(dir_fd: object, flags: object, path: object, root: str) -> bool:
+    """Whether an ``os.open`` through ``dir_fd`` may proceed.
+
+    Reads are always fine. A write is allowed only when ``dir_fd`` is the sandbox root
+    itself (same device and inode) and the relative ``path`` resolves back inside it, so a
+    descriptor opened on any directory outside the sandbox is refused.
+    """
+
+    if not (isinstance(flags, int) and flags & _WRITE_FLAGS):
+        return True
+    root_id = _inode_identity(root)
+    if root_id is None or not isinstance(path, str | bytes | os.PathLike):
+        return False
+    try:
+        info = os.fstat(dir_fd)  # type: ignore[arg-type]
+    except (OSError, TypeError, ValueError):
+        return False
+    if (info.st_dev, info.st_ino) != root_id:
+        return False
+    resolved = os.path.realpath(os.path.join(root, os.fsdecode(path)))
+    return resolved == root or resolved.startswith(root + os.sep)
+
+
+def _fence_dir_fd(module: types.ModuleType | None, name: str, sandbox: str) -> None:
+    """Wrap ``module.name`` so a ``dir_fd`` write that leaves the sandbox is refused.
 
     ``os.open``'s ``open`` audit event carries only the path and flags, not ``dir_fd``, so
     the path-based hook cannot tell that ``os.open("x", O_WRONLY, dir_fd=outside_fd)`` writes
     outside the sandbox. The ``*at`` events (``os.mkdir`` and friends) do carry ``dir_fd``
-    and are refused in ``_PATH_EVENTS``; this closes the one write path that does not.
+    and are refused in ``_PATH_EVENTS``; this closes the one write path that does not, while
+    still allowing a ``dir_fd`` that points at the sandbox root (``os.open(".")``).
     """
 
     if module is None:
         return
-    original = getattr(module, name, None)
-    if not callable(original):
+    opener = getattr(module, name, None)
+    if not callable(opener):
         return
+    open_fn: Callable[..., object] = opener  # narrowed: non-None callable for the analyzer
+    root = os.path.realpath(sandbox)
 
     def guarded(*args: object, **kwargs: object) -> object:
         if kwargs.get("dir_fd") is not None:
-            raise PermissionError("doctest-v1 sandbox blocked a dir_fd-relative open")
-        return original(*args, **kwargs)
+            path = args[0] if args else kwargs.get("path")
+            flags = args[1] if len(args) > 1 else kwargs.get("flags", 0)
+            if not _dir_fd_write_allowed(kwargs["dir_fd"], flags, path, root):
+                raise PermissionError(
+                    "doctest-v1 sandbox blocked a dir_fd-relative open outside its directory"
+                )
+        return open_fn(*args, **kwargs)
 
     setattr(module, name, guarded)
 
@@ -299,7 +339,7 @@ def _revoke_fork_exec() -> None:
     if original is None:
         return
 
-    def refused(*args: object, **kwargs: object) -> object:
+    def refused(*_args: object, **_kwargs: object) -> object:
         raise PermissionError("doctest-v1 sandbox blocked process creation via fork_exec")
 
     for module in list(sys.modules.values()):
@@ -322,13 +362,13 @@ def _rebind_attr(module: types.ModuleType | None, original: object, replacement:
             continue
 
 
-def _remove_unaudited_facilities() -> None:
+def _remove_unaudited_facilities(sandbox: str) -> None:
     """Take the modules and calls the audit hook cannot see out of the candidate's reach."""
 
     _revoke_fork_exec()
     for module in (os, sys.modules.get("posix")):
         _strip_module_attrs(module, _UNAUDITED_OS_FUNCTIONS)
-        _fence_dir_fd(module, "open")
+        _fence_dir_fd(module, "open", sandbox)
     for name in [n for n in sys.modules if n.partition(".")[0] in _PURGED_IMPORTS]:
         del sys.modules[name]
     for name in _BLOCKED_IMPORTS:
@@ -440,13 +480,12 @@ def _bind_json_encoder() -> Callable[[object], str]:
     candidate could redirect it; the C encoder instance built here does not.
     """
 
-    make_encoder = getattr(json.encoder, "c_make_encoder", None)
-    encode_string = getattr(json.encoder, "c_encode_basestring_ascii", None)
-    # Separate checks (not ``a is None or b is None``) so the analyzer narrows ``make_encoder``
-    # to a callable below; the C accelerator is always present on CPython.
-    if make_encoder is None:  # pragma: no cover - pure-Python json
-        return json.dumps
-    if encode_string is None:  # pragma: no cover - pure-Python json
+    # Typed ``Any`` (not the Optional that ``getattr(..., None)`` would infer) so the
+    # analyzer does not read the call below as a possible ``None(...)``; the two ``is None``
+    # guards still handle a pure-Python build, where the C accelerator is absent.
+    make_encoder: Any = getattr(json.encoder, "c_make_encoder", None)
+    encode_string: Any = getattr(json.encoder, "c_encode_basestring_ascii", None)
+    if make_encoder is None or encode_string is None:  # pragma: no cover - pure-Python json
         return json.dumps
 
     def unsupported(value: object) -> object:
@@ -567,7 +606,7 @@ def main(argv: list[str]) -> int:
     sys.dont_write_bytecode = True
     sys.setrecursionlimit(2000)
     _apply_resource_limits(cpu_seconds)
-    _remove_unaudited_facilities()
+    _remove_unaudited_facilities(sandbox)
     # Opened and bound before the audit hook exists: afterwards nothing outside the sandbox
     # directory can be opened for writing, and this file lives outside it.
     harness = _Harness(result_path)

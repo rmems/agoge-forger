@@ -107,6 +107,11 @@ def docstring_examples(source: str) -> Counter[ExamplePair] | None:
     try:
         for node in _documented_nodes(tree):
             for example in _node_examples(node, parser):
+                # A ``# doctest: +SKIP`` example never runs, so ``doctest`` never reports it
+                # and it is not part of the must-run spec: requiring it would mark every
+                # candidate (even one identical to the reference) as having dropped it.
+                if example.options.get(doctest.SKIP):
+                    continue
                 examples[(example.source, example.want)] += 1
     except ValueError:  # a malformed ``# doctest:`` directive anywhere in the module
         return None

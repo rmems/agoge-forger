@@ -578,6 +578,33 @@ def test_candidate_cannot_write_through_a_dir_fd_relative_open(tmp_path):
     assert not (tmp_path / marker).exists()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="dir_fd-relative open is POSIX only")
+def test_candidate_can_write_through_a_dir_fd_that_points_at_the_sandbox():
+    # A dir_fd pointing at the sandbox root (the candidate's cwd) is allowed: the write
+    # still lands inside the sandbox, so a legitimate candidate is not refused.
+    module = (
+        'def f():\n    """\n    >>> import os\n'
+        "    >>> dirfd = os.open('.', os.O_RDONLY)\n"
+        "    >>> wfd = os.open('inside.txt', os.O_WRONLY | os.O_CREAT, dir_fd=dirfd)\n"
+        "    >>> os.write(wfd, b'hi')\n    2\n"
+        "    >>> os.close(wfd); os.close(dirfd)\n"
+        '    >>> os.path.exists(\'inside.txt\')\n    True\n    """\n'
+    )
+    assert score_doctest(_record(module, reference=module)).verdict == "correct"
+
+
+def test_reference_example_marked_skip_is_not_required_to_run():
+    # A ``+SKIP`` example is never executed, so it must not be in the must-run set; otherwise
+    # even a candidate identical to the reference looks like it dropped it.
+    reference = (
+        'def f():\n    """\n'
+        "    >>> f()  # doctest: +SKIP\n    999\n"
+        "    >>> 1 + 1\n    2\n"
+        '    """\n    return 0\n'
+    )
+    assert _score(reference, reference=reference).verdict == "correct"
+
+
 def test_legitimate_standard_library_imports_still_score_correct():
     # Blocked imports raise ImportError, so stdlib optional-import probes (pathlib -> ntpath
     # -> _winapi, uuid -> ctypes) fall back instead of failing a valid candidate.
