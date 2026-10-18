@@ -41,7 +41,7 @@ loads every top-level `configs/*.yaml` and runs three test files. `consumer_cont
 ## Invariants and non-goals
 
 - Packaging lives in `pyproject.toml` and `uv.lock` only; use `--frozen` and never add a requirements file.
-- `trust_remote_code` stays `false`. Safetensors is the default artifact format; path validation rejects traversal.
+- `trust_remote_code` stays `false` in shipped configs unless a reviewed, documented exception is needed (`AGENTS.md`). Safetensors is the default artifact format; path validation rejects traversal.
 - No first-party CUDA, Rust, Julia, JAX, or cloud trees. Kernel work goes to `rmems/blackwell-kernel-lab`, cloud to `rmems/Dioscuri-Cloud`.
 - Frozen split membership and pinned dataset digests must not change. Shipped configs avoid host-specific paths.
 - `ruff` is pinned to `0.17.0` in `pyproject.toml` and `.pre-commit-config.yaml`; keep them in sync. Line length is 100.
