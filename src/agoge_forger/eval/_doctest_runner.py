@@ -74,6 +74,21 @@ def _documented_nodes(node: ast.AST) -> Iterator[ast.AST]:
                 yield from _documented_nodes(child)
 
 
+def _node_examples(node: ast.AST, parser: doctest.DocTestParser) -> list[doctest.Example]:
+    """The doctest examples in ``node``'s own docstring; empty when it has none.
+
+    Raises ``ValueError`` for a malformed ``# doctest:`` directive, exactly as
+    ``DocTestParser.get_examples`` does; the caller turns that into a rejected module.
+    """
+
+    if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+        return []
+    docstring = ast.get_docstring(node, clean=False)
+    if docstring is None:
+        return []
+    return parser.get_examples(docstring)
+
+
 def docstring_examples(source: str) -> Counter[ExamplePair] | None:
     """Count the ``(source, want)`` doctest examples ``doctest`` would discover in a module.
 
@@ -89,18 +104,12 @@ def docstring_examples(source: str) -> Counter[ExamplePair] | None:
         return None
     parser = doctest.DocTestParser()
     examples: Counter[ExamplePair] = Counter()
-    for node in _documented_nodes(tree):
-        if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
-        docstring = ast.get_docstring(node, clean=False)
-        if docstring is None:
-            continue
-        try:
-            found = parser.get_examples(docstring)
-        except ValueError:  # e.g. an unknown ``# doctest:`` directive
-            return None
-        for example in found:
-            examples[(example.source, example.want)] += 1
+    try:
+        for node in _documented_nodes(tree):
+            for example in _node_examples(node, parser):
+                examples[(example.source, example.want)] += 1
+    except ValueError:  # a malformed ``# doctest:`` directive anywhere in the module
+        return None
     return examples
 
 
