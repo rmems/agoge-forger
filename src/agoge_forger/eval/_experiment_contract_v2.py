@@ -19,8 +19,10 @@ from ._artifact_schema import FrozenEvaluationModel
 from ._experiment_contract_v1 import (
     REVISION_PATTERN,
     SHA256_PATTERN,
+    ContractFieldError,
     DatasetProvenance,
     EvaluationPin,
+    FieldPath,
     ModelPin,
     SerializerPin,
     SplitPin,
@@ -40,11 +42,17 @@ Sha256 = Annotated[str, Field(pattern=SHA256_PATTERN)]
 Rate = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 
 
-def _require_unique(values: Iterable[str], field: str) -> None:
+def _require_unique(
+    values: Iterable[str],
+    *,
+    prefix: tuple[str, ...] = (),
+    suffix: tuple[str, ...] = (),
+) -> None:
+    """Reject a repeated entry, naming the index it repeats at."""
     seen: set[str] = set()
-    for value in values:
+    for index, value in enumerate(values):
         if value in seen:
-            raise ValueError(f"{field} contains duplicate entry {value!r}")
+            raise ContractFieldError((*prefix, index, *suffix), f"duplicate entry {value!r}")
         seen.add(value)
 
 
@@ -67,7 +75,7 @@ class SelfGeneratedRowsPin(FrozenEvaluationModel):
     @field_validator("provenance_required")
     @classmethod
     def unique_provenance_fields(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        _require_unique(value, "dataset.self_generated_rows.provenance_required")
+        _require_unique(value)
         return value
 
 
@@ -97,7 +105,7 @@ class PairedComparisonPin(FrozenEvaluationModel):
     @model_validator(mode="after")
     def distinct_arms(self) -> PairedComparisonPin:
         if self.treatment == self.control:
-            raise ValueError("a paired comparison needs two different arms")
+            raise ContractFieldError(("control",), "must name a different arm than treatment")
         return self
 
 
@@ -114,16 +122,15 @@ class EvaluationPinV2(EvaluationPin):
 
     @model_validator(mode="after")
     def comparisons_name_declared_arms(self) -> EvaluationPinV2:
-        _require_unique((arm.arm_id for arm in self.arms), "evaluation.arms[].arm_id")
+        _require_unique((arm.arm_id for arm in self.arms), prefix=("arms",), suffix=("arm_id",))
         declared = self.arm_ids()
         for index, comparison in enumerate(self.paired_test.comparisons):
             for side in ("treatment", "control"):
-                arm_id = getattr(comparison, side)
-                if arm_id not in declared:
-                    raise ValueError(
-                        f"evaluation.paired_test.comparisons[{index}].{side} names "
-                        f"undeclared arm {arm_id!r}"
-                    )
+                _require_declared_arm(
+                    getattr(comparison, side),
+                    declared,
+                    ("paired_test", "comparisons", index, side),
+                )
         return self
 
     def arm_ids(self) -> frozenset[str]:
@@ -149,7 +156,7 @@ class VerifyTaskPin(FrozenEvaluationModel):
     @field_validator("checks")
     @classmethod
     def unique_checks(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        _require_unique(value, "self_generation.verify_task.checks")
+        _require_unique(value)
         return value
 
 
@@ -173,9 +180,7 @@ class DifficultyBandPin(FrozenEvaluationModel):
     @model_validator(mode="after")
     def ordered_band(self) -> DifficultyBandPin:
         if self.min_pass_rate >= self.max_pass_rate:
-            raise ValueError(
-                "self_generation.difficulty_band.min_pass_rate must be below max_pass_rate"
-            )
+            raise ContractFieldError(("min_pass_rate",), "must be below max_pass_rate")
         return self
 
 
@@ -192,7 +197,7 @@ class SelfGenerationPin(FrozenEvaluationModel):
     @field_validator("stop_rules")
     @classmethod
     def unique_stop_rules(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        _require_unique(value, "self_generation.stop_rules")
+        _require_unique(value)
         return value
 
 
@@ -220,38 +225,66 @@ class ExperimentContractV2(FrozenEvaluationModel):
         _require_parent_for_stacked_init(self)
         _require_self_generation_pairing(self)
         _require_self_generation_arms(self)
+        _require_loop_arms_declared(self)
         return self
+
+
+def _require_declared_arm(arm_id: str, declared: frozenset[str], path: FieldPath) -> None:
+    if arm_id not in declared:
+        raise ContractFieldError(path, f"names undeclared arm {arm_id!r}")
 
 
 def _require_parent_for_stacked_init(contract: ExperimentContractV2) -> None:
     if contract.training.init == "stacked" and contract.model.parent_adapter is None:
-        raise ValueError("training.init='stacked' requires model.parent_adapter")
+        raise ContractFieldError(
+            ("training", "init"), "'stacked' requires a non-null model.parent_adapter"
+        )
 
 
 def _require_self_generation_pairing(contract: ExperimentContractV2) -> None:
     has_loop = contract.self_generation is not None
     has_policy = contract.dataset.self_generated_rows is not None
-    if has_loop != has_policy:
-        raise ValueError(
-            "self_generation and dataset.self_generated_rows must both be set or both be null"
+    if has_loop and not has_policy:
+        raise ContractFieldError(
+            ("dataset", "self_generated_rows"), "must be set when self_generation is set"
         )
-    uses_self_rows = any(
-        arm.training_rows == "base_plus_self_generated" for arm in contract.evaluation.arms
-    )
-    if uses_self_rows and not has_loop:
-        raise ValueError(
-            "an evaluation arm trains on base_plus_self_generated rows but self_generation is null"
+    if has_policy and not has_loop:
+        raise ContractFieldError(
+            ("self_generation",), "must be set when dataset.self_generated_rows is set"
         )
+
+
+def _self_row_arm_indexes(contract: ExperimentContractV2) -> list[int]:
+    return [
+        index
+        for index, arm in enumerate(contract.evaluation.arms)
+        if arm.training_rows == "base_plus_self_generated"
+    ]
 
 
 def _require_self_generation_arms(contract: ExperimentContractV2) -> None:
+    """Self rows need a pinned loop, and a pinned loop needs an arm that trains on them."""
+    consumers = _self_row_arm_indexes(contract)
+    if contract.self_generation is None and consumers:
+        raise ContractFieldError(
+            ("evaluation", "arms", consumers[0], "training_rows"),
+            "'base_plus_self_generated' requires a non-null self_generation",
+        )
+    if contract.self_generation is not None and not consumers:
+        raise ContractFieldError(
+            ("evaluation", "arms[]", "training_rows"),
+            "self_generation is set but no arm trains on 'base_plus_self_generated' rows",
+        )
+
+
+def _require_loop_arms_declared(contract: ExperimentContractV2) -> None:
     loop = contract.self_generation
     if loop is None:
         return
     declared = contract.evaluation.arm_ids()
-    for field, arm_id in (
-        ("self_generation.propose.proposer_arm", loop.propose.proposer_arm),
-        ("self_generation.solve.solver_arm", loop.solve.solver_arm),
-    ):
-        if arm_id not in declared:
-            raise ValueError(f"{field} names undeclared arm {arm_id!r}")
+    _require_declared_arm(
+        loop.propose.proposer_arm, declared, ("self_generation", "propose", "proposer_arm")
+    )
+    _require_declared_arm(
+        loop.solve.solver_arm, declared, ("self_generation", "solve", "solver_arm")
+    )

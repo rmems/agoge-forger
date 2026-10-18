@@ -278,7 +278,9 @@ written. `schema_version` is required for dispatch: a contract without it, or
 with an unknown version, is rejected rather than guessed. Schema failures raise
 `ExperimentContractError`, which lists every offending field by dotted path,
 for example `self_generation.stop_rules: missing required field` or
-`evaluation.arms[0].role: Input should be ...`.
+`evaluation.arms[0].role: Input should be ...`. Cross-field rules report the
+field they are about in the same form, for example
+`training.init: 'stacked' requires a non-null model.parent_adapter`.
 
 `agoge.experiment-contract.v1` is unchanged. The committed RM-760 and R2E-Gym
 contracts stay v1 and keep validating; there is no migration and no reason to
@@ -297,7 +299,7 @@ adds what a multi-arm or self-generation experiment must pre-register:
 | `evaluation.runs` | integer ≥ 1 | Number of measured runs per arm. |
 | `evaluation.interval` | `{method: "wilson", confidence}` | `0 < confidence < 1`. |
 | `evaluation.paired_test` | `{method: "mcnemar", comparisons[]}` | Each comparison names two different declared arms as `treatment` and `control`. |
-| `self_generation` | block or `null` | `seed_catalog` (`catalog_id`, `catalog_sha256`, `held_out_denylist_sha256`), `propose` (`proposer_arm`, `proposals_per_program`, sampling `decoding`), `verify_task` (`verifier_id`, `checks[]`), `solve` (`solver_arm`, `attempts`, `output_format`), `verify_solution` (`required_verdict`, `tests_untouched`, `hidden_cases_required`), `difficulty_band` (`metric`, `min_pass_rate` < `max_pass_rate`), `iterations`, `stop_rules[]`. Proposer and solver must be declared arms. |
+| `self_generation` | block or `null` | `seed_catalog` (`catalog_id`, `catalog_sha256`, `held_out_denylist_sha256`), `propose` (`proposer_arm`, `proposals_per_program`, sampling `decoding`), `verify_task` (`verifier_id`, `checks[]`), `solve` (`solver_arm`, `attempts`, `output_format`), `verify_solution` (`required_verdict`, `tests_untouched`, `hidden_cases_required`), `difficulty_band` (`metric`, `min_pass_rate` < `max_pass_rate`), `iterations`, `stop_rules[]`. Proposer and solver must be declared arms, and at least one arm must train on `base_plus_self_generated` rows; an arm that does requires this block. |
 
 Every added field is required. The three nullable blocks
 (`model.parent_adapter`, `dataset.self_generated_rows`, `self_generation`)

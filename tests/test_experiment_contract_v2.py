@@ -3,12 +3,14 @@
 The selfgen-repair-v1 draft under ``tests/fixtures/experiment-contract-v2/`` is
 the design from #187 with every not-yet-known pin left as ``<fill>``. These tests
 resolve the placeholders in memory; the fixture itself keeps them.
+
+The required-field cases are derived from the v2 schema alone, so collection
+never reads the fixture; a missing fixture fails the tests that use it.
 """
 
 from __future__ import annotations
 
 import json
-import types
 import typing
 from collections.abc import Iterator
 from pathlib import Path
@@ -121,18 +123,24 @@ ISSUE_FIELDS: tuple[FieldPath, ...] = (
 
 
 def _load_draft() -> dict[str, Any]:
+    if not DRAFT_PATH.is_file():
+        pytest.fail(f"selfgen draft fixture is missing: {DRAFT_PATH.relative_to(REPO_ROOT)}")
     return json.loads(DRAFT_PATH.read_text(encoding="utf-8"))
+
+
+def _json_children(value: object) -> list[tuple[str | int, object]]:
+    if isinstance(value, dict):
+        return list(value.items())
+    if isinstance(value, list):
+        return list(enumerate(value))
+    return []
 
 
 def _placeholder_paths(value: object, prefix: FieldPath = ()) -> Iterator[FieldPath]:
     if value == PLACEHOLDER:
         yield prefix
-    elif isinstance(value, dict):
-        for key, child in value.items():
-            yield from _placeholder_paths(child, (*prefix, key))
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            yield from _placeholder_paths(child, (*prefix, index))
+    for key, child in _json_children(value):
+        yield from _placeholder_paths(child, (*prefix, key))
 
 
 def _parent_of(payload: Any, path: FieldPath) -> Any:
@@ -148,42 +156,51 @@ def _resolved_draft() -> dict[str, Any]:
     return draft
 
 
+def _is_model_type(annotation: object) -> bool:
+    return isinstance(annotation, type) and issubclass(annotation, BaseModel)
+
+
 def _nested_model(annotation: object) -> type[BaseModel] | None:
     """Return the model type behind ``Model``, ``Model | None``, or ``tuple[Model, ...]``."""
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return annotation
-    origin = typing.get_origin(annotation)
-    if origin in (types.UnionType, typing.Union, tuple):
-        for argument in typing.get_args(annotation):
-            nested = _nested_model(argument)
-            if nested is not None:
-                return nested
+    if _is_model_type(annotation):
+        return typing.cast(type[BaseModel], annotation)
+    for argument in typing.get_args(annotation):
+        nested = _nested_model(argument)
+        if nested is not None:
+            return nested
     return None
 
 
-def _required_paths(model: type[BaseModel], payload: dict[str, Any], prefix: FieldPath = ()):
+def _element_prefix(path: FieldPath, annotation: object) -> FieldPath:
+    """Descend into the first element of a ``tuple[Model, ...]`` field."""
+    if typing.get_origin(annotation) is tuple:
+        return (*path, 0)
+    return path
+
+
+def _required_paths(model: type[BaseModel], prefix: FieldPath = ()) -> Iterator[FieldPath]:
     for name, info in model.model_fields.items():
         path = (*prefix, name)
         if info.is_required():
             yield path
         nested = _nested_model(info.annotation)
-        child = payload.get(name)
-        if nested is None:
-            continue
-        if isinstance(child, dict):
-            yield from _required_paths(nested, child, path)
-        elif isinstance(child, list) and child and isinstance(child[0], dict):
-            yield from _required_paths(nested, child[0], (*path, 0))
+        if nested is not None:
+            yield from _required_paths(nested, _element_prefix(path, info.annotation))
+
+
+def _dotted_segment(part: str | int, *, first: bool) -> str:
+    if isinstance(part, int):
+        return f"[{part}]"
+    if first:
+        return part
+    return f".{part}"
 
 
 def _dotted(path: FieldPath) -> str:
-    text = ""
-    for part in path:
-        text += f"[{part}]" if isinstance(part, int) else (f".{part}" if text else part)
-    return text
+    return "".join(_dotted_segment(part, first=index == 0) for index, part in enumerate(path))
 
 
-REQUIRED_PATHS = tuple(_required_paths(ExperimentContractV2, _resolved_draft()))
+REQUIRED_PATHS = tuple(_required_paths(ExperimentContractV2))
 
 
 def _without_self_generation() -> dict[str, Any]:
@@ -199,9 +216,13 @@ def _without_self_generation() -> dict[str, Any]:
     return contract
 
 
-def _rejects(contract: dict[str, Any], message: str) -> None:
-    with pytest.raises(ExperimentContractError, match=message):
+def _rejects(contract: dict[str, Any], line: str) -> None:
+    """Assert the error lists ``line`` verbatim, as ``dotted.path: detail``."""
+    with pytest.raises(ExperimentContractError) as caught:
         parse_experiment_contract(contract)
+    lines = [entry.strip() for entry in str(caught.value).splitlines()]
+    assert line in lines, lines
+    assert not any(entry.startswith("<contract>") for entry in lines), lines
 
 
 def test_draft_placeholders_match_the_resolution_table():
@@ -244,13 +265,24 @@ def test_missing_required_field_is_named(path):
 def test_missing_schema_version_is_named():
     contract = _resolved_draft()
     del contract["schema_version"]
-    _rejects(contract, r"schema_version: missing required field")
+    _rejects(contract, "invalid experiment contract: schema_version: missing required field")
 
 
 def test_unknown_schema_version_is_rejected():
     contract = _resolved_draft()
     contract["schema_version"] = "agoge.experiment-contract.v3"
-    _rejects(contract, r"schema_version: unsupported experiment contract version")
+    _rejects(
+        contract,
+        "invalid experiment contract: schema_version: unsupported version "
+        "'agoge.experiment-contract.v3' (supported: agoge.experiment-contract.v1, "
+        "agoge.experiment-contract.v2)",
+    )
+
+
+def test_non_string_schema_version_is_rejected():
+    contract = _resolved_draft()
+    contract["schema_version"] = 2
+    _rejects(contract, "invalid experiment contract: schema_version: expected a string, got int")
 
 
 def test_v2_contract_without_self_generation_validates():
@@ -262,61 +294,90 @@ def test_v2_contract_without_self_generation_validates():
 def test_stacked_init_requires_parent_adapter():
     contract = _without_self_generation()
     contract["training"]["init"] = "stacked"
-    _rejects(contract, r"training.init='stacked' requires model.parent_adapter")
+    _rejects(contract, "training.init: 'stacked' requires a non-null model.parent_adapter")
 
 
 def test_self_generation_requires_row_policy():
     contract = _resolved_draft()
     contract["dataset"]["self_generated_rows"] = None
-    _rejects(contract, r"self_generation and dataset.self_generated_rows must both be set")
+    _rejects(contract, "dataset.self_generated_rows: must be set when self_generation is set")
+
+
+def test_row_policy_requires_self_generation():
+    contract = _without_self_generation()
+    contract["dataset"]["self_generated_rows"] = _resolved_draft()["dataset"]["self_generated_rows"]
+    _rejects(contract, "self_generation: must be set when dataset.self_generated_rows is set")
+
+
+def test_self_generation_requires_an_arm_that_consumes_it():
+    contract = _resolved_draft()
+    contract["evaluation"]["arms"][1]["training_rows"] = "base"
+    _rejects(
+        contract,
+        "evaluation.arms[].training_rows: self_generation is set but no arm trains on "
+        "'base_plus_self_generated' rows",
+    )
 
 
 def test_self_generated_arm_requires_self_generation():
     contract = _without_self_generation()
     contract["evaluation"]["arms"][1]["training_rows"] = "base_plus_self_generated"
-    _rejects(contract, r"base_plus_self_generated rows but self_generation is null")
+    _rejects(
+        contract,
+        "evaluation.arms[1].training_rows: "
+        "'base_plus_self_generated' requires a non-null self_generation",
+    )
 
 
 def test_paired_comparison_must_name_declared_arms():
     contract = _resolved_draft()
     contract["evaluation"]["paired_test"]["comparisons"][0]["control"] = "g0"
-    _rejects(contract, r"comparisons\[0\].control names undeclared arm 'g0'")
+    _rejects(contract, "evaluation.paired_test.comparisons[0].control: names undeclared arm 'g0'")
 
 
 def test_paired_comparison_needs_two_arms():
     contract = _resolved_draft()
     contract["evaluation"]["paired_test"]["comparisons"][0]["control"] = "g2-accumulate"
-    _rejects(contract, r"evaluation.paired_test.comparisons\[0\]: .*two different arms")
+    _rejects(
+        contract,
+        "evaluation.paired_test.comparisons[0].control: must name a different arm than treatment",
+    )
 
 
 def test_arm_ids_must_be_unique():
     contract = _resolved_draft()
     contract["evaluation"]["arms"][2]["arm_id"] = "g1"
-    _rejects(contract, r"evaluation.arms\[\].arm_id contains duplicate entry 'g1'")
+    _rejects(contract, "evaluation.arms[2].arm_id: duplicate entry 'g1'")
+
+
+def test_stop_rules_must_be_unique():
+    contract = _resolved_draft()
+    contract["self_generation"]["stop_rules"] = ["survival", "survival"]
+    _rejects(contract, "self_generation.stop_rules[1]: duplicate entry 'survival'")
 
 
 def test_proposer_must_be_a_declared_arm():
     contract = _resolved_draft()
     contract["self_generation"]["propose"]["proposer_arm"] = "g9"
-    _rejects(contract, r"self_generation.propose.proposer_arm names undeclared arm 'g9'")
+    _rejects(contract, "self_generation.propose.proposer_arm: names undeclared arm 'g9'")
 
 
 def test_difficulty_band_must_be_ordered():
     contract = _resolved_draft()
     contract["self_generation"]["difficulty_band"]["min_pass_rate"] = 0.9
-    _rejects(contract, r"min_pass_rate must be below max_pass_rate")
+    _rejects(contract, "self_generation.difficulty_band.min_pass_rate: must be below max_pass_rate")
 
 
 def test_evaluation_decoding_stays_greedy():
     contract = _resolved_draft()
     contract["evaluation"]["decoding"].update({"do_sample": True, "temperature": 0.7})
-    _rejects(contract, r"experiment contract requires greedy decoding")
+    _rejects(contract, "evaluation.decoding: experiment contract requires greedy decoding")
 
 
 def test_unknown_v2_field_is_rejected():
     contract = _resolved_draft()
     contract["self_generation"]["temperature"] = 0.7
-    _rejects(contract, r"self_generation.temperature: Extra inputs are not permitted")
+    _rejects(contract, "self_generation.temperature: Extra inputs are not permitted")
 
 
 @pytest.mark.parametrize("relative_path", V1_CONTRACTS)
@@ -329,7 +390,7 @@ def test_committed_v1_contracts_still_validate(relative_path):
 def test_v1_contract_rejects_v2_fields():
     payload = json.loads((REPO_ROOT / V1_CONTRACTS[0]).read_text(encoding="utf-8"))
     payload["hypothesis"] = "v2-only field"
-    _rejects(payload, r"hypothesis: Extra inputs are not permitted")
+    _rejects(payload, "hypothesis: Extra inputs are not permitted")
 
 
 def _frozen_v2_contract(tmp_path: Path) -> ExperimentContractV2:
@@ -362,10 +423,22 @@ def test_freeze_writes_and_validates_v2_contract(tmp_path):
     assert validated.experiment_id == "selfgen-repair-v1"
 
 
-def test_freeze_revalidates_v2_contract_before_writing(tmp_path):
+@pytest.mark.parametrize(
+    ("update", "expected"),
+    [
+        ({"hypothesis": ""}, "hypothesis: String should have at least 1 character"),
+        (
+            {"self_generation": None},
+            "self_generation: must be set when dataset.self_generated_rows is set",
+        ),
+    ],
+    ids=["hypothesis", "self_generation"],
+)
+def test_freeze_revalidates_v2_contract_before_writing(tmp_path, update, expected):
     destination = tmp_path / "experiment" / "experiment-contract.json"
-    contract = _frozen_v2_contract(tmp_path)
-    tampered = contract.model_copy(update={"hypothesis": "", "self_generation": None})
-    with pytest.raises(ExperimentContractError, match="hypothesis:"):
+    tampered = _frozen_v2_contract(tmp_path).model_copy(update=update)
+    with pytest.raises(ExperimentContractError) as caught:
         build_experiment_contract(contract_path=destination, contract=tampered)
+    lines = [entry.strip() for entry in str(caught.value).splitlines()]
+    assert lines[1:] == [expected]
     assert not destination.exists()

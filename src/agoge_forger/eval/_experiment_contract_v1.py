@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -14,6 +15,36 @@ EXPERIMENT_CONTRACT_VERSION: Literal["agoge.experiment-contract.v1"] = (
 )
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 REVISION_PATTERN = r"^[0-9a-f]{40,64}$"
+
+FieldPath = tuple[str | int, ...]
+
+
+def dotted_path(path: Sequence[str | int]) -> str:
+    """Render ``("evaluation", "arms", 0, "role")`` as ``evaluation.arms[0].role``."""
+    rendered = ""
+    for part in path:
+        if isinstance(part, int):
+            rendered += f"[{part}]"
+        elif rendered:
+            rendered += f".{part}"
+        else:
+            rendered = part
+    return rendered
+
+
+class ContractFieldError(ValueError):
+    """A cross-field rule failure that knows which field it is about.
+
+    ``path`` is relative to the model whose validator raises it; the contract
+    error formatter prefixes pydantic's location so the reported path is
+    absolute, in the same ``a.b[0].c: detail`` form as per-field errors.
+    """
+
+    def __init__(self, path: FieldPath, detail: str) -> None:
+        self.path = path
+        self.detail = detail
+        prefix = dotted_path(path)
+        super().__init__(f"{prefix}: {detail}" if prefix else detail)
 
 
 class DatasetProvenance(FrozenEvaluationModel):
@@ -90,7 +121,9 @@ def normalize_split_pin_path(value: object) -> object:
 def require_greedy_evaluation(evaluation: EvaluationPin) -> None:
     decoding = evaluation.decoding
     if decoding.do_sample or decoding.temperature != 0:
-        raise ValueError("experiment contract requires greedy decoding")
+        raise ContractFieldError(
+            ("evaluation", "decoding"), "experiment contract requires greedy decoding"
+        )
 
 
 class ExperimentContract(FrozenEvaluationModel):

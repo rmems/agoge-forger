@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from pydantic import Field, ValidationError, field_validator, model_validator
+from pydantic_core import ErrorDetails
 
 from .._atomic_file import publish_bytes_noreplace, write_fsynced_bytes
 from .._strict_json import decode_json_object
@@ -22,13 +23,16 @@ from ._artifact_schema import FrozenEvaluationModel, portable_contract_reference
 from ._experiment_contract_v1 import (
     EXPERIMENT_CONTRACT_VERSION,
     SHA256_PATTERN,
+    ContractFieldError,
     DatasetProvenance,
     EvaluationPin,
     ExperimentContract,
+    FieldPath,
     ModelPin,
     SerializerPin,
     SplitPin,
     TrainingPin,
+    dotted_path,
 )
 from ._experiment_contract_v2 import EXPERIMENT_CONTRACT_V2_VERSION, ExperimentContractV2
 from .contract import (
@@ -125,21 +129,31 @@ def parse_experiment_contract(value: Mapping[str, object]) -> AnyExperimentContr
     ``build_experiment_contract`` already carries it. Failures raise
     ``ExperimentContractError`` listing every offending field by dotted path.
     """
+    version = _contract_version(value)
+    try:
+        return _CONTRACT_MODELS[version].model_validate(value)
+    except ValidationError as exc:
+        raise ExperimentContractError(_describe_validation_error(version, exc)) from exc
+
+
+def _contract_version(value: Mapping[str, object]) -> str:
     if "schema_version" not in value:
         raise ExperimentContractError(
             "invalid experiment contract: schema_version: missing required field"
         )
     version = value["schema_version"]
-    if not isinstance(version, str) or version not in _CONTRACT_MODELS:
+    if not isinstance(version, str):
+        raise ExperimentContractError(
+            "invalid experiment contract: schema_version: expected a string, "
+            f"got {type(version).__name__}"
+        )
+    if version not in _CONTRACT_MODELS:
         supported = ", ".join(sorted(_CONTRACT_MODELS))
         raise ExperimentContractError(
-            f"schema_version: unsupported experiment contract version {version!r} "
-            f"(supported: {supported})"
+            "invalid experiment contract: schema_version: unsupported version "
+            f"{version!r} (supported: {supported})"
         )
-    try:
-        return _CONTRACT_MODELS[version].model_validate(value)
-    except ValidationError as exc:
-        raise ExperimentContractError(_describe_validation_error(version, exc)) from exc
+    return version
 
 
 def load_experiment_contract(contract_path: str | Path) -> AnyExperimentContract:
@@ -289,20 +303,22 @@ def _write_contract_payload(path: Path, payload: bytes) -> None:
 
 def _describe_validation_error(version: str, exc: ValidationError) -> str:
     lines = [f"invalid {version} experiment contract:"]
-    for error in exc.errors(include_url=False):
-        field = _dotted_location(error["loc"])
-        if error["type"] == "missing":
-            lines.append(f"  {field}: missing required field")
-        else:
-            lines.append(f"  {field}: {error['msg']}")
+    lines.extend(f"  {_describe_error_line(error)}" for error in exc.errors(include_url=False))
     return "\n".join(lines)
 
 
-def _dotted_location(location: tuple[int | str, ...]) -> str:
-    dotted = ""
-    for part in location:
-        if isinstance(part, int):
-            dotted += f"[{part}]"
-        else:
-            dotted += f".{part}" if dotted else part
-    return dotted or "<contract>"
+def _describe_error_line(error: ErrorDetails) -> str:
+    """Render one pydantic error as ``dotted.path: detail``.
+
+    Cross-field rules raise ``ContractFieldError`` with a path relative to the
+    model that raised it, so the reported path is pydantic's location joined
+    with that path rather than a bare ``<contract>``.
+    """
+    location: FieldPath = tuple(error["loc"])
+    cause = error.get("ctx", {}).get("error")
+    if isinstance(cause, ContractFieldError):
+        return f"{dotted_path((*location, *cause.path)) or '<contract>'}: {cause.detail}"
+    field = dotted_path(location) or "<contract>"
+    if error["type"] == "missing":
+        return f"{field}: missing required field"
+    return f"{field}: {error['msg']}"
