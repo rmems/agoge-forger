@@ -32,8 +32,11 @@ from .contract import (
 )
 from .experiment_contract import (
     ExperimentContract,
+    ExperimentContractError,
+    ExperimentContractV2,
     build_experiment_contract,
     load_experiment_contract,
+    parse_experiment_contract,
     split_pin_from_manifest,
     validate_experiment_contract,
 )
@@ -50,6 +53,8 @@ __all__ = [
     "EntryIdentity",
     "EvaluationArm",
     "ExperimentContract",
+    "ExperimentContractError",
+    "ExperimentContractV2",
     "FrozenEvaluationModel",
     "PairedEvaluationContract",
     "VerifiedAdapterSource",
@@ -59,6 +64,7 @@ __all__ = [
     "hash_relative_file",
     "load_experiment_contract",
     "open_bundle",
+    "parse_experiment_contract",
     "portable_artifact_path",
     "portable_contract_reference",
     "read_relative_file",

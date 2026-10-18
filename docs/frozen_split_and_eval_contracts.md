@@ -266,6 +266,52 @@ use the network.
 Paired arms cannot drift in task IDs, serializer, decoding, or scoring version.
 Heuristic or model-judge signals are not mixed into the objective verdict.
 
+## Experiment contracts: v1 and v2
+
+An experiment contract (`experiment-contract.json` beside a report) freezes
+the knobs of a measured run before G0. `agoge_forger.eval.experiment_contract`
+reads them through `parse_experiment_contract`, which dispatches on
+`schema_version`; `load_experiment_contract`, `validate_experiment_contract`,
+and the freeze writer `build_experiment_contract` all go through it, so a
+contract is re-validated against its own version's schema before it is
+written. `schema_version` is required for dispatch: a contract without it, or
+with an unknown version, is rejected rather than guessed. Schema failures raise
+`ExperimentContractError`, which lists every offending field by dotted path,
+for example `self_generation.stop_rules: missing required field` or
+`evaluation.arms[0].role: Input should be ...`.
+
+`agoge.experiment-contract.v1` is unchanged. The committed RM-760 and R2E-Gym
+contracts stay v1 and keep validating; there is no migration and no reason to
+rewrite them.
+
+`agoge.experiment-contract.v2` keeps every v1 field with the same meaning and
+adds what a multi-arm or self-generation experiment must pre-register:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `hypothesis` | non-empty string | The claim the run tests, written before G0. |
+| `model.parent_adapter` | `{experiment_id, adapter_sha256}` or `null` | The adapter this run descends from (G1 for a G2 run). `adapter_sha256` is the parent's `adapter_model.safetensors` digest. |
+| `training.init` | `fresh` or `stacked` | `stacked` requires a non-null `model.parent_adapter`. A fresh adapter may still name a parent whose outputs it trains on. |
+| `dataset.self_generated_rows` | `{max_fraction_of_train, min_survival_rate_to_continue, provenance_required[]}` or `null` | Must be set exactly when `self_generation` is set. |
+| `evaluation.arms[]` | `{arm_id, role, training_rows}`, at least two | `role` is `base`, `parent`, `treatment`, or `control`; `training_rows` is `none`, `base`, or `base_plus_self_generated`. Arm ids are unique. |
+| `evaluation.runs` | integer ≥ 1 | Number of measured runs per arm. |
+| `evaluation.interval` | `{method: "wilson", confidence}` | `0 < confidence < 1`. |
+| `evaluation.paired_test` | `{method: "mcnemar", comparisons[]}` | Each comparison names two different declared arms as `treatment` and `control`. |
+| `self_generation` | block or `null` | `seed_catalog` (`catalog_id`, `catalog_sha256`, `held_out_denylist_sha256`), `propose` (`proposer_arm`, `proposals_per_program`, sampling `decoding`), `verify_task` (`verifier_id`, `checks[]`), `solve` (`solver_arm`, `attempts`, `output_format`), `verify_solution` (`required_verdict`, `tests_untouched`, `hidden_cases_required`), `difficulty_band` (`metric`, `min_pass_rate` < `max_pass_rate`), `iterations`, `stop_rules[]`. Proposer and solver must be declared arms. |
+
+Every added field is required. The three nullable blocks
+(`model.parent_adapter`, `dataset.self_generated_rows`, `self_generation`)
+must still be written out as `null` when an experiment does not use them, so
+an omission is never mistaken for a deliberate choice. Evaluation decoding
+stays greedy as in v1; only `self_generation.propose.decoding` may sample.
+
+The selfgen-repair-v1 design from #187 is kept as a draft at
+`tests/fixtures/experiment-contract-v2/selfgen-v1-experiment-contract.json`
+with its not-yet-known pins left as `<fill>`. The draft is rejected as-is and
+validates once those placeholders are resolved; the tests resolve them in
+memory and leave the file alone. The real contract is committed under its
+report directory before G0.
+
 ## Local GPU canary (not run in CI)
 
 CI covers contract guards, scoring, comparison outcomes, and a stubbed
