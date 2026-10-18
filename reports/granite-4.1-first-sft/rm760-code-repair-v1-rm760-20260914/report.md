@@ -62,6 +62,7 @@ check reproducibility by writing to a scratch path and diffing against the commi
 
 ```bash
 scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
 for v in exact-match-v2 doctest-v1; do
   uv run agoge rescore-held-out reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/g1-eval \
     --scoring-version "$v" --output "$scratch/comparison.$v.json"

@@ -4,7 +4,7 @@ import importlib.util
 import json
 import os
 import signal
-import subprocess
+import subprocess  # nosec B404 - the tests launch only fixed argv they control
 import sys
 import time
 from pathlib import Path
@@ -378,7 +378,7 @@ def test_kill_falls_back_to_the_worker_when_the_group_cannot_be_signalled(monkey
         raise PermissionError
 
     monkeypatch.setattr(os, "killpg", refuse)
-    process = subprocess.Popen(
+    process = subprocess.Popen(  # nosec B603 - fixed argv, no shell
         [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
     )
     _kill(process)
@@ -394,7 +394,9 @@ def test_kill_takes_down_the_whole_process_group(tmp_path):
         f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
         "time.sleep(60)\n"
     )
-    process = subprocess.Popen([sys.executable, "-c", parent], start_new_session=True)
+    process = subprocess.Popen(  # nosec B603 - fixed argv, no shell
+        [sys.executable, "-c", parent], start_new_session=True
+    )
     deadline = time.monotonic() + 10
     while not marker.exists() and time.monotonic() < deadline:
         time.sleep(0.05)

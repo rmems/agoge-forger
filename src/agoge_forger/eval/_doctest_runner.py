@@ -120,14 +120,17 @@ def run_doctests(
         tempfile.TemporaryDirectory(prefix="agoge-doctest-") as sandbox,
         tempfile.TemporaryDirectory(prefix="agoge-doctest-result-") as channel,
     ):
-        source_path = Path(sandbox) / "candidate.py"
-        result_path = Path(channel) / "result.json"
-        token = secrets.token_hex(16)
-        source_path.write_text(source, encoding="utf-8")
-        completed = _run_worker(sandbox, source_path, result_path, token, timeout_seconds)
+        launch = _WorkerLaunch(
+            sandbox=sandbox,
+            source_path=Path(sandbox) / "candidate.py",
+            result_path=Path(channel) / "result.json",
+            token=secrets.token_hex(16),
+        )
+        launch.source_path.write_text(source, encoding="utf-8")
+        completed = _run_worker(launch, timeout_seconds)
         if completed is not None:
             return completed
-        return _read_result(result_path, token)
+        return _read_result(launch.result_path, launch.token)
 
 
 def _worker_environment() -> dict[str, str]:
@@ -144,9 +147,17 @@ def _worker_environment() -> dict[str, str]:
     return environment
 
 
-def _run_worker(
-    sandbox: str, source_path: Path, result_path: Path, token: str, timeout_seconds: float
-) -> DoctestOutcome | None:
+@dataclass(frozen=True)
+class _WorkerLaunch:
+    """Where one worker run reads its source, writes its result, and what token it echoes."""
+
+    sandbox: str
+    source_path: Path
+    result_path: Path
+    token: str
+
+
+def _run_worker(launch: _WorkerLaunch, timeout_seconds: float) -> DoctestOutcome | None:
     """Launch the worker; return an outcome only when it timed out or crashed."""
 
     command = [
@@ -154,13 +165,13 @@ def _run_worker(
         "-P",
         "-s",
         str(_WORKER),
-        str(source_path),
-        str(result_path),
+        str(launch.source_path),
+        str(launch.result_path),
         str(int(timeout_seconds) + 2),
     ]
     with subprocess.Popen(  # nosec B603  # nosemgrep - fixed argv, no shell, scrubbed environment
         command,
-        cwd=sandbox,
+        cwd=launch.sandbox,
         env=_worker_environment(),
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
@@ -170,12 +181,12 @@ def _run_worker(
     ) as process:
         try:
             # The token travels on stdin so it is not visible in argv, environ, or /proc.
-            process.communicate(input=token.encode("ascii"), timeout=timeout_seconds)
+            process.communicate(input=launch.token.encode("ascii"), timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
             _kill(process)
             return DoctestOutcome("timeout", error=f"timed out after {timeout_seconds:g}s")
     # ``Popen.__exit__`` has waited for the worker, so ``returncode`` is set here.
-    if not result_path.is_file():
+    if not launch.result_path.is_file():
         return DoctestOutcome(
             "crashed",
             error=f"doctest worker exited with code {process.returncode} without a result",
