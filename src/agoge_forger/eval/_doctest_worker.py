@@ -49,7 +49,6 @@ from __future__ import annotations
 
 import builtins
 import doctest
-import json
 import json.encoder
 import os
 import sys
