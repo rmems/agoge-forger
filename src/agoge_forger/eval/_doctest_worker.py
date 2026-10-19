@@ -269,7 +269,7 @@ def _inode_identity(path: str) -> tuple[int, int] | None:
         info = os.stat(path)
     except OSError:
         return None
-    return (info.st_dev, info.st_ino)
+    return info.st_dev, info.st_ino
 
 
 def _dir_fd_write_allowed(dir_fd: object, flags: object, path: object, root: str) -> bool:
@@ -308,10 +308,13 @@ def _fence_dir_fd(module: types.ModuleType | None, name: str, sandbox: str) -> N
     if module is None:
         return
     opener = getattr(module, name, None)
-    if not callable(opener):
-        return
-    open_fn: Callable[..., object] = opener  # narrowed: non-None callable for the analyzer
-    root = os.path.realpath(sandbox)
+    if not callable(opener):  # fail closed: never run a candidate with an unguarded open
+        raise TypeError(f"doctest-v1 worker cannot guard non-callable {module.__name__}.{name}")
+    setattr(module, name, _guarded_open(opener, os.path.realpath(sandbox)))
+
+
+def _guarded_open(open_fn: Callable[..., Any], root: str) -> Callable[..., Any]:
+    """``open_fn`` (the real ``os.open``) behind the sandbox-root ``dir_fd`` check."""
 
     def guarded(*args: object, **kwargs: object) -> object:
         if kwargs.get("dir_fd") is not None:
@@ -323,7 +326,7 @@ def _fence_dir_fd(module: types.ModuleType | None, name: str, sandbox: str) -> N
                 )
         return open_fn(*args, **kwargs)
 
-    setattr(module, name, guarded)
+    return guarded
 
 
 def _revoke_fork_exec() -> None:
@@ -480,18 +483,21 @@ def _bind_json_encoder() -> Callable[[object], str]:
     candidate could redirect it; the C encoder instance built here does not.
     """
 
-    # Typed ``Any`` (not the Optional that ``getattr(..., None)`` would infer) so the
-    # analyzer does not read the call below as a possible ``None(...)``; the two ``is None``
-    # guards still handle a pure-Python build, where the C accelerator is absent.
-    make_encoder: Any = getattr(json.encoder, "c_make_encoder", None)
-    encode_string: Any = getattr(json.encoder, "c_encode_basestring_ascii", None)
-    if make_encoder is None or encode_string is None:  # pragma: no cover - pure-Python json
-        return json.dumps
+    # Imported straight from the C accelerator rather than read off ``json.encoder``, where
+    # ``c_make_encoder`` is ``None`` on a pure-Python build and is a name a candidate could
+    # rebind. Without it the worker fails closed: this runs before the result file exists,
+    # so the parent sees a worker that never started (``invalid``), not a scored result.
+    try:
+        from _json import encode_basestring_ascii, make_encoder
+    except ImportError as exc:  # pragma: no cover - CPython always ships _json
+        raise RuntimeError("doctest-v1 worker needs the C json accelerator (_json)") from exc
 
     def unsupported(value: object) -> object:
         raise TypeError(f"result contains an unserialisable {type(value).__name__}")
 
-    chunks = make_encoder(None, unsupported, encode_string, None, ":", ",", False, False, False)
+    chunks = make_encoder(
+        None, unsupported, encode_basestring_ascii, None, ":", ",", False, False, False
+    )
     return lambda value: "".join(chunks(value, 0))
 
 
@@ -499,10 +505,12 @@ class _ResultChannel:
     """The result file, opened and bound before the candidate runs."""
 
     def __init__(self, path: str) -> None:
-        self._fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # Bound first: if the encoder is unavailable the worker stops before the result file
+        # exists, which the parent reports as a worker that never started.
+        self._encode = _bind_json_encoder()
         self._write = os.write
         self._close = os.close
-        self._encode = _bind_json_encoder()
+        self._fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 
     def publish(self, result: dict[str, object], *, _len: Callable[[bytes], int] = len) -> None:
         """Write ``result`` through the bindings taken at construction only."""
