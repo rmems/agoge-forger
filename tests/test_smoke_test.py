@@ -512,3 +512,35 @@ class TestInferenceRequest:
         assert result["status"] == "ok"
         assert result["prompt_tokens"] == 4
         assert result["completion_tokens"] == 2
+
+    def test_tokenizer_output_without_input_ids_is_recorded_as_error(self, monkeypatch):
+        class _Generated:
+            shape = (1, 6)
+
+        class _Tokenizer:
+            def __call__(self, prompt, return_tensors="pt"):
+                return {"attention_mask": object()}
+
+        class _Model:
+            def generate(self, **kwargs):
+                return _Generated()
+
+        class _AutoTokenizer:
+            @staticmethod
+            def from_pretrained(model, trust_remote_code):
+                return _Tokenizer()
+
+        class _AutoModel:
+            @staticmethod
+            def from_pretrained(model, trust_remote_code, device_map):
+                return _Model()
+
+        import transformers
+
+        monkeypatch.setattr(transformers, "AutoTokenizer", _AutoTokenizer)
+        monkeypatch.setattr(transformers, "AutoModelForCausalLM", _AutoModel)
+
+        result = smoke_test._run_inference_request(3, "tiny", False, False, False)
+
+        assert result["status"] == "error"
+        assert "input_ids" in result["error"]

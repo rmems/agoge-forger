@@ -180,7 +180,7 @@ def _run_inference_request(
             "latency_ms": round(elapsed, 2),
             "error": None,
         }
-    except (OSError, RuntimeError, ValueError, TypeError, ImportError) as exc:
+    except (OSError, RuntimeError, ValueError, TypeError, ImportError, KeyError) as exc:
         return {
             "request_id": idx,
             "model_id": model,
