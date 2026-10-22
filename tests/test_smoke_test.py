@@ -467,3 +467,48 @@ class TestMainIntegration:
 
         # Jail validates before mkdir — rejected absolute paths must not appear.
         assert not outside.exists()
+
+
+class TestInferenceRequest:
+    def test_loaded_tokenizer_is_called_with_the_prompt(self, monkeypatch):
+        class _Ids:
+            shape = (1, 4)
+
+        class _Generated:
+            shape = (1, 6)
+
+        class _Tokenizer:
+            def __call__(self, prompt, return_tensors="pt"):
+                assert prompt == "Hello world request 3"
+                assert return_tensors == "pt"
+                return {"input_ids": _Ids()}
+
+        class _Model:
+            def generate(self, **kwargs):
+                assert kwargs["max_new_tokens"] == 32
+                return _Generated()
+
+        class _AutoTokenizer:
+            @staticmethod
+            def from_pretrained(model, trust_remote_code):
+                assert model == "tiny"
+                assert trust_remote_code is False
+                return _Tokenizer()
+
+        class _AutoModel:
+            @staticmethod
+            def from_pretrained(model, trust_remote_code, device_map):
+                assert model == "tiny"
+                assert device_map == "cpu"
+                return _Model()
+
+        import transformers
+
+        monkeypatch.setattr(transformers, "AutoTokenizer", _AutoTokenizer)
+        monkeypatch.setattr(transformers, "AutoModelForCausalLM", _AutoModel)
+
+        result = smoke_test._run_inference_request(3, "tiny", False, False, False)
+
+        assert result["status"] == "ok"
+        assert result["prompt_tokens"] == 4
+        assert result["completion_tokens"] == 2

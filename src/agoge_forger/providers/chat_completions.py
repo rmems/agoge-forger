@@ -22,6 +22,8 @@ class ChatCompletionsConfig(BaseModel):
     temperature: float = 0.7
     api_key: str = ""
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("base_url")
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:
