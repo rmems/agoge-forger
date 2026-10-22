@@ -1,9 +1,6 @@
 import json
 
-import numpy as np
-
-from datasets import Dataset  # type: ignore[attr-defined]
-
+from .config import normalize_revision
 from .logging import logger
 from .path_safety import resolve_existing_path
 
@@ -56,7 +53,7 @@ def normalize_row(row, tokenizer=None, index=0):
         )
 
 
-def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
+def load_jsonl_dataset(path: str, tokenizer=None):
     """Load JSONL via ``Dataset.from_generator`` (disk-backed Arrow cache).
 
     Empty / blank-only files raise a clear ``ValueError`` without switching to
@@ -65,6 +62,8 @@ def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
     wraps them in ``DatasetGenerationError``).
     """
     from datasets.exceptions import DatasetGenerationError
+
+    from datasets import Dataset  # type: ignore[attr-defined]
 
     dataset_path = resolve_existing_path(path, must_be_file=True)
 
@@ -76,8 +75,8 @@ def load_jsonl_dataset(path: str, tokenizer=None) -> Dataset:
             )
 
     def gen():
-        with dataset_path.open("r") as f:
-            for i, line in enumerate(f, 1):
+        with dataset_path.open("r") as rows_file:
+            for i, line in enumerate(rows_file, 1):
                 if not line.strip():
                     continue
                 try:
@@ -119,16 +118,34 @@ def iter_normalized_rows(path: str):
             yield i, normalize_row(row, None, index=i)
 
 
-def dataset_stats(path: str, model_id: str, trust_remote_code: bool = False):
-    from .models.load import load_base_model
+def dataset_stats(
+    path: str,
+    model_id: str,
+    trust_remote_code: bool = False,
+    *,
+    revision: str | None = None,
+):
+    # Lazy import: data-only consumers (consumer_contract, split_materialize)
+    # import this module and must not pull transformers/torch, HF datasets, or
+    # numpy at import time.
+    import numpy as np
+    from transformers import AutoTokenizer
 
     logger.info("Loading tokenizer for dataset stats...")
-    _, tokenizer = load_base_model(model_id, trust_remote_code, quant_config=None)
+    # Tokenizer-only token counting; --revision pins the download when given,
+    # and the unpinned default matches load_base_model's existing behavior.
+    # noinspection PyNoneFunctionAssignment
+    tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 - pinned via --revision when set.
+        model_id,
+        trust_remote_code=trust_remote_code,
+        revision=normalize_revision(revision),
+    )
 
     dataset = load_jsonl_dataset(path, tokenizer)
     lengths: list[int] = []
 
     for row in dataset:
+        # noinspection PyCallingNonCallable
         tokens = tokenizer(row["text"])["input_ids"]
         lengths.append(len(tokens))
 
