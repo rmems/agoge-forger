@@ -1,0 +1,129 @@
+{
+  "schema_version": "agoge.experiment-contract.v2",
+  "experiment_id": "selfgen-repair-v1",
+  "hypothesis": "A verifier-gated propose->solve loop run by the G1 adapter yields rows that, accumulated onto the frozen real/procedural set, produce a G2 that beats G1 on the frozen held-out split under doctest-pass-v1.",
+  "agoge_git_sha": "<fill>",
+  "model": {
+    "model_repository": "ibm-granite/granite-4.1-3b-base",
+    "model_revision": "dacb9cb9157bec98e99b09f285c92a4d58405c96",
+    "trust_remote_code": false,
+    "parent_adapter": {
+      "experiment_id": "<fill>",
+      "adapter_sha256": "<fill>"
+    }
+  },
+  "dataset": {
+    "factory_repository": "rmems/synthetic-factory",
+    "factory_revision": "<fill>",
+    "export_manifest_sha256": "<fill>",
+    "agoge_jsonl_sha256": "<fill>",
+    "self_generated_rows": {
+      "max_fraction_of_train": 0.5,
+      "min_survival_rate_to_continue": 0.1,
+      "provenance_required": ["<fill>"]
+    }
+  },
+  "split": {
+    "split_manifest_path": "<fill>",
+    "split_manifest_sha256": "<fill>",
+    "train_split_sha256": "<fill>",
+    "validation_split_sha256": "<fill>",
+    "held_out_split_sha256": "<fill>",
+    "train_record_count": "<fill>",
+    "validation_record_count": "<fill>",
+    "held_out_record_count": "<fill>",
+    "split_seed": "<fill>",
+    "split_salt": "<fill>",
+    "train_weight": "<fill>",
+    "validation_weight": "<fill>",
+    "held_out_weight": "<fill>"
+  },
+  "serializer": {
+    "serializer_id": "<fill>",
+    "serializer_version": "<fill>",
+    "serializer_sha256": "<fill>"
+  },
+  "training": {
+    "init": "fresh",
+    "completion_only_loss": true,
+    "dataset_text_field": "text",
+    "max_seq_length": 4096,
+    "load_in_4bit": true,
+    "bnb_4bit_quant_type": "nf4",
+    "bnb_4bit_compute_dtype": "bfloat16",
+    "bnb_4bit_use_double_quant": true,
+    "target_modules": ["down_proj", "gate_proj", "k_proj", "o_proj", "q_proj", "up_proj", "v_proj"],
+    "learning_rate": 0.0001,
+    "batch_size": "<fill>",
+    "gradient_accumulation_steps": "<fill>",
+    "num_train_epochs": 2,
+    "gradient_checkpointing": true,
+    "seed": "<fill>"
+  },
+  "evaluation": {
+    "context_window": "<fill>",
+    "max_new_tokens": "<fill>",
+    "decoding": {
+      "do_sample": false,
+      "seed": "<fill>",
+      "max_new_tokens": "<fill>",
+      "temperature": 0.0,
+      "top_p": 1.0
+    },
+    "scoring_version": "doctest-pass-v1",
+    "truncation_policy": "mark_unsupported",
+    "arms": [
+      {"arm_id": "g1", "role": "parent", "training_rows": "none"},
+      {"arm_id": "g2-accumulate", "role": "treatment", "training_rows": "base_plus_self_generated"},
+      {"arm_id": "g2-control", "role": "control", "training_rows": "base"}
+    ],
+    "runs": 5,
+    "interval": {"method": "wilson", "confidence": 0.95},
+    "paired_test": {
+      "method": "mcnemar",
+      "comparisons": [
+        {"treatment": "g2-accumulate", "control": "g1"},
+        {"treatment": "g2-accumulate", "control": "g2-control"}
+      ]
+    }
+  },
+  "self_generation": {
+    "seed_catalog": {
+      "catalog_id": "python-repair-v2",
+      "catalog_sha256": "<fill>",
+      "held_out_denylist_sha256": "<fill>"
+    },
+    "propose": {
+      "proposer_arm": "g1",
+      "proposals_per_program": 4,
+      "decoding": {
+        "do_sample": true,
+        "seed": "<fill>",
+        "max_new_tokens": "<fill>",
+        "temperature": 0.7,
+        "top_p": "<fill>"
+      }
+    },
+    "verify_task": {
+      "verifier_id": "<fill>",
+      "checks": ["original_passes", "mutant_fails_at_least_one", "single_span", "dedup"]
+    },
+    "solve": {
+      "solver_arm": "g1",
+      "attempts": 2,
+      "output_format": "<fill>"
+    },
+    "verify_solution": {
+      "required_verdict": "REPAIRED_VERIFIED",
+      "tests_untouched": true,
+      "hidden_cases_required": true
+    },
+    "difficulty_band": {
+      "metric": "solver_pass_rate",
+      "min_pass_rate": 0.1,
+      "max_pass_rate": 0.9
+    },
+    "iterations": 1,
+    "stop_rules": ["self_generated_survival_below_min_rate"]
+  }
+}
