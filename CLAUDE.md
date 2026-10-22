@@ -29,13 +29,13 @@ loads every top-level `configs/*.yaml` and runs three test files. `consumer_cont
 
 ## Architecture map
 
-- `src/agoge_forger/cli.py` + `_cli_*.py`: Typer app (`agoge`) split per command group (train, eval, data, export, release, runs, serving).
+- `src/agoge_forger/cli.py` + `_cli_*.py`: Typer app (`agoge`) split per command group (train, eval, data, export, release, runs, env, consumer).
 - `config.py`, `datasets.py`, `split_*.py`, `mixture_*.py`: experiment config, dataset JSONL parsing, frozen splits, and mixture composition.
 - `train/`: QLoRA/LoRA trainer, checkpoints, resume state, preflight, and the checkpoint fault harness.
 - `eval/`: G0/G1 held-out generation, scoring, comparison, and the evaluation/experiment contracts.
 - `release/`: release verification. `export/`: adapter merge. `artifacts/`: safetensors I/O and provenance.
 - `run_status.py` + `_run_status_*.py`, `cleanup_run.py`: run readiness inspection and checkpoint pruning.
-- `serving/`, `providers/`, `telemetry/`, `backends/`, `models/`: vLLM serve/smoke, chat-completions provider, GPU telemetry and profile windows, torch backend, model load/inspection.
+- `providers/`, `telemetry/`, `backends/`, `models/`: chat-completions provider, GPU telemetry and profile windows, torch backend, model load/inspection.
 - `docs/contracts/`: schema docs for manifests, metrics, artifact index, and JSONL formats. `tests/test_docs_workflow.py` guards docs.
 
 ## Invariants and non-goals
