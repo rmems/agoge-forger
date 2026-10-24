@@ -179,11 +179,27 @@ class _PathPolicy:
         return real in self._devnull or real == self._root or real.startswith(self._root + os.sep)
 
 
+def _path_text(path: object) -> str | bytes | os.PathLike[str] | None:
+    """A path whose string methods are the real ``str`` / ``bytes`` ones.
+
+    A ``str`` subclass can override ``split`` or ``__fspath__`` and still pass
+    ``isinstance(..., str)``. Only an exact ``str`` or ``bytes``, or some other
+    ``os.PathLike``, is accepted.
+    """
+
+    if type(path) is str or type(path) is bytes:
+        return path
+    if isinstance(path, os.PathLike) and not isinstance(path, str | bytes):
+        return path
+    return None
+
+
 def _real_path(path: object) -> str | None:
-    if not isinstance(path, str | bytes | os.PathLike):
+    plain = _path_text(path)
+    if plain is None:
         return None
     try:
-        return os.path.realpath(os.fsdecode(path))
+        return os.path.realpath(os.fsdecode(plain))
     except ValueError:
         return None
 
@@ -220,7 +236,7 @@ def _blocked_import_name(name: str) -> bool:
 
 def _import_denial(args: tuple[object, ...]) -> str | None:
     name = args[0] if args else None
-    if not isinstance(name, str):  # an argument shape we do not recognise fails closed
+    if type(name) is not str:  # a str subclass can override split; that fails closed
         return "doctest-v1 sandbox blocked an import it could not identify"
     if _blocked_import_name(name):
         return f"doctest-v1 sandbox blocked import of {name}"
@@ -236,7 +252,10 @@ _SAVED_IMP_LOADERS: dict[str, Callable[..., Any]] = {}
 
 def _loader_name(spec: object) -> str | None:
     name = getattr(spec, "name", None)
-    return name if isinstance(name, str) and name else None
+    # ``isinstance`` would accept a ``str`` subclass whose ``split`` hides the real name.
+    if type(name) is not str or name == "":
+        return None
+    return name
 
 
 def _call_saved_loader(
@@ -346,7 +365,8 @@ def _dir_fd_write_allowed(dir_fd: object, flags: object, path: object, root: str
     if not (isinstance(flags, int) and flags & _WRITE_FLAGS):
         return True
     root_id = _inode_identity(root)
-    if root_id is None or not isinstance(path, str | bytes | os.PathLike):
+    plain = _path_text(path)
+    if root_id is None or plain is None:
         return False
     try:
         info = os.fstat(dir_fd)  # type: ignore[arg-type]
@@ -354,7 +374,7 @@ def _dir_fd_write_allowed(dir_fd: object, flags: object, path: object, root: str
         return False
     if (info.st_dev, info.st_ino) != root_id:
         return False
-    resolved = os.path.realpath(os.path.join(root, os.fsdecode(path)))
+    resolved = os.path.realpath(os.path.join(root, os.fsdecode(plain)))
     return resolved == root or resolved.startswith(root + os.sep)
 
 

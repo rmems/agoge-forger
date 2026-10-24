@@ -89,6 +89,37 @@ def test_real_open_is_not_recovered_from_a_closure(tmp_path: Path):
     assert not (tmp_path / marker).exists()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="fork_exec is POSIX only")
+def test_str_subclass_cannot_smuggle_a_denylisted_loader_name(tmp_path: Path):
+    # ``isinstance(name, str)`` is true for a subclass that overrides ``split``, so the
+    # denylist used to see ``"ok"`` while the C loader read ``_posixsubprocess``.
+    marker = tmp_path / "pwned_sub"
+    module = (
+        'def f():\n    """\n    >>> import _imp, importlib.machinery, os\n'
+        "    >>> class S(str):\n"
+        "    ...     def split(self, sep=None, maxsplit=-1):\n"
+        '    ...         return ["ok"]\n'
+        '    >>> spec = importlib.machinery.ModuleSpec(S("_posixsubprocess"), '
+        "importlib.machinery.BuiltinImporter)\n"
+        "    >>> m = _imp.create_builtin(spec)\n"
+        f'    >>> m.fork_exec([b"/bin/sh", b"-c", b"touch {marker}"], '
+        "[b'/bin/sh'], True, (), None, None, -1, -1, -1, -1, -1, -1, "
+        "*os.pipe(), False, False, -1, None, None, None, -1, None)\n"
+        '    """\n'
+    )
+    score = score_doctest(
+        GenerationRecord(
+            task_id="task-001",
+            prompt="Fix:\n",
+            expected_completion=module,
+            completion=module,
+            status="ok",
+        )
+    )
+    assert score.verdict != "correct"
+    assert not marker.exists()
+
+
 def test_third_party_extension_module_still_imports():
     # ``markupsafe._speedups`` is a shared library. Refusing every ``create_dynamic``
     # call turns this into a ``PermissionError`` that the package does not catch.
