@@ -60,7 +60,7 @@ import os
 import sys
 import types
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 _MEMORY_LIMIT_BYTES = 2 * 1024**3
 _FILE_SIZE_LIMIT_BYTES = 4 * 1024**2
@@ -179,16 +179,25 @@ class _PathPolicy:
         return real in self._devnull or real == self._root or real.startswith(self._root + os.sep)
 
 
+def _is_exact(value: object, kind: type[Any]) -> bool:
+    """True only for ``kind`` itself, not a subclass.
+
+    ``isinstance`` is the wrong check here: a ``str`` subclass can override ``split``
+    and still look like a ``str``. pylint's typecheck warning is the rule we are
+    deliberately not following.
+    """
+
+    return type(value) is kind  # pylint: disable=unidiomatic-typecheck
+
+
 def _path_text(path: object) -> str | bytes | os.PathLike[str] | None:
     """A path whose string methods are the real ``str`` / ``bytes`` ones.
 
-    A ``str`` subclass can override ``split`` or ``__fspath__`` and still pass
-    ``isinstance(..., str)``. Only an exact ``str`` or ``bytes``, or some other
-    ``os.PathLike``, is accepted.
+    Only an exact ``str`` or ``bytes``, or some other ``os.PathLike``, is accepted.
     """
 
-    if type(path) is str or type(path) is bytes:
-        return path
+    if _is_exact(path, str) or _is_exact(path, bytes):
+        return cast("str | bytes", path)
     if isinstance(path, os.PathLike) and not isinstance(path, str | bytes):
         return path
     return None
@@ -236,8 +245,9 @@ def _blocked_import_name(name: str) -> bool:
 
 def _import_denial(args: tuple[object, ...]) -> str | None:
     name = args[0] if args else None
-    if type(name) is not str:  # a str subclass can override split; that fails closed
+    if not _is_exact(name, str):  # a str subclass can override split; that fails closed
         return "doctest-v1 sandbox blocked an import it could not identify"
+    name = cast(str, name)
     if _blocked_import_name(name):
         return f"doctest-v1 sandbox blocked import of {name}"
     return None
@@ -253,7 +263,10 @@ _SAVED_IMP_LOADERS: dict[str, Callable[..., Any]] = {}
 def _loader_name(spec: object) -> str | None:
     name = getattr(spec, "name", None)
     # ``isinstance`` would accept a ``str`` subclass whose ``split`` hides the real name.
-    if type(name) is not str or name == "":
+    if not _is_exact(name, str):
+        return None
+    name = cast(str, name)
+    if name == "":
         return None
     return name
 
