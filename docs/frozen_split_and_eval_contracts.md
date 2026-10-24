@@ -305,8 +305,10 @@ hook denies socket creation and use, process creation and signalling, `ctypes` l
 writes outside the sandbox directory, and imports of the modules that reach those
 facilities without an audit event (`socket`, `subprocess`, `_posixsubprocess`,
 `ctypes`, `sqlite3`, `multiprocessing`, …). A denylisted name is refused in any dotted
-component, and `_imp.create_builtin` / `_imp.create_dynamic` refuse a spec with such a
-name, because `module_from_spec` does not raise an `import` audit event. The worker
+component. Safe built-ins are imported before `_imp.create_builtin` and
+`_imp.create_dynamic` are replaced with refusers that do not keep the original loader,
+because `module_from_spec` does not raise an `import` audit event and a captured loader
+can be read back out of a Python closure. The worker
 also drops `os.mkfifo`/`os.mknod`. It does not stop code that digs the open descriptor
 or token out of the worker's frames, in-process patching outside the snapshotted
 namespaces, or loading a compiled extension module that is not on the import denylist. Run the scorer inside a container or VM if
