@@ -5,8 +5,7 @@ module is what registers its commands against the shared `app`, so the console
 script stays `agoge_forger.cli:app` and no command name or invocation changes.
 
 Nothing here references the imported modules, so they read as unused: the
-`pylint: disable` below is scoped to just that block, matching how this file
-already scopes `too-many-arguments` around the wide serving commands.
+`pylint: disable` below is scoped to just that block.
 """
 
 # ruff: noqa: I001
@@ -24,7 +23,6 @@ from . import _cli_release  # noqa: F401
 from . import _cli_runs  # noqa: F401
 from . import _cli_data  # noqa: F401
 from . import _cli_consumer  # noqa: F401
-from . import _cli_serving  # noqa: F401
 
 # pylint: enable=unused-import
 

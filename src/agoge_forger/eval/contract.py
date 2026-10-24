@@ -104,6 +104,8 @@ class PairedEvaluationContract(FrozenEvaluationModel):
     base: EvaluationArm
     sft: EvaluationArm
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("split_manifest_path")
     @classmethod
     def require_relative_manifest_path(cls, value: str) -> str:
