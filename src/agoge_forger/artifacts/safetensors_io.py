@@ -4,9 +4,9 @@ import glob
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from .._atomic_file import publish_bytes_replace
 from ..logging import logger
@@ -43,7 +43,10 @@ def _inspect_open_safetensors(path: str) -> dict[str, Any]:
     opener = safe_open
     if opener is None:
         return {}
-    with opener(path, framework="pt") as handle:
+    # ``safe_open`` is optional at import time, so the name stays ``None | opener``.
+    # The guard above has already returned; cast so the call is a real opener.
+    open_file = cast(Callable[..., Any], opener)
+    with open_file(path, framework="pt") as handle:
         return _tensors_from_handle(handle)
 
 
