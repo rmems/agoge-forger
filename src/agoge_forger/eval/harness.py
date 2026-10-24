@@ -27,7 +27,11 @@ from .generate import (
     load_arm_model,
     require_tokenizer_matches,
 )
-from .score import OBJECTIVE_SCORING_VERSION, GenerationRecord, score_arm
+from .score import (
+    SUPPORTED_SCORING_VERSIONS,
+    GenerationRecord,
+    score_arm,
+)
 from .serializers import code_repair_prompt
 
 ArmGenerator = Callable[[EvaluationArm, Sequence[PreparedTask]], tuple[GenerationRecord, ...]]
@@ -207,9 +211,9 @@ def apply_truncation(
 
 
 def _require_g0_contract(contract: G0EvaluationContract) -> None:
-    if contract.base.scoring_version != OBJECTIVE_SCORING_VERSION:
+    if contract.base.scoring_version not in SUPPORTED_SCORING_VERSIONS:
         raise ValueError(
-            f"G0 contract scoring_version must be {OBJECTIVE_SCORING_VERSION}; "
+            f"G0 contract scoring_version must be one of {', '.join(SUPPORTED_SCORING_VERSIONS)}; "
             f"got {contract.base.scoring_version!r}"
         )
     if contract.base.truncation_policy not in {"reject", "mark_unsupported"}:
@@ -217,9 +221,9 @@ def _require_g0_contract(contract: G0EvaluationContract) -> None:
 
 
 def _require_canary_contract(contract: PairedEvaluationContract) -> None:
-    if contract.base.scoring_version != OBJECTIVE_SCORING_VERSION:
+    if contract.base.scoring_version not in SUPPORTED_SCORING_VERSIONS:
         raise ValueError(
-            f"paired contract scoring_version must be {OBJECTIVE_SCORING_VERSION}; "
+            f"paired contract scoring_version must be one of {', '.join(SUPPORTED_SCORING_VERSIONS)}; "
             f"got {contract.base.scoring_version!r}"
         )
     if contract.base.truncation_policy not in {"reject", "mark_unsupported"}:
