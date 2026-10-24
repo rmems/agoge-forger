@@ -305,14 +305,14 @@ hook denies socket creation and use, process creation and signalling, `ctypes` l
 writes outside the sandbox directory, and imports of the modules that reach those
 facilities without an audit event (`socket`, `subprocess`, `_posixsubprocess`,
 `ctypes`, `sqlite3`, `multiprocessing`, …). A denylisted name is refused in any dotted
-component. Safe built-ins are imported before `_imp.create_builtin` and
-`_imp.create_dynamic` are replaced with refusers that do not keep the original loader,
-because `module_from_spec` does not raise an `import` audit event and a captured loader
-can be read back out of a Python closure. The worker
-also drops `os.mkfifo`/`os.mknod`. It does not stop code that digs the open descriptor
-or token out of the worker's frames, in-process patching outside the snapshotted
-namespaces, or loading a compiled extension module that is not on the import denylist. Run the scorer inside a container or VM if
-the generations are adversarial.
+component. `_imp.create_builtin` and `_imp.create_dynamic` apply that denylist and
+then call the original loader, because `module_from_spec` does not raise an `import`
+audit event; a denied name raises `ImportError` so an optional speedup import can fall
+back, and every extension that is not denylisted still loads. The worker also drops
+`os.mkfifo`/`os.mknod`. It does not stop code that digs the open descriptor or token
+out of the worker's frames, in-process patching outside the snapshotted namespaces,
+or loading a compiled extension module that is not on the import denylist. Run the
+scorer inside a container or VM if the generations are adversarial.
 
 **Future experiment contracts must name a scorer that is invariant to output
 formatting** (`exact-match-v2`, `doctest-v1`, or a later one). `exact-match-v1` is

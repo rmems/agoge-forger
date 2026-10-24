@@ -13,10 +13,10 @@ best-effort containment on top of that:
   (``_posixsubprocess``, ``socket``, ``subprocess``, ``ctypes``, ``sqlite3``,
   ``multiprocessing``, ...; see ``_BLOCKED_IMPORTS``). Any dotted component of the
   import name counts, so ``pkg._posixsubprocess`` is refused as well as the top-level
-  module. Safe built-ins are imported first; ``_imp.create_builtin`` and
-  ``_imp.create_dynamic`` are then replaced with refusers that do not keep the original
-  loader, so ``module_from_spec`` cannot rebuild ``_posixsubprocess`` and recover
-  ``fork_exec``. A blocked import is refused as an
+  module. ``_imp.create_builtin`` and ``_imp.create_dynamic`` apply that same denylist
+  and then call the original loader, so a denylisted spec cannot revive ``fork_exec``
+  while every other extension (stdlib ``lib-dynload`` or a third-party speedup) still
+  loads. A blocked import is refused as an
   ``ImportError`` so a stdlib optional-import probe (``try: import _winapi``, reached by
   ``pathlib``) falls back instead of crashing a valid candidate. Copies of those modules
   that the standard library imported before the candidate ran are dropped from
@@ -55,7 +55,6 @@ from __future__ import annotations
 import _imp
 import builtins
 import doctest
-import importlib
 import json.encoder
 import os
 import sys
@@ -228,39 +227,56 @@ def _import_denial(args: tuple[object, ...]) -> str | None:
     return None
 
 
-def _refused_extension_load(_spec: object, *_args: object, **_kwargs: object) -> object:
-    """Replacement for ``_imp.create_builtin`` / ``create_dynamic``.
+# Originals of ``_imp.create_builtin`` / ``create_dynamic``, filled in before those
+# attributes are replaced. Kept on the module rather than in a ``__closure__`` cell.
+# Reading this global from the candidate is the same in-process access the sandbox
+# does not claim to stop; the functions installed on ``_imp`` close over nothing.
+_SAVED_IMP_LOADERS: dict[str, Callable[..., Any]] = {}
 
-    Holds no reference to the original loader, so a candidate cannot read it back out of
-    a ``__closure__`` cell and call it. Safe built-ins are already in ``sys.modules``.
+
+def _loader_name(spec: object) -> str | None:
+    name = getattr(spec, "name", None)
+    return name if isinstance(name, str) and name else None
+
+
+def _call_saved_loader(
+    kind: str, spec: object, args: tuple[object, ...], kwargs: dict[str, object]
+) -> object:
+    """Run a saved ``_imp`` loader unless the spec name is denylisted.
+
+    ``ModuleNotFoundError`` (an ``ImportError``) so an optional speedup import falls
+    back, matching the import hook. A name we cannot read is refused.
     """
 
-    raise PermissionError(
-        "doctest-v1 sandbox blocked loading a module without an import"
-    )
+    name = _loader_name(spec)
+    if name is None or _blocked_import_name(name):
+        raise ModuleNotFoundError(
+            "doctest-v1 sandbox blocked loading a denylisted module without an import",
+            name=name,
+        )
+    return _SAVED_IMP_LOADERS[kind](spec, *args, **kwargs)
 
 
-def _preload_safe_builtins() -> None:
-    """Import built-ins the candidate may name, while ``_imp.create_builtin`` still works."""
+def _create_builtin(spec: object, *args: object, **kwargs: object) -> object:
+    return _call_saved_loader("create_builtin", spec, args, kwargs)
 
-    for name in sys.builtin_module_names:
-        if name.startswith(("_test", "_xx")) or _blocked_import_name(name):
-            continue
-        if name in sys.modules:
-            continue
-        try:
-            importlib.import_module(name)
-        except (ImportError, OSError, AttributeError):
-            continue
+
+def _create_dynamic(spec: object, *args: object, **kwargs: object) -> object:
+    return _call_saved_loader("create_dynamic", spec, args, kwargs)
 
 
 def _fence_extension_loaders() -> None:
-    """Drop ``_imp``'s loaders. Importlib looks them up by attribute on each call."""
+    """Point ``_imp``'s loaders at the denylist. Importlib looks them up on each call."""
 
-    for name in ("create_builtin", "create_dynamic"):
-        if not callable(getattr(_imp, name, None)):
+    for name, replacement in (
+        ("create_builtin", _create_builtin),
+        ("create_dynamic", _create_dynamic),
+    ):
+        load = getattr(_imp, name, None)
+        if not callable(load):  # fail closed: never run a candidate with an unguarded loader
             raise TypeError(f"doctest-v1 worker cannot guard non-callable _imp.{name}")
-        setattr(_imp, name, _refused_extension_load)
+        _SAVED_IMP_LOADERS[name] = load
+        setattr(_imp, name, replacement)
 
 
 def _denial(event: str, args: tuple[object, ...], policy: _PathPolicy) -> str | None:
@@ -342,6 +358,38 @@ def _dir_fd_write_allowed(dir_fd: object, flags: object, path: object, root: str
     return resolved == root or resolved.startswith(root + os.sep)
 
 
+# Real ``os.open`` / ``posix.open`` and the sandbox root they are checked against.
+# Same rule as ``_SAVED_IMP_LOADERS``: the installed functions close over nothing.
+_SANDBOX_ROOT = ""
+_SAVED_OPENS: dict[str, Callable[..., Any]] = {}
+
+
+def _open_with_dir_fd_policy(
+    module_name: str, args: tuple[object, ...], kwargs: dict[str, object]
+) -> object:
+    """``os.open`` / ``posix.open`` with the sandbox-root ``dir_fd`` check."""
+
+    if kwargs.get("dir_fd") is not None:
+        path = args[0] if args else kwargs.get("path")
+        flags = args[1] if len(args) > 1 else kwargs.get("flags", 0)
+        if not _dir_fd_write_allowed(kwargs["dir_fd"], flags, path, _SANDBOX_ROOT):
+            raise PermissionError(
+                "doctest-v1 sandbox blocked a dir_fd-relative open outside its directory"
+            )
+    return _SAVED_OPENS[module_name](*args, **kwargs)
+
+
+def _guarded_os_open(*args: object, **kwargs: object) -> object:
+    return _open_with_dir_fd_policy("os", args, kwargs)
+
+
+def _guarded_posix_open(*args: object, **kwargs: object) -> object:
+    return _open_with_dir_fd_policy("posix", args, kwargs)
+
+
+_DIR_FD_GUARDS = {"os": _guarded_os_open, "posix": _guarded_posix_open}
+
+
 def _fence_dir_fd(module: types.ModuleType | None, name: str, sandbox: str) -> None:
     """Wrap ``module.name`` so a ``dir_fd`` write that leaves the sandbox is refused.
 
@@ -349,31 +397,22 @@ def _fence_dir_fd(module: types.ModuleType | None, name: str, sandbox: str) -> N
     the path-based hook cannot tell that ``os.open("x", O_WRONLY, dir_fd=outside_fd)`` writes
     outside the sandbox. The ``*at`` events (``os.mkdir`` and friends) do carry ``dir_fd``
     and are refused in ``_PATH_EVENTS``; this closes the one write path that does not, while
-    still allowing a ``dir_fd`` that points at the sandbox root (``os.open(".")``).
+    still allowing a ``dir_fd`` that points at the sandbox root (``os.open(".")``). The
+    wrapper is a module-level function, not a closure over the real ``open``.
     """
 
+    global _SANDBOX_ROOT
     if module is None:
         return
     opener = getattr(module, name, None)
     if not callable(opener):  # fail closed: never run a candidate with an unguarded open
         raise TypeError(f"doctest-v1 worker cannot guard non-callable {module.__name__}.{name}")
-    setattr(module, name, _guarded_open(opener, os.path.realpath(sandbox)))
-
-
-def _guarded_open(open_fn: Callable[..., Any], root: str) -> Callable[..., Any]:
-    """``open_fn`` (the real ``os.open``) behind the sandbox-root ``dir_fd`` check."""
-
-    def guarded(*args: object, **kwargs: object) -> object:
-        if kwargs.get("dir_fd") is not None:
-            path = args[0] if args else kwargs.get("path")
-            flags = args[1] if len(args) > 1 else kwargs.get("flags", 0)
-            if not _dir_fd_write_allowed(kwargs["dir_fd"], flags, path, root):
-                raise PermissionError(
-                    "doctest-v1 sandbox blocked a dir_fd-relative open outside its directory"
-                )
-        return open_fn(*args, **kwargs)
-
-    return guarded
+    guard = _DIR_FD_GUARDS.get(module.__name__)
+    if guard is None:
+        raise TypeError(f"doctest-v1 worker has no dir_fd guard for {module.__name__}")
+    _SANDBOX_ROOT = os.path.realpath(sandbox)
+    _SAVED_OPENS[module.__name__] = opener
+    setattr(module, name, guard)
 
 
 def _revoke_fork_exec() -> None:
@@ -415,7 +454,6 @@ def _rebind_attr(module: types.ModuleType | None, original: object, replacement:
 def _remove_unaudited_facilities(sandbox: str) -> None:
     """Take the modules and calls the audit hook cannot see out of the candidate's reach."""
 
-    _preload_safe_builtins()
     _revoke_fork_exec()
     _fence_extension_loaders()
     for module in (os, sys.modules.get("posix")):
