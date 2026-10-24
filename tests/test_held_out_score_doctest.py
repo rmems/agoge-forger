@@ -527,6 +527,53 @@ def test_candidate_cannot_import_process_network_or_native_modules(module):
     )
 
 
+def test_blocked_name_is_refused_in_any_dotted_component():
+    # The import hook used to check only the first component, so ``pkg._posixsubprocess``
+    # was an ordinary miss rather than a sandbox denial once ``pkg`` existed.
+    module = (
+        'def f():\n    """\n    >>> import sys, types\n'
+        '    >>> pkg = types.ModuleType("pkg")\n'
+        "    >>> pkg.__path__ = []\n"
+        '    >>> sys.modules["pkg"] = pkg\n'
+        "    >>> import pkg._posixsubprocess\n"
+        '    """\n'
+    )
+    _blocked(module)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="fork_exec is POSIX only")
+def test_candidate_cannot_load_posixsubprocess_via_builtin_spec(tmp_path):
+    # ``module_from_spec`` calls ``_imp.create_builtin`` with no ``import`` audit event.
+    # On CPython 3.14 ``_posixsubprocess`` is built-in, so this used to return a live
+    # ``fork_exec`` and spawn a process.
+    marker = tmp_path / "pwned"
+    module = (
+        'def f():\n    """\n    >>> import importlib.machinery, importlib.util, os\n'
+        '    >>> spec = importlib.machinery.ModuleSpec("_posixsubprocess", '
+        "importlib.machinery.BuiltinImporter)\n"
+        "    >>> m = importlib.util.module_from_spec(spec)\n"
+        f'    >>> m.fork_exec([b"/bin/sh", b"-c", b"touch {marker}"], '
+        "[b'/bin/sh'], True, (), None, None, -1, -1, -1, -1, -1, -1, "
+        "*os.pipe(), False, False, -1, None, None, None, -1, None)\n"
+        '    """\n'
+    )
+    _blocked(module, outside=tmp_path)
+
+
+def test_imp_loaders_refuse_a_denylisted_spec_name():
+    module = (
+        'def f():\n    """\n    >>> import _imp, importlib.machinery\n'
+        '    >>> spec = importlib.machinery.ModuleSpec("pkg._posixsubprocess", None)\n'
+        "    >>> _imp.create_builtin(spec)\n"
+        "    >>> _imp.create_dynamic(spec)\n"
+        '    """\n'
+    )
+    score = score_doctest(_record(module, reference=module))
+    assert score.verdict != "correct"
+    error = score.error or ""
+    assert error.count("sandbox blocked loading a denylisted module") == 2
+
+
 @pytest.mark.skipif(os.name != "posix", reason="fork_exec is POSIX only")
 def test_candidate_cannot_fork_exec_a_shell(tmp_path):
     marker = tmp_path / "pwned"

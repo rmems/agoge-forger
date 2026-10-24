@@ -11,7 +11,11 @@ best-effort containment on top of that:
   ``ctypes`` library loading, filesystem mutation outside the working directory, and the
   import of the modules that reach those facilities without an audit event of their own
   (``_posixsubprocess``, ``socket``, ``subprocess``, ``ctypes``, ``sqlite3``,
-  ``multiprocessing``, ...; see ``_BLOCKED_IMPORTS``). A blocked import is refused as an
+  ``multiprocessing``, ...; see ``_BLOCKED_IMPORTS``). Any dotted component of the
+  import name counts, so ``pkg._posixsubprocess`` is refused as well as the top-level
+  module. ``_imp.create_builtin`` and ``_imp.create_dynamic`` are wrapped the same way:
+  ``module_from_spec`` reaches them without an ``import`` audit event, and a spec whose
+  name is denylisted would otherwise revive ``fork_exec``. A blocked import is refused as an
   ``ImportError`` so a stdlib optional-import probe (``try: import _winapi``, reached by
   ``pathlib``) falls back instead of crashing a valid candidate. Copies of those modules
   that the standard library imported before the candidate ran are dropped from
@@ -47,6 +51,7 @@ are adversarial.
 
 from __future__ import annotations
 
+import _imp
 import builtins
 import doctest
 import json.encoder
@@ -206,13 +211,52 @@ def _path_event_denial(event: str, args: tuple[object, ...], policy: _PathPolicy
     return f"doctest-v1 sandbox blocked {event} outside its directory"
 
 
+def _blocked_import_name(name: str) -> bool:
+    """True when any dotted component is denylisted (``pkg._posixsubprocess`` included)."""
+
+    return any(part in _BLOCKED_IMPORTS for part in name.split("."))
+
+
 def _import_denial(args: tuple[object, ...]) -> str | None:
     name = args[0] if args else None
     if not isinstance(name, str):  # an argument shape we do not recognise fails closed
         return "doctest-v1 sandbox blocked an import it could not identify"
-    if name.partition(".")[0] in _BLOCKED_IMPORTS:
+    if _blocked_import_name(name):
         return f"doctest-v1 sandbox blocked import of {name}"
     return None
+
+
+def _loader_spec_name(spec: object) -> str | None:
+    name = getattr(spec, "name", None)
+    return name if isinstance(name, str) and name else None
+
+
+def _refuse_blocked_extension(load: Callable[..., Any]) -> Callable[..., Any]:
+    """``load`` (``_imp.create_builtin`` or ``create_dynamic``) with the denylist applied.
+
+    Both are how ``module_from_spec`` materialises a module without an ``import`` audit
+    event. A spec whose name we cannot read is refused.
+    """
+
+    def guarded(spec: object, *args: object, **kwargs: object) -> object:
+        name = _loader_spec_name(spec)
+        if name is None or _blocked_import_name(name):
+            raise PermissionError(
+                "doctest-v1 sandbox blocked loading a denylisted module without an import"
+            )
+        return load(spec, *args, **kwargs)
+
+    return guarded
+
+
+def _fence_extension_loaders() -> None:
+    """Wrap ``_imp``'s loaders. Importlib looks them up by attribute on each call."""
+
+    for name in ("create_builtin", "create_dynamic"):
+        load = getattr(_imp, name, None)
+        if not callable(load):  # fail closed: never run a candidate with an unguarded loader
+            raise TypeError(f"doctest-v1 worker cannot guard non-callable _imp.{name}")
+        setattr(_imp, name, _refuse_blocked_extension(load))
 
 
 def _denial(event: str, args: tuple[object, ...], policy: _PathPolicy) -> str | None:
@@ -368,6 +412,7 @@ def _remove_unaudited_facilities(sandbox: str) -> None:
     """Take the modules and calls the audit hook cannot see out of the candidate's reach."""
 
     _revoke_fork_exec()
+    _fence_extension_loaders()
     for module in (os, sys.modules.get("posix")):
         _strip_module_attrs(module, _UNAUDITED_OS_FUNCTIONS)
         _fence_dir_fd(module, "open", sandbox)
