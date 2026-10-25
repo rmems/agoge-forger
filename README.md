@@ -23,7 +23,7 @@ uv run agoge check-torch
 uv run agoge train-qlora --config configs/minicpm5_canary.yaml
 ```
 
-The canary is `openbmb/MiniCPM5-1B-Base`; the future measured flagship is `ibm-granite/granite-4.1-3b-base`. Pin an immutable Hub revision and complete the compatibility, split, and evaluation contracts before inspecting measured results.
+The canary is `openbmb/MiniCPM5-1B-Base`; the measured flagship is `ibm-granite/granite-4.1-3b-base`. The recorded RM-760 run (G0 untouched base versus G1 base plus one frozen code-repair SFT) reached its pre-registered conclusion **improved** under the `exact-match-v1` scorer: G0 0/16, G1 10/16, zero regressions. See [`reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/report.md`](reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/report.md). Note that a follow-up re-analysis attributes that delta to markdown-fence formatting (the base also scores 10/16 after stripping ` ``` ` wrappers); see #183. New measured runs still pin an immutable Hub revision and complete the compatibility, split, and evaluation contracts before inspecting results.
 
 To inspect an architecture before choosing LoRA targets:
 

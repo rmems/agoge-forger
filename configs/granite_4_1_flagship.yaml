@@ -1,4 +1,5 @@
-# Pre-measurement template. Freeze the Hub revision and validated targets in #104.
+# Template config. Measured runs freeze the Hub revision and validated targets
+# (see reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/train.yaml).
 model_id: "ibm-granite/granite-4.1-3b-base"
 trust_remote_code: false
 dataset_path: "../datasets/samples/tiny_sft.jsonl"
