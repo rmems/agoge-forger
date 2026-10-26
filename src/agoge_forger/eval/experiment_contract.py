@@ -178,7 +178,7 @@ def load_experiment_contract(contract_path: str | Path) -> ExperimentContract:
 def validate_experiment_contract(contract_path: str | Path) -> ExperimentContract:
     path = Path(contract_path).expanduser().resolve(strict=True)
     contract = load_experiment_contract(path)
-    manifest = _validate_split_pin(path, contract.split)
+    manifest = _validate_split_pin(path, contract.split, contract.dataset)
     _validate_held_out_counts(contract, manifest)
     return contract
 
@@ -217,6 +217,8 @@ def compose_g0_evaluation_contract(
     manifest = validate_split_manifest_snapshot(manifest_file, manifest_snapshot)
     task_ids = held_out_task_ids(manifest)
     task_digest = logical_task_set_sha256(task_ids)
+    if validated_base.logical_task_set_sha256 != task_digest:
+        raise ValueError("G0 base arm task-set digest does not match the frozen split")
     return G0EvaluationContract(
         experiment_id=experiment_id,
         split_manifest_path=_portable_relative_path(manifest_file, destination.parent.resolve()),
@@ -278,12 +280,30 @@ def split_pin_from_manifest(
     )
 
 
-def _validate_split_pin(contract_path: Path, split: SplitPin) -> SplitManifest:
+def _validate_split_pin(
+    contract_path: Path,
+    split: SplitPin,
+    dataset: DatasetProvenance,
+) -> SplitManifest:
     manifest_path = (contract_path.parent / split.split_manifest_path).resolve(strict=True)
     manifest_snapshot = manifest_path.read_bytes()
     if sha256_bytes(manifest_snapshot) != split.split_manifest_sha256:
         raise ValueError("experiment contract split-manifest SHA-256 mismatch")
     manifest = validate_split_manifest_snapshot(manifest_path, manifest_snapshot)
+    if (
+        split.split_seed != manifest.split_policy.seed
+        or split.split_salt != manifest.split_policy.salt
+        or split.train_weight != manifest.split_policy.weights["train"]
+        or split.validation_weight != manifest.split_policy.weights["validation"]
+        or split.held_out_weight != manifest.split_policy.weights["held_out"]
+    ):
+        raise ValueError("experiment contract split policy does not match split manifest")
+    if (
+        dataset.factory_repository != manifest.source.repository
+        or dataset.factory_revision != manifest.source.revision
+        or dataset.agoge_jsonl_sha256 != manifest.source.sha256
+    ):
+        raise ValueError("experiment contract dataset provenance does not match split manifest")
     for name in _SPLIT_NAMES:
         digest = getattr(split, f"{name}_split_sha256")
         if manifest.splits[name].sha256 != digest:

@@ -16,6 +16,7 @@ from .score import ArmMetrics, ExampleScore, GenerationRecord
 G0_BUNDLE_FILES = (
     "g0-contract.json",
     "g0-base/generations.jsonl",
+    "g0-base/scores.jsonl",
     "g0-base/metrics.json",
 )
 
@@ -53,6 +54,7 @@ def _write_bundle(staged: Path, bundle: G0EvalBundle) -> None:
         canonical_json_bytes(bundle.contract.model_dump(mode="json")) + b"\n",
     )
     _write_jsonl(staged / "g0-base" / "generations.jsonl", bundle.generations)
+    _write_jsonl(staged / "g0-base" / "scores.jsonl", bundle.scores)
     _exclusive_write(
         staged / "g0-base" / "metrics.json",
         canonical_json_bytes(bundle.metrics.model_dump(mode="json")) + b"\n",
