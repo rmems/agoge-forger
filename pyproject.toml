@@ -9,7 +9,7 @@ description = "A reproducible Python/PyTorch platform for post-training, evaluat
 authors = [{name = "Raul Montoya Cardenas"}]
 license = "Apache-2.0"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
     "torch>=2.0.0",
     # Transformers 5 / TRL 1 are hard floors: the trainer builds `trl.SFTConfig`
@@ -21,6 +21,11 @@ dependencies = [
     "datasets>=2.19.0",
     "bitsandbytes>=0.43.0",
     "safetensors>=0.7.0",
+    # Imported directly by runtime modules, not just transitive dependencies.
+    "numpy",
+    "huggingface-hub",
+    "tokenizers",
+    "typing-extensions",
     "pyyaml",
     "rich",
     "typer>=0.9.0",
@@ -30,7 +35,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff==0.16.10", "mypy>=1.0", "pre-commit"]
+dev = ["pytest", "ruff==0.17.1", "mypy>=1.0", "pre-commit"]
 
 [project.scripts]
 agoge = "agoge_forger.cli:app"
@@ -42,6 +47,9 @@ Issues = "https://github.com/rmems/agoge-forger/issues"
 
 [tool.ruff]
 line-length = 100
+# Preserve the existing source syntax policy for Qlty's RadarLint parser.
+# Runtime and dependency resolution still require Python 3.14.
+target-version = "py310"
 
 [tool.mypy]
 ignore_missing_imports = true

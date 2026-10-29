@@ -24,10 +24,13 @@ def dataset_stats(
     path: str = typer.Option(..., help="Path to JSONL dataset"),
     model_id: str = typer.Option(..., help="Model ID for tokenizer"),
     trust_remote_code: bool = typer.Option(False, help="Trust remote code from the model repo"),
+    revision: str | None = typer.Option(
+        None, help="Hub commit, tag, or branch to pin the tokenizer download to"
+    ),
 ):
     """Get dataset token statistics."""
     safe_path = str(resolve_existing_path(path, must_be_file=True))
-    _dataset_stats(safe_path, model_id, trust_remote_code=trust_remote_code)
+    _dataset_stats(safe_path, model_id, trust_remote_code=trust_remote_code, revision=revision)
 
 
 @dataclass(frozen=True)

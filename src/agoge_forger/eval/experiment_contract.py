@@ -115,6 +115,8 @@ class ExperimentContract(FrozenEvaluationModel):
     training: TrainingPin
     evaluation: EvaluationPin
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("split", mode="before")
     @classmethod
     def normalize_split_manifest_path(cls, value: object) -> object:
@@ -146,6 +148,8 @@ class G0EvaluationContract(FrozenEvaluationModel):
     logical_task_set_sha256: str = Field(pattern=_SHA256_PATTERN)
     base: EvaluationArm
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("split_manifest_path")
     @classmethod
     def require_relative_manifest_path(cls, value: str) -> str:

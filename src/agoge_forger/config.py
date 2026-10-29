@@ -41,11 +41,14 @@ class TrainingConfig(BaseModel):
     save_total_limit: int | None = 2
     resume_from_latest_checkpoint: bool = False
     resume_checkpoint_path: str | None = None
-    # TRL SFTConfig passthrough. ``chunked_nll`` is the same NLL as ``nll``
-    # but never materializes [seq, vocab] logits (needed for 16GB / long SFT).
+    # Existing YAML may still say ``chunked_nll``. TRL 1.15 treats that name as a
+    # deprecated alias of ``nll``, and ``nll`` no longer materializes [seq, vocab]
+    # logits. ``_build_training_args`` sends ``nll``.
     loss_type: str = "nll"
     activation_offloading: bool = False
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("loss_type")
     @classmethod
     def _allowed_loss_type(cls, value: str) -> str:
@@ -106,6 +109,8 @@ class ExperimentConfig(BaseModel):
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("revision", mode="before")
     @classmethod
     def _normalize_revision(cls, value: object) -> str | None:

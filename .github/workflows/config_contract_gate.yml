@@ -14,8 +14,8 @@ on:
       # Top-level configs/*.yaml are ExperimentConfigs; both currently point
       # dataset_path at datasets/samples/, and load_config resolves it through
       # resolve_existing_path(must_be_file=True) — so deleting or renaming a
-      # sample makes those training configs unloadable. configs/serving/ and
-      # configs/prompts/ use other schemas and are not loaded by this gate.
+      # sample makes those training configs unloadable. Only top-level
+      # configs/*.yaml files are loaded by this gate.
       # No other pull-request workflow watches this directory.
       - "datasets/samples/**"
       - ".github/workflows/config_contract_gate.yml"
@@ -40,23 +40,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
 
       - name: Install dev dependencies
-        # Match pr_quality_gate.yml: editable install into .venv so the
-        # interpreter and pytest are invoked directly, without `uv run`.
-        run: |
-          uv venv
-          uv pip install -e ".[dev]"
+        # Match pr_quality_gate.yml: locked dev extra and editable project.
+        run: uv sync --python 3.14 --frozen --extra dev
 
       - name: Validate training configs
         # Must run from the repo root: `load_config` resolves a relative
         # `dataset_path` against the config file's own directory and requires
         # the dataset to exist on disk, so never chdir into configs/.
-        # Only top-level configs/*.yaml are ExperimentConfig files —
-        # configs/serving/ and configs/prompts/ have different schemas.
+        # Only top-level configs/*.yaml are ExperimentConfig files.
         run: |
           .venv/bin/python - <<'PY'
           import sys

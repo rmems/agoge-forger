@@ -23,10 +23,22 @@ import secrets
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
+
+
+class _SmokeTokenizer(Protocol):
+    """Callable surface of a tokenizer loaded for the local smoke path.
+
+    ``PreTrainedTokenizerBase`` is imported inside the inference function.
+    Qodana does not accept that function-local class as a ``cast`` type, so the
+    smoke path names the callable shape here instead.
+    """
+
+    def __call__(self, text: str, /, **kwargs: Any) -> Any: ...
 
 
 def _supports_dirfd() -> bool:
@@ -142,7 +154,11 @@ def _run_inference_request(
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=trust_remote_code)
+        # The dynamic AutoTokenizer factory is incorrectly inferred as returning None.
+        loaded = cast(Callable[..., object], cast(object, AutoTokenizer.from_pretrained))(
+            model, trust_remote_code=trust_remote_code
+        )
+        tokenizer = cast(_SmokeTokenizer, loaded)
         pt_model = AutoModelForCausalLM.from_pretrained(
             model, trust_remote_code=trust_remote_code, device_map="cpu"
         )
@@ -164,7 +180,7 @@ def _run_inference_request(
             "latency_ms": round(elapsed, 2),
             "error": None,
         }
-    except (OSError, RuntimeError, ValueError, TypeError, ImportError) as exc:
+    except (OSError, RuntimeError, ValueError, TypeError, ImportError, KeyError) as exc:
         return {
             "request_id": idx,
             "model_id": model,

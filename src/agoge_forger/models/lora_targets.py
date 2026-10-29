@@ -11,7 +11,7 @@ def inspect_lora_targets(
     model_id: str, trust_remote_code: bool = False, out_path: str | None = None
 ):
     logger.info(f"Finding potential LoRA targets in {model_id}...")
-    model, _ = load_base_model(model_id, trust_remote_code, quant_config=None, bf16=True)
+    model, _ = load_base_model(model_id, trust_remote_code, quant_config=None)
 
     leaf_groups: dict[str, dict[str, Any]] = {}
     full_module_matches: list[dict[str, Any]] = []
