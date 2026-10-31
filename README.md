@@ -25,7 +25,15 @@ uv run agoge check-torch
 uv run agoge train-qlora --config configs/minicpm5_canary.yaml
 ```
 
-The canary is `openbmb/MiniCPM5-1B-Base`; the future measured flagship is `ibm-granite/granite-4.1-3b-base`. Pin an immutable Hub revision and complete the compatibility, split, and evaluation contracts before inspecting measured results.
+The canary is `openbmb/MiniCPM5-1B-Base`; the measured flagship is `ibm-granite/granite-4.1-3b-base`. The recorded RM-760 run compares G0 (untouched base) with G1 (base plus one frozen code-repair SFT) on 16 held-out tasks. The three scorers disagree, so read them side by side:
+
+| Scorer | G0 | G1 | Delta | Improved / regressed / tied |
+| --- | ---: | ---: | ---: | ---: |
+| `exact-match-v1` (pre-registered) | 0/16 | 10/16 | +0.625 | 10 / 0 / 6 |
+| `exact-match-v2` (fence-normalized, post hoc) | 10/16 | 10/16 | 0.000 | 2 / 2 / 12 |
+| `doctest-v1` (post hoc) | 11/16 | 10/16 | −0.0625 | 2 / 3 / 11 |
+
+The pre-registered `exact-match-v1` conclusion is **improved**, but the whole v1 delta is markdown-fence formatting (G0 fenced 16/16 replies, G1 0/16), not repair ability; under the format-invariant scorers the arms are indistinguishable at n=16. The pre-registered result is in [`reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/report.md`](reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/report.md); the post hoc re-score is #192 (#183). New measured runs still pin an immutable Hub revision and complete the compatibility, split, and evaluation contracts before inspecting results.
 
 To inspect an architecture before choosing LoRA targets:
 
