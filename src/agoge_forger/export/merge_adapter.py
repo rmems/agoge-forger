@@ -54,6 +54,40 @@ def _is_local_model_directory(base_model_id: str) -> bool:
     return os.path.isdir(base_model_id) or Path(base_model_id).expanduser().is_dir()
 
 
+def _is_sealed_local_directory(pinned_repo: str, snapshot: Path) -> bool:
+    # The adapter was trained from this same local directory (an absolute path, never
+    # a Hub id that merely collides with a cwd directory), so the sealed provenance
+    # already names it; loading it seals no other identity.
+    sealed_local = Path(pinned_repo).expanduser()
+    if not (sealed_local.is_absolute() and sealed_local.is_dir()):
+        return False
+    return sealed_local.resolve(strict=True) == snapshot
+
+
+def _is_sealed_cache_snapshot(snapshot: Path, repo_dir: str, pinned_revision: str) -> bool:
+    return (snapshot.name, snapshot.parent.name, snapshot.parent.parent.name) == (
+        pinned_revision,
+        "snapshots",
+        repo_dir,
+    )
+
+
+def _resolve_local_base(base_model_id: str, pinned_repo: str, pinned_revision: str) -> str:
+    snapshot = Path(base_model_id).expanduser().resolve(strict=True)
+    if _is_sealed_local_directory(pinned_repo, snapshot):
+        return str(snapshot)
+    expected_repo_dir = "models--" + pinned_repo.replace("/", "--")
+    if not _is_sealed_cache_snapshot(snapshot, expected_repo_dir, pinned_revision):
+        raise ValueError(
+            f"Local base model directory {snapshot} cannot be tied to the sealed "
+            f"producer_provenance {pinned_repo}@{pinned_revision}. Pass the Hub repo "
+            f"id {pinned_repo!r} (it is loaded at the sealed revision, from the local "
+            "cache when offline) or a Hugging Face cache snapshot directory "
+            f"{expected_repo_dir}/snapshots/{pinned_revision}."
+        )
+    return str(snapshot)
+
+
 def resolve_pinned_base_model(
     base_model_id: str, provenance: ArtifactProducerProvenance, revision: str | None
 ) -> str:
@@ -75,31 +109,7 @@ def resolve_pinned_base_model(
             f"producer_provenance revision {pinned_revision!r}"
         )
     if _is_local_model_directory(base_model_id):
-        snapshot = Path(base_model_id).expanduser().resolve(strict=True)
-        sealed_local = Path(pinned_repo).expanduser()
-        if (
-            sealed_local.is_absolute()
-            and sealed_local.is_dir()
-            and sealed_local.resolve(strict=True) == snapshot
-        ):
-            # The adapter was trained from this same local directory (an absolute
-            # path, never a Hub id that merely collides with a cwd directory), so the
-            # sealed provenance already names it; loading it seals no other identity.
-            return str(snapshot)
-        expected_repo_dir = "models--" + pinned_repo.replace("/", "--")
-        if (
-            snapshot.name != pinned_revision
-            or snapshot.parent.name != "snapshots"
-            or snapshot.parent.parent.name != expected_repo_dir
-        ):
-            raise ValueError(
-                f"Local base model directory {snapshot} cannot be tied to the sealed "
-                f"producer_provenance {pinned_repo}@{pinned_revision}. Pass the Hub repo "
-                f"id {pinned_repo!r} (it is loaded at the sealed revision, from the local "
-                "cache when offline) or a Hugging Face cache snapshot directory "
-                f"{expected_repo_dir}/snapshots/{pinned_revision}."
-            )
-        return str(snapshot)
+        return _resolve_local_base(base_model_id, pinned_repo, pinned_revision)
     if base_model_id != pinned_repo:
         raise ValueError(
             f"Base model {base_model_id!r} does not match the adapter's sealed "

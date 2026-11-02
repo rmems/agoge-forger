@@ -104,11 +104,18 @@ def split_membership_failures(
         except (OSError, ValueError) as exc:
             failures.append(classify_io_error(exc, relative))
             continue
-        failures.extend(
-            _member_failures(relative, name, artifact, payload, _MemberContext(manifest, tracker))
-        )
+        split_file = _SplitFile(relative=relative, name=name, artifact=artifact, payload=payload)
+        failures.extend(_member_failures(split_file, _MemberContext(manifest, tracker)))
     failures.extend(_manifest_policy_failures(document.split_manifest_path, manifest))
     return failures
+
+
+@dataclass(frozen=True)
+class _SplitFile:
+    relative: str
+    name: str
+    artifact: SplitArtifact
+    payload: bytes
 
 
 @dataclass(frozen=True)
@@ -122,29 +129,23 @@ def _split_relative_path(document: ReproducibilityBundle, artifact_path: str) ->
     return (manifest_dir / artifact_path).as_posix()
 
 
-def _member_failures(
-    relative: str,
-    name: str,
-    artifact: SplitArtifact,
-    payload: bytes,
-    context: _MemberContext,
-) -> list[BundleFailure]:
+def _identity_failure(relative: str, message: str) -> list[BundleFailure]:
+    return [BundleFailure(code="split_identity", path=relative, message=message)]
+
+
+def _member_failures(split_file: _SplitFile, context: _MemberContext) -> list[BundleFailure]:
+    relative, name, artifact = split_file.relative, split_file.name, split_file.artifact
     lines = [
         (line_number, line)
-        for line_number, line in enumerate(io.BytesIO(payload), 1)
+        for line_number, line in enumerate(io.BytesIO(split_file.payload), 1)
         if line.strip()
     ]
     if len(lines) != artifact.record_count:
-        return [
-            BundleFailure(
-                code="split_identity",
-                path=relative,
-                message=(
-                    f"{name} split record count differs from the manifest: "
-                    f"expected {artifact.record_count}, found {len(lines)}"
-                ),
-            )
-        ]
+        return _identity_failure(
+            relative,
+            f"{name} split record count differs from the manifest: "
+            f"expected {artifact.record_count}, found {len(lines)}",
+        )
     seen_ids: dict[str, str] = {}
     mismatch = False
     for (line_number, line), member in zip(lines, artifact.members, strict=True):
@@ -152,23 +153,15 @@ def _member_failures(
             actual = _derive_member(relative, line_number, line, context)
             _reject_duplicate_identity(actual.member, seen_ids)
         except (TypeError, ValueError) as exc:
-            return [
-                BundleFailure(
-                    code="split_identity",
-                    path=relative,
-                    message=f"{name} split record cannot be derived into a split member: {exc}",
-                )
-            ]
+            return _identity_failure(
+                relative, f"{name} split record cannot be derived into a split member: {exc}"
+            )
         if not _member_matches(line, actual, member, context.manifest):
             mismatch = True
     if mismatch:
-        return [
-            BundleFailure(
-                code="split_identity",
-                path=relative,
-                message=f"{name} split records do not match the declared manifest members",
-            )
-        ]
+        return _identity_failure(
+            relative, f"{name} split records do not match the declared manifest members"
+        )
     return []
 
 
