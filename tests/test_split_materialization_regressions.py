@@ -1,4 +1,5 @@
 import errno
+import json
 import os
 from pathlib import Path
 
@@ -8,11 +9,14 @@ from pydantic import ValidationError
 from agoge_forger import split_materialize, split_validation
 from agoge_forger.datasets import normalize_row
 from agoge_forger.split_contract import (
+    SPLIT_NAMES,
     CanonicalIdentityPolicy,
     SourceFile,
     SplitMaterializationSpec,
     SplitPolicy,
+    bind_frozen_split,
     canonical_json_bytes,
+    iter_frozen_records,
     validate_split_manifest,
 )
 from agoge_forger.split_materialize import iter_source_records, materialize_split
@@ -544,3 +548,91 @@ def test_materialization_assigns_metadata_without_retaining_source_payloads(
 
     assert observed_metadata_only
     assert validate_split_manifest(output / "split_manifest.json") == manifest
+
+
+def _non_canonical_sources(rows: list[dict[str, object]]) -> dict[str, bytes]:
+    canonical = [canonical_json_bytes(row) for row in rows]
+    return {
+        "json-dumps-spacing": b"".join(json.dumps(row).encode() + b"\n" for row in rows),
+        "unsorted-keys": b"".join(
+            json.dumps(dict(reversed(list(row.items()))), separators=(",", ":")).encode() + b"\n"
+            for row in rows
+        ),
+        "crlf": b"".join(line + b"\r\n" for line in canonical),
+        "missing-final-newline": b"\n".join(canonical),
+    }
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ["json-dumps-spacing", "unsorted-keys", "crlf", "missing-final-newline"],
+)
+def test_materialization_rejects_non_canonical_source_lines_before_publishing(
+    tmp_path: Path, variant: str
+) -> None:
+    source = tmp_path / "download.jsonl"
+    output = tmp_path / "snapshot"
+    rows = _text_rows()
+    source.write_bytes(_non_canonical_sources(rows)[variant])
+    expected_line = len(rows) if variant == "missing-final-newline" else 1
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^{SOURCE_PATH}:{expected_line}: source line is not canonical JSON.*"
+        "canonicalize the source before freezing",
+    ):
+        materialize_split(source, output, _spec())
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("label", "blank_line", "insert_at"),
+    [
+        ("interior-empty", b"\n", 45),
+        ("interior-whitespace", b"  \t \n", 45),
+        ("leading-empty", b"\n", 0),
+        ("trailing-empty", b"\n\n", 90),
+    ],
+)
+def test_blank_source_lines_keep_physical_coordinates_and_validate(
+    tmp_path: Path, label: str, blank_line: bytes, insert_at: int
+) -> None:
+    source = tmp_path / "download.jsonl"
+    output = tmp_path / "snapshot"
+    lines = [canonical_json_bytes(row) + b"\n" for row in _text_rows()]
+    lines.insert(insert_at, blank_line)
+    source.write_bytes(b"".join(lines))
+
+    manifest = materialize_split(source, output, _spec())
+    manifest_path = output / "split_manifest.json"
+
+    assert manifest.source.record_count == 90
+    coordinates = {
+        member.source_coordinate
+        for artifact in manifest.splits.values()
+        for member in artifact.members
+    }
+    if label != "trailing-empty":
+        assert f"{SOURCE_PATH}:91" in coordinates
+    assert validate_split_manifest(manifest_path) == manifest
+    assert validate_split_manifest(manifest_path, source_path=source) == manifest
+    loaded = sum(1 for split in SPLIT_NAMES for _ in iter_frozen_records(manifest_path, split))
+    assert loaded == 90
+    assert bind_frozen_split(manifest_path, "train").manifest == manifest
+
+
+@pytest.mark.parametrize("suffix", ["0", "07", "x1", "1a", ""])
+def test_recorded_source_coordinate_still_requires_positive_line_suffix(
+    tmp_path: Path, suffix: str
+) -> None:
+    source = tmp_path / "download.jsonl"
+    output = tmp_path / "snapshot"
+    _write_rows(source, _text_rows())
+    manifest = materialize_split(source, output, _spec())
+
+    assert split_validation._recorded_source_coordinate_matches(f"{SOURCE_PATH}:1000", manifest)
+    assert not split_validation._recorded_source_coordinate_matches(
+        f"{SOURCE_PATH}:{suffix}", manifest
+    )
+    assert not split_validation._recorded_source_coordinate_matches("evil/source.jsonl:1", manifest)

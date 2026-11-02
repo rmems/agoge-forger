@@ -235,8 +235,10 @@ def _recorded_source_coordinate_matches(coordinate: str, manifest: SplitManifest
     suffix = coordinate.removeprefix(prefix)
     if not suffix.isdigit() or suffix.startswith("0"):
         return False
-    line = int(suffix)
-    return 1 <= line <= manifest.source.record_count
+    # Coordinates are one-based physical source lines. Blank lines are skipped
+    # without consuming a record, so record_count is not an upper bound here;
+    # uniqueness is enforced by the schema and exact lines by source validation.
+    return int(suffix) >= 1
 
 
 @contextmanager
