@@ -499,6 +499,12 @@ def _stage_source_records(
         require_declared_lineage=True,
     ):
         line = canonical_json_bytes(record.row) + b"\n"
+        if record.raw_line != line:
+            raise ValueError(
+                f"{record.member.source_coordinate}: source line is not canonical JSON "
+                "(sorted keys, compact separators, unescaped UTF-8, LF line ending); "
+                "canonicalize the source before freezing"
+            )
         offset = payloads.tell()
         payloads.write(line)
         spans.append((offset, len(line)))

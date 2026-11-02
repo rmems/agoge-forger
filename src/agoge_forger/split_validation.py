@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 import tempfile
 from collections.abc import Iterator
@@ -34,6 +35,8 @@ from .split_schema import (
     SplitMember,
     SplitName,
 )
+
+_LINE_SUFFIX = re.compile(r"[1-9]\d*", re.ASCII)  # ASCII: \d must not match ² or ١
 
 
 def load_split_manifest(manifest_path: str | Path) -> SplitManifest:
@@ -232,11 +235,12 @@ def _recorded_source_coordinate_matches(coordinate: str, manifest: SplitManifest
     prefix = f"{manifest.source.path}:"
     if not coordinate.startswith(prefix):
         return False
-    suffix = coordinate.removeprefix(prefix)
-    if not suffix.isdigit() or suffix.startswith("0"):
-        return False
-    line = int(suffix)
-    return 1 <= line <= manifest.source.record_count
+    # Coordinates are one-based physical source lines: positive ASCII decimals with no
+    # leading zero. Matching the text (not ``int()``) keeps Unicode digits such as
+    # ``²`` and over-long suffixes a False result instead of an exception. Blank lines
+    # are skipped without consuming a record, so record_count is not an upper bound
+    # here; uniqueness is enforced by the schema and exact lines by source validation.
+    return _LINE_SUFFIX.fullmatch(coordinate.removeprefix(prefix)) is not None
 
 
 @contextmanager
