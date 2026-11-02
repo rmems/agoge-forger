@@ -1,9 +1,10 @@
 # Datasets
 
-Place your training and evaluation datasets here.
-`samples/tiny_sft.jsonl` is provided for smoke testing and validation.
+Real training and evaluation data lives outside the repository (on the GPU host
+under `~/agoge-data/`; see `AGENTS.md`). Only `samples/tiny_sft.jsonl` is tracked:
+the shipped trainer configs point at it for smoke runs and `tests/test_config.py`
+uses it as a fixture. Every other `samples/*.jsonl` is gitignored, and measured runs
+pin their dataset and split by immutable digest rather than by path.
 
-Expected JSONL formats:
-1. `{"text": "Your complete prompt and response here"}`
-2. `{"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}`
-3. `{"instruction": "...", "input": "...", "output": "..."}`
+The accepted JSONL row formats and their validation rules are specified in
+`docs/contracts/dataset_jsonl.md`.

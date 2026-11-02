@@ -65,14 +65,6 @@ def _tensors_from_handle(handle: Any) -> dict[str, Any]:
     return info
 
 
-def find_safetensors_files(path: str) -> list[str]:
-    if os.path.isfile(path) and path.endswith(".safetensors"):
-        return [path]
-    if os.path.isdir(path):
-        return glob.glob(os.path.join(path, "**", "*.safetensors"), recursive=True)
-    return []
-
-
 def assert_no_unsafe_weight_bins(path: str, *, recursive: bool = True) -> None:
     found_unsafe = _unsafe_weight_hits(path, recursive=recursive)
     if found_unsafe:
