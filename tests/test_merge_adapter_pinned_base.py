@@ -278,6 +278,27 @@ def test_cli_merge_adapter_refuses_a_different_base(tmp_path, captured_load, cap
     assert any("cannot be tied to the sealed" in m for m in caplog.messages)
 
 
+def test_cli_merge_adapter_reports_a_non_object_artifact_index(tmp_path, captured_load):
+    adapter = _write_sealed_adapter(tmp_path / "adapter")
+    (adapter / "artifact_index.json").write_text("[]")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "merge-adapter",
+            "--base-model",
+            MODEL_REPOSITORY,
+            "--adapter-path",
+            str(adapter),
+            "--out-dir",
+            str(tmp_path / "merged"),
+        ],
+    )
+
+    _assert_clean_exit(result, 1)
+    assert captured_load == []
+
+
 def test_cli_export_final_model_refuses_a_different_base(tmp_path, captured_load, caplog):
     adapter = _write_sealed_adapter(tmp_path / "adapter")
 
