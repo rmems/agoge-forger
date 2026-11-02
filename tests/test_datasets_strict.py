@@ -168,3 +168,28 @@ def test_load_jsonl_cache_hit_fails_closed_when_file_changes_after_hashing(
     monkeypatch.setattr(datasets_module, "sha256_file", hash_then_rewrite_once)
     with pytest.raises(ValueError, match="changed after cache identity was established"):
         load_jsonl_dataset(str(path))
+
+
+def test_jsonl_readers_decode_utf8_regardless_of_locale(tmp_path):
+    """JSONL is UTF-8; an ASCII locale must not reject or mis-decode it."""
+    import os
+    import subprocess  # nosec B404 - fixed interpreter and script, no shell
+    import sys
+
+    path = tmp_path / "train.jsonl"
+    path.write_bytes('{"text": "café ✓"}\n'.encode())
+    script = (
+        "import sys\n"
+        "from agoge_forger.datasets import iter_normalized_rows\n"
+        "rows = [row['text'] for _, row in iter_normalized_rows(sys.argv[1])]\n"
+        "assert rows == ['caf\\u00e9 \\u2713'], rows\n"
+    )
+    env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
+    result = subprocess.run(  # nosec B603 - fixed interpreter and script
+        [sys.executable, "-c", script, str(path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
