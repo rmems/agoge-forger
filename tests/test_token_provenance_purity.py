@@ -61,6 +61,10 @@ def _format_traversal_serializer(row):
     return f"{len.__self__.__name__}" + str(row["text"])
 
 
+def _format_map_traversal_serializer(row):
+    return "{a.__self__.__name__}".format_map({"a": len}) + str(row["text"])
+
+
 def _str_format_traversal_serializer(row):
     return str.format("{0.__self__.__name__}", len) + str(row["text"])
 
@@ -113,6 +117,7 @@ for _function, _identifier in (
     (_nested_import_serializer, "nested-import"),
     (_format_traversal_serializer, "format-traversal"),
     (_str_format_traversal_serializer, "str-format-traversal"),
+    (_format_map_traversal_serializer, "format-map-traversal"),
     (_real_global_serializer, "real-global"),
     (_builtins_serializer, "builtins-access"),
     (_builtins_module_import_serializer, "builtins-module-import"),
@@ -192,7 +197,12 @@ def test_fast_tokenizer_subclass_rejects_import_statement():
 
 
 @pytest.mark.parametrize(
-    "serializer", [_format_traversal_serializer, _str_format_traversal_serializer]
+    "serializer",
+    [
+        _format_traversal_serializer,
+        _str_format_traversal_serializer,
+        _format_map_traversal_serializer,
+    ],
 )
 def test_serializer_rejects_format_field_traversal(serializer):
     """``format`` stays a screened name: its fields can walk dunders out of sight."""

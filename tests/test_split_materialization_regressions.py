@@ -622,7 +622,7 @@ def test_blank_source_lines_keep_physical_coordinates_and_validate(
     assert bind_frozen_split(manifest_path, "train").manifest == manifest
 
 
-@pytest.mark.parametrize("suffix", ["0", "07", "x1", "1a", ""])
+@pytest.mark.parametrize("suffix", ["0", "07", "x1", "1a", "", "\u00b2", "\u0661\u0662"])
 def test_recorded_source_coordinate_still_requires_positive_line_suffix(
     tmp_path: Path, suffix: str
 ) -> None:
@@ -632,6 +632,10 @@ def test_recorded_source_coordinate_still_requires_positive_line_suffix(
     manifest = materialize_split(source, output, _spec())
 
     assert split_validation._recorded_source_coordinate_matches(f"{SOURCE_PATH}:1000", manifest)
+    # Past int()'s 4300-digit string limit: still a well-formed line, and no exception.
+    assert split_validation._recorded_source_coordinate_matches(
+        f"{SOURCE_PATH}:{'1' * 5000}", manifest
+    )
     assert not split_validation._recorded_source_coordinate_matches(
         f"{SOURCE_PATH}:{suffix}", manifest
     )
