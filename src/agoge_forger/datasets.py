@@ -18,7 +18,7 @@ def _validate_message(m, index, msg_i):
     if not isinstance(m, dict):
         # Schema errors stay ValueError (1-indexed line) like other normalize_row paths.
         raise ValueError(f"Line {index}: messages[{msg_i}] must be an object.")  # noqa: TRY004
-    if "role" not in m or "content" not in m:
+    if not {"role", "content"} <= m.keys():
         raise ValueError(f"Line {index}: messages must contain 'role' and 'content'.")
     if m["role"] not in _MESSAGE_ROLES:
         raise ValueError(f"Line {index}: invalid role '{m['role']}'.")
@@ -33,7 +33,7 @@ def _normalize_messages(row, tokenizer, index):
         raise ValueError(f"Line {index}: 'messages' must be a list.")  # noqa: TRY004
     for msg_i, m in enumerate(row["messages"], 1):
         _validate_message(m, index, msg_i)
-    if tokenizer and hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+    if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
         text = tokenizer.apply_chat_template(
             row["messages"], tokenize=False, add_generation_prompt=False
         )
@@ -52,14 +52,18 @@ def _normalize_instruction(row, index):
     return {"text": text}
 
 
+def _normalize_text(row, index):
+    if not isinstance(row["text"], str):
+        raise ValueError(f"Line {index}: 'text' field must be a string.")  # noqa: TRY004
+    return row
+
+
 def normalize_row(row, tokenizer=None, index=0):
     if not isinstance(row, dict):
         # Schema path uses ValueError with 1-indexed line (not bare TypeError).
         raise ValueError(f"Line {index}: JSONL row must be an object.")  # noqa: TRY004
     if "text" in row:
-        if not isinstance(row["text"], str):
-            raise ValueError(f"Line {index}: 'text' field must be a string.")
-        return row
+        return _normalize_text(row, index)
     if "messages" in row:
         return _normalize_messages(row, tokenizer, index)
     if "instruction" in row:
