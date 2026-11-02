@@ -22,7 +22,8 @@ CUDA_VISIBLE_DEVICES= uv run pytest tests/ -q
   run when CUDA is visible (`consumer_contract.yml` sets `CUDA_VISIBLE_DEVICES: "-1"`;
   `pr_quality_gate.yml` does not). On this RTX 5080 host, a bare
   `uv run pytest tests/` fails those 5 tests and passes the rest.
-- Makefile targets: `setup`, `check` / `check-torch` (prints torch/CUDA/VRAM),
+- Recipes live in the root `justfile` (`just --list`); the Makefile is a thin alias
+  that calls `just <target>`. Makefile targets: `setup`, `check` / `check-torch` (prints torch/CUDA/VRAM),
   `test`, `lint` (ruff check + mypy; not format), `train-smoke` (QLoRA on
   `configs/minicpm5_canary.yaml`, needs the GPU and model weights), `eval-smoke`
   (needs `adapters/minicpm5_canary` from `train-smoke`).
