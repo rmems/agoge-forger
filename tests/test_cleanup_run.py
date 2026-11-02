@@ -11,12 +11,18 @@ from agoge_forger.artifacts.safetensors_io import write_artifact_index
 from agoge_forger.cleanup_run import (
     CLEANUP_SCHEMA_VERSION,
     CleanupOptions,
+    _keep_set,
     execute_cleanup,
     format_cleanup_table,
     log_cleanup,
     plan_cleanup,
 )
 from agoge_forger.run_status import build_run_status
+from agoge_forger.train.checkpoints import (
+    QUARANTINE_DIRNAME,
+    find_latest_valid_checkpoint,
+    incomplete_checkpoint_reason,
+)
 from tests.test_run_status import (
     _make_run_dir,
     _write_checkpoint,
@@ -152,6 +158,72 @@ def test_invalid_checkpoint_is_reclaimed_even_inside_the_keep_window(tmp_path):
     execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=1)))
 
     assert _checkpoint_names(run_dir) == ["checkpoint-50"]
+
+
+def _tear_trainer_state(checkpoint_dir):
+    (checkpoint_dir / "trainer_state.json").write_text('{"global_step": 100, "log_hi')
+
+
+def _truncate_weights(checkpoint_dir):
+    weights = checkpoint_dir / "adapter_model.safetensors"
+    payload = weights.read_bytes()
+    weights.write_bytes(payload[: len(payload) // 2])
+
+
+@pytest.mark.parametrize("damage", [_tear_trainer_state, _truncate_weights])
+@pytest.mark.parametrize("final_adapter", [True, False])
+def test_keep_latest_skips_filename_valid_checkpoints_resume_would_reject(
+    tmp_path, damage, final_adapter
+):
+    """A torn `trainer_state.json` or truncated weights pass the filename check
+    but resume quarantines them. Keeping one would delete the real resume point.
+    """
+    run_dir = _run_with_checkpoints(tmp_path, steps=(50, 100), final_adapter=final_adapter)
+    damage(run_dir / "checkpoint-100")
+    assert incomplete_checkpoint_reason(run_dir / "checkpoint-100") is not None
+    options = CleanupOptions(keep_latest=1, force=not final_adapter)
+
+    plan = plan_cleanup(str(run_dir), options)
+
+    # Planning judges resumability without quarantining or moving anything.
+    assert _checkpoint_names(run_dir) == ["checkpoint-100", "checkpoint-50"]
+    assert not (run_dir / QUARANTINE_DIRNAME).exists()
+    assert [Path(path).name for path in plan["kept"]] == ["checkpoint-50"]
+    assert [entry["step"] for entry in plan["removed"]] == [100]
+
+    execute_cleanup(plan)
+
+    assert _checkpoint_names(run_dir) == ["checkpoint-50"]
+    assert find_latest_valid_checkpoint(run_dir) == run_dir / "checkpoint-50"
+    assert incomplete_checkpoint_reason(run_dir / "checkpoint-50") is None
+
+
+@pytest.mark.parametrize("invalid_first", [True, False])
+def test_keep_set_matches_validity_per_directory_not_per_step(tmp_path, invalid_first):
+    """An invalid `checkpoint-0150` parses as step 150, like the valid
+    `checkpoint-150`. Whatever the listing order, the slot goes to the valid one.
+    """
+    run_dir = _make_run_dir(tmp_path)
+    valid = _write_checkpoint(run_dir, 150)
+    invalid = run_dir / "checkpoint-0150"
+    invalid.mkdir()
+    (invalid / "trainer_state.json").write_text(json.dumps({"global_step": 150}))
+    ordered = [invalid, valid] if invalid_first else [valid, invalid]
+
+    assert _keep_set(ordered, 1, allow_unsafe=False) == {valid.resolve()}
+
+
+@pytest.mark.parametrize("padded", ["checkpoint-0150", "checkpoint-00150", "checkpoint-000150"])
+def test_invalid_same_step_sibling_does_not_take_the_keep_slot(tmp_path, padded):
+    run_dir = _run_with_checkpoints(tmp_path)
+    duplicate = run_dir / padded
+    duplicate.mkdir()
+    (duplicate / "trainer_state.json").write_text(json.dumps({"global_step": 150}))
+
+    execute_cleanup(plan_cleanup(str(run_dir), CleanupOptions(keep_latest=1)))
+
+    assert _checkpoint_names(run_dir) == ["checkpoint-150"]
+    assert build_run_status(str(run_dir))["checkpoints"]["valid_count"] == 1
 
 
 def test_negative_keep_latest_is_rejected(tmp_path):
