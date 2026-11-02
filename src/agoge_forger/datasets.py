@@ -11,6 +11,46 @@ from .logging import logger
 from .path_safety import resolve_existing_path
 from .split_schema import sha256_file
 
+_MESSAGE_ROLES = ("user", "assistant", "system", "tool")
+
+
+def _validate_message(m, index, msg_i):
+    if not isinstance(m, dict):
+        # Schema errors stay ValueError (1-indexed line) like other normalize_row paths.
+        raise ValueError(f"Line {index}: messages[{msg_i}] must be an object.")  # noqa: TRY004
+    if "role" not in m or "content" not in m:
+        raise ValueError(f"Line {index}: messages must contain 'role' and 'content'.")
+    if m["role"] not in _MESSAGE_ROLES:
+        raise ValueError(f"Line {index}: invalid role '{m['role']}'.")
+    if not isinstance(m["content"], str):
+        raise ValueError(  # noqa: TRY004
+            f"Line {index}: messages[{msg_i}].content must be a string."
+        )
+
+
+def _normalize_messages(row, tokenizer, index):
+    if not isinstance(row["messages"], list):
+        raise ValueError(f"Line {index}: 'messages' must be a list.")  # noqa: TRY004
+    for msg_i, m in enumerate(row["messages"], 1):
+        _validate_message(m, index, msg_i)
+    if tokenizer and hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+        text = tokenizer.apply_chat_template(
+            row["messages"], tokenize=False, add_generation_prompt=False
+        )
+        return {"text": text}
+    text = "\n".join([f"{m['role'].capitalize()}: {m['content']}" for m in row["messages"]])
+    return {"text": text}
+
+
+def _normalize_instruction(row, index):
+    if not isinstance(row["instruction"], str):
+        raise ValueError(f"Line {index}: 'instruction' must be a string.")  # noqa: TRY004
+    text = f"Instruction: {row['instruction']}\n"
+    if row.get("input"):
+        text += f"Input: {row['input']}\n"
+    text += f"Output: {row.get('output', '')}"
+    return {"text": text}
+
 
 def normalize_row(row, tokenizer=None, index=0):
     if not isinstance(row, dict):
@@ -20,44 +60,13 @@ def normalize_row(row, tokenizer=None, index=0):
         if not isinstance(row["text"], str):
             raise ValueError(f"Line {index}: 'text' field must be a string.")
         return row
-    elif "messages" in row:
-        if not isinstance(row["messages"], list):
-            raise ValueError(f"Line {index}: 'messages' must be a list.")
-        for msg_i, m in enumerate(row["messages"], 1):
-            if not isinstance(m, dict):
-                # Schema errors stay ValueError (1-indexed line) like other normalize_row paths.
-                raise ValueError(  # noqa: TRY004
-                    f"Line {index}: messages[{msg_i}] must be an object."
-                )
-            if "role" not in m or "content" not in m:
-                raise ValueError(f"Line {index}: messages must contain 'role' and 'content'.")
-            if m["role"] not in ["user", "assistant", "system", "tool"]:
-                raise ValueError(f"Line {index}: invalid role '{m['role']}'.")
-            if not isinstance(m["content"], str):
-                raise ValueError(  # noqa: TRY004
-                    f"Line {index}: messages[{msg_i}].content must be a string."
-                )
-
-        if tokenizer and hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-            text = tokenizer.apply_chat_template(
-                row["messages"], tokenize=False, add_generation_prompt=False
-            )
-            return {"text": text}
-        else:
-            text = "\n".join([f"{m['role'].capitalize()}: {m['content']}" for m in row["messages"]])
-            return {"text": text}
-    elif "instruction" in row:
-        if not isinstance(row["instruction"], str):
-            raise ValueError(f"Line {index}: 'instruction' must be a string.")
-        text = f"Instruction: {row['instruction']}\n"
-        if row.get("input"):
-            text += f"Input: {row['input']}\n"
-        text += f"Output: {row.get('output', '')}"
-        return {"text": text}
-    else:
-        raise ValueError(
-            f"Line {index}: Unknown format. Must contain 'text', 'messages', or 'instruction'."
-        )
+    if "messages" in row:
+        return _normalize_messages(row, tokenizer, index)
+    if "instruction" in row:
+        return _normalize_instruction(row, index)
+    raise ValueError(
+        f"Line {index}: Unknown format. Must contain 'text', 'messages', or 'instruction'."
+    )
 
 
 @dataclass(frozen=True)

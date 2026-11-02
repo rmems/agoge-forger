@@ -36,7 +36,7 @@ def require_empty_output_directory(out_dir: str) -> None:
     directory is accepted; nothing is created here.
     """
     candidate = Path(out_dir).expanduser()
-    if not candidate.exists() and not candidate.is_symlink():
+    if not os.path.lexists(candidate):  # absent (a dangling symlink still counts)
         return
     if not candidate.is_dir():
         raise ValueError(f"Merge output path exists and is not a directory: {candidate}")
@@ -103,7 +103,7 @@ def resolve_pinned_base_model(
     """
     pinned_repo = provenance.base_model_name_or_path
     pinned_revision = provenance.revision
-    if revision is not None and revision != pinned_revision:
+    if revision not in (None, pinned_revision):
         raise ValueError(
             f"Adapter base revision {revision!r} does not match the sealed "
             f"producer_provenance revision {pinned_revision!r}"
