@@ -56,7 +56,9 @@ ci:
     uv run ruff check .
     uv run ruff format --check .
     uv run mypy src/agoge_forger
-    uv run pytest tests/
+    # Hide the GPU: tests/test_consumer_contract.py refuses to run when CUDA is
+    # visible, so a bare run fails those 5 tests on the RTX 5080 host (see CLAUDE.md).
+    CUDA_VISIBLE_DEVICES= uv run pytest tests/
 
 # --- CLI pass-through ---------------------------------------------------------
 
