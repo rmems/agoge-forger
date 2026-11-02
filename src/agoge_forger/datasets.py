@@ -151,12 +151,7 @@ def load_jsonl_dataset(path: str, tokenizer=None):
 
     dataset_path = resolve_existing_path(path, must_be_file=True)
 
-    # Cheap empty check: avoid from_generator SchemaInferenceError on zero rows.
-    with dataset_path.open("r") as f:
-        if not any(line.strip() for line in f):
-            raise ValueError(
-                f"Dataset is empty (no valid JSONL rows after skipping blanks): {dataset_path}"
-            )
+    _require_non_blank(dataset_path)
 
     # The file digest is part of the HF generator cache identity, so rewriting
     # the file at the same path cannot silently reuse stale cached Arrow rows
@@ -175,6 +170,15 @@ def load_jsonl_dataset(path: str, tokenizer=None):
     # holds the bytes the cache was keyed on before returning those rows.
     _require_unchanged(dataset_path, request.sha256)
     return dataset
+
+
+def _require_non_blank(dataset_path: Path) -> None:
+    # Cheap empty check: avoid from_generator SchemaInferenceError on zero rows.
+    with dataset_path.open("r") as f:
+        if not any(line.strip() for line in f):
+            raise ValueError(
+                f"Dataset is empty (no valid JSONL rows after skipping blanks): {dataset_path}"
+            )
 
 
 def _require_unchanged(dataset_path: Path, expected_sha256: str) -> None:

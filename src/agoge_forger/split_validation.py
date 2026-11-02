@@ -36,7 +36,7 @@ from .split_schema import (
     SplitName,
 )
 
-_LINE_SUFFIX = re.compile(r"[1-9][0-9]*")
+_LINE_SUFFIX = re.compile(r"[1-9]\d*", re.ASCII)  # ASCII: \d must not match ² or ١
 
 
 def load_split_manifest(manifest_path: str | Path) -> SplitManifest:
