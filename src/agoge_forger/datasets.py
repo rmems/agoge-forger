@@ -1,8 +1,15 @@
+import hashlib
+import io
 import json
+from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, BinaryIO
 
 from .config import normalize_revision
 from .logging import logger
 from .path_safety import resolve_existing_path
+from .split_schema import sha256_file
 
 
 def normalize_row(row, tokenizer=None, index=0):
@@ -53,13 +60,62 @@ def normalize_row(row, tokenizer=None, index=0):
         )
 
 
+@dataclass(frozen=True)
+class _JsonlDatasetRequest:
+    path: str
+    sha256: str
+    tokenizer: Any
+
+
+class _HashingReader(io.RawIOBase):
+    """Raw reader that hashes exactly the bytes handed to the text decoder."""
+
+    def __init__(self, handle: BinaryIO) -> None:
+        super().__init__()
+        self._handle = handle
+        self.digest = hashlib.sha256()
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        data = self._handle.read(len(buffer))
+        size = len(data)
+        buffer[:size] = data
+        self.digest.update(data)
+        return size
+
+
+def _generate_jsonl_rows(request: _JsonlDatasetRequest) -> Iterator[dict[str, Any]]:
+    with Path(request.path).open("rb") as handle:
+        reader = _HashingReader(handle)
+        # Same decoding / universal-newline semantics as ``open(path, "r")``.
+        rows_file = io.TextIOWrapper(io.BufferedReader(reader))
+        for i, line in enumerate(rows_file, 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Line {i}: Invalid JSON - {e}") from e
+            yield normalize_row(row, request.tokenizer, index=i)
+        # Fail closed (nothing is committed to the cache) if the bytes read
+        # differ from the digest the cache identity was keyed on.
+        if reader.digest.hexdigest() != request.sha256:
+            raise ValueError(
+                f"Dataset file changed after cache identity was established: {request.path}"
+            )
+
+
 def load_jsonl_dataset(path: str, tokenizer=None):
     """Load JSONL via ``Dataset.from_generator`` (disk-backed Arrow cache).
 
     Empty / blank-only files raise a clear ``ValueError`` without switching to
     an all-in-memory ``from_list`` path that doubles peak RAM on large corpora.
     Schema ``ValueError``s from ``normalize_row`` are re-raised unwrapped (HF
-    wraps them in ``DatasetGenerationError``).
+    wraps them in ``DatasetGenerationError``). The file's sha256 is part of the
+    cache identity and is re-verified while generating, so a file rewritten at
+    the same path is never served from a stale Arrow cache.
     """
     from datasets.exceptions import DatasetGenerationError
 
@@ -74,19 +130,16 @@ def load_jsonl_dataset(path: str, tokenizer=None):
                 f"Dataset is empty (no valid JSONL rows after skipping blanks): {dataset_path}"
             )
 
-    def gen():
-        with dataset_path.open("r") as rows_file:
-            for i, line in enumerate(rows_file, 1):
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"Line {i}: Invalid JSON - {e}") from e
-                yield normalize_row(row, tokenizer, index=i)
-
+    # The file digest is part of the HF generator cache identity, so rewriting
+    # the file at the same path cannot silently reuse stale cached Arrow rows
+    # (mirrors split_loaders.load_frozen_dataset).
+    request = _JsonlDatasetRequest(
+        path=str(dataset_path),
+        sha256=sha256_file(dataset_path),
+        tokenizer=tokenizer,
+    )
     try:
-        return Dataset.from_generator(gen)
+        return Dataset.from_generator(_generate_jsonl_rows, gen_kwargs={"request": request})
     except DatasetGenerationError as exc:
         cause: BaseException | None = exc.__cause__
         while cause is not None:
