@@ -8,3 +8,7 @@ pin their dataset and split by immutable digest rather than by path.
 
 The accepted JSONL row formats and their validation rules are specified in
 `docs/contracts/dataset_jsonl.md`.
+
+Measured frozen sources are narrower: `agoge freeze-split` requires pre-rendered `text`
+and rejects `messages` and `instruction`/`output` rows. See
+`docs/frozen_split_and_eval_contracts.md`.
