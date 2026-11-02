@@ -114,8 +114,8 @@ def _iter_jsonl_objects(lines: Iterable[str]) -> Iterator[tuple[int, Any]]:
 def _generate_jsonl_rows(request: _JsonlDatasetRequest) -> Iterator[dict[str, Any]]:
     with Path(request.path).open("rb") as handle:
         reader = _HashingReader(handle)
-        # Same decoding / universal-newline semantics as ``open(path, "r")``.
-        rows_file = io.TextIOWrapper(io.BufferedReader(reader))
+        # Same decoding / universal-newline semantics as ``open(path, "r", encoding="utf-8")``.
+        rows_file = io.TextIOWrapper(io.BufferedReader(reader), encoding="utf-8")
         for i, row in _iter_jsonl_objects(rows_file):
             yield normalize_row(row, request.tokenizer, index=i)
         # Fail closed (nothing is committed to the cache) if the bytes read
@@ -174,7 +174,7 @@ def load_jsonl_dataset(path: str, tokenizer=None):
 
 def _require_non_blank(dataset_path: Path) -> None:
     # Cheap empty check: avoid from_generator SchemaInferenceError on zero rows.
-    with dataset_path.open("r") as f:
+    with dataset_path.open("r", encoding="utf-8") as f:
         if not any(line.strip() for line in f):
             raise ValueError(
                 f"Dataset is empty (no valid JSONL rows after skipping blanks): {dataset_path}"
@@ -198,7 +198,7 @@ def iter_normalized_rows(path: str):
     """
     dataset_path = resolve_existing_path(path, must_be_file=True)
 
-    with dataset_path.open("r") as f:
+    with dataset_path.open("r", encoding="utf-8") as f:
         for i, row in _iter_jsonl_objects(f):
             yield i, normalize_row(row, None, index=i)
 
