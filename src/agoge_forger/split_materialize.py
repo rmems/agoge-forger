@@ -9,9 +9,7 @@ import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypedDict
-
-from typing_extensions import Unpack
+from typing import Any, TypedDict, Unpack
 
 from ._atomic_directory import rename_noreplace, require_rename_noreplace_support
 from ._source_snapshot import copy_source_snapshot, nearest_existing_output_ancestor

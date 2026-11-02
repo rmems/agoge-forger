@@ -3,10 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
-import torch
-from transformers import LlamaConfig, LlamaForCausalLM
-
 from agoge_forger.eval.contract import (
     ArtifactIndexReference,
     DecodingContract,
@@ -26,36 +22,6 @@ from tests.peft_adapter_fixtures import write_complete_adapter_model
 
 MODEL_REPOSITORY = "example/base-model"
 MODEL_REVISION = "abcdef0123456789abcdef0123456789abcdef01"
-BuildArgs = tuple[Path, Path, EvaluationArm, EvaluationArm]
-
-
-def _writable_safetensors_dtypes() -> tuple[tuple[object, str], ...]:
-    names = (
-        ("float64", "F64"),
-        ("float32", "F32"),
-        ("float16", "F16"),
-        ("bfloat16", "BF16"),
-        ("int64", "I64"),
-        ("int32", "I32"),
-        ("int16", "I16"),
-        ("int8", "I8"),
-        ("uint64", "U64"),
-        ("uint32", "U32"),
-        ("uint16", "U16"),
-        ("uint8", "U8"),
-        ("bool", "BOOL"),
-        ("float8_e4m3fn", "F8_E4M3"),
-        ("float8_e5m2", "F8_E5M2"),
-        ("float8_e8m0fnu", "F8_E8M0"),
-        ("float4_e2m1fn_x2", "F4"),
-        ("complex64", "C64"),
-    )
-    return tuple(
-        (dtype, label) for name, label in names if (dtype := getattr(torch, name, None)) is not None
-    )
-
-
-WRITABLE_SAFETENSORS_DTYPES = _writable_safetensors_dtypes()
 
 
 def write_safetensors(path: Path, value: int = 0, *, keys: tuple[str, ...] = ("weight",)) -> None:
@@ -137,11 +103,6 @@ def with_artifact(sft: EvaluationArm, output_dir: Path, *, kind, provenance=None
     )
 
 
-def write_adapter_config(output_dir: Path, payload: dict[str, object]) -> None:
-    complete = {"peft_type": "LORA", **payload}
-    (output_dir / "adapter_config.json").write_bytes(canonical_json_bytes(complete) + b"\n")
-
-
 def model_provenance(
     repository: object = MODEL_REPOSITORY,
     revision: object = MODEL_REVISION,
@@ -161,35 +122,6 @@ def model_provenance(
 def write_merged_config(output_dir: Path, payload: dict[str, str] | None = None) -> None:
     complete = {"model_type": "llama"} if payload is None else payload
     (output_dir / "config.json").write_bytes(canonical_json_bytes(complete) + b"\n")
-
-
-def write_complete_merged_model(
-    output_dir: Path,
-    *,
-    sharded: bool,
-    tie_word_embeddings: bool = False,
-    dtype: torch.dtype | None = None,
-) -> None:
-    config = LlamaConfig(
-        vocab_size=16,
-        hidden_size=8,
-        intermediate_size=16,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        num_key_value_heads=2,
-        tie_word_embeddings=tie_word_embeddings,
-        dtype=dtype,
-    )
-    model = LlamaForCausalLM(config)
-    if dtype is not None:
-        model.to(dtype=dtype)
-    model.save_pretrained(output_dir, max_shard_size="1KB" if sharded else "1GB")
-
-
-def refresh_contract_artifact_digest(contract_path: Path, artifact_index: Path) -> None:
-    payload = json.loads(contract_path.read_bytes())
-    payload["sft"]["artifact"]["artifact_index_sha256"] = sha256_file(artifact_index)
-    contract_path.write_bytes(canonical_json_bytes(payload) + b"\n")
 
 
 def evaluation_arms(task_digest: str, tmp_path: Path):
@@ -244,13 +176,6 @@ def evaluation_case(tmp_path: Path):
     return manifest_path, manifest, base, sft
 
 
-def artifact_case(tmp_path: Path, directory: str):
-    manifest_path, _, base, sft = evaluation_case(tmp_path)
-    output_dir = tmp_path / directory
-    output_dir.mkdir(exist_ok=True)
-    return manifest_path, base, sft, output_dir
-
-
 def build_contract(tmp_path: Path, manifest_path: Path, base: EvaluationArm, sft: EvaluationArm):
     return build_evaluation_contract(
         manifest_path=manifest_path,
@@ -260,87 +185,9 @@ def build_contract(tmp_path: Path, manifest_path: Path, base: EvaluationArm, sft
     )
 
 
-def assert_build_rejected(
-    build_args: BuildArgs,
-    expected_error: str,
-    error_type: type[BaseException] = ValueError,
-) -> None:
-    with pytest.raises(error_type, match=expected_error):
-        build_contract(*build_args)
-
-
 def write_shard_index(output_dir: Path, payload: dict[str, object]) -> None:
     (output_dir / "model.safetensors.index.json").write_bytes(canonical_json_bytes(payload) + b"\n")
 
 
 def paths_absent(*paths: Path) -> bool:
     return all(not path.exists() for path in paths)
-
-
-def write_invalid_merged_layout(output_dir: Path, variant: str) -> None:
-    write_merged_config(output_dir)
-    single = "model-00001-of-00001.safetensors"
-    first = "model-00001-of-00002.safetensors"
-    second = "model-00002-of-00002.safetensors"
-    tensor_key = "layer.0"
-    if variant.startswith("provenance-"):
-        write_safetensors(output_dir / "model.safetensors")
-        return
-    tensor_maps = {
-        "tensor-missing": (("actual.a",), ("actual.b",), {"claimed.a": first, "actual.b": second}),
-        "tensor-extra": (
-            ("mapped.a", "extra.a"),
-            ("mapped.b",),
-            {"mapped.a": first, "mapped.b": second},
-        ),
-        "tensor-duplicate": (
-            ("shared", "a"),
-            ("shared", "b"),
-            {"shared": first, "a": first, "b": second},
-        ),
-        "tensor-misplaced": (("a",), ("b",), {"a": second, "b": first}),
-    }
-    if variant in tensor_maps:
-        first_keys, second_keys, weight_map = tensor_maps[variant]
-        write_safetensors(output_dir / first, keys=first_keys)
-        write_safetensors(output_dir / second, keys=second_keys)
-        write_shard_index(output_dir, {"metadata": {"total_size": 2}, "weight_map": weight_map})
-        return
-
-    shard_references = {
-        "shard-bin": "model-00001-of-00001.bin",
-        "shard-noncanonical": "./model-00001-of-00001.safetensors",
-        "shard-unindexed": "model-00001-of-00001.safetensors",
-    }
-    if variant in shard_references:
-        write_shard_index(
-            output_dir,
-            {"metadata": {"total_size": 1}, "weight_map": {tensor_key: shard_references[variant]}},
-        )
-    elif variant == "ambiguous":
-        write_safetensors(output_dir / "model.safetensors")
-        write_shard_index(
-            output_dir,
-            {"metadata": {"total_size": 1}, "weight_map": {tensor_key: single}},
-        )
-    elif variant == "duplicate-map-key":
-        write_safetensors(output_dir / single)
-        (output_dir / "model.safetensors.index.json").write_text(
-            f'{{"metadata":{{}},"weight_map":{{"{tensor_key}":"{single}",'
-            f'"{tensor_key}":"{single}"}}}}\n',
-            encoding="utf-8",
-        )
-    elif variant == "unreferenced-shard":
-        write_safetensors(output_dir / single)
-        write_safetensors(output_dir / second, value=1)
-        write_shard_index(
-            output_dir, {"metadata": {"total_size": 2}, "weight_map": {tensor_key: single}}
-        )
-    else:
-        invalid_indices = {
-            "empty-map-missing": {},
-            "empty-map-list": {"weight_map": []},
-            "non-string-shard": {"metadata": {}, "weight_map": {tensor_key: 7}},
-            "missing-metadata": {"weight_map": {tensor_key: single}},
-        }
-        write_shard_index(output_dir, invalid_indices[variant])

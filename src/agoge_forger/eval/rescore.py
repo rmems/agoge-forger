@@ -39,10 +39,6 @@ _ARM_ROLES: dict[str, Literal["causal_base", "causal_sft"]] = {
 _CONTRACT_FILE = "contract.json"
 
 
-def read_generations(path: Path) -> tuple[GenerationRecord, ...]:
-    return _parse_generations(path.read_bytes(), path)
-
-
 def _parse_generations(content: bytes, path: Path) -> tuple[GenerationRecord, ...]:
     records: list[GenerationRecord] = []
     for number, line in enumerate(content.decode("utf-8").split("\n"), start=1):

@@ -6,12 +6,12 @@ Benchmark and smoke-test results are logged as newline-delimited JSON (JSONL). T
 
 ## File Location
 
-Benchmark results are written to different locations depending on the runner type:
-
-- **Full training benchmark runs:** `runs/<run_name>/results.jsonl`
-- **CI smoke tests:** `smoke_output/results.jsonl` (configurable via `--output-dir` flag, default `smoke_output/`)
-
-Artifact collectors should check both paths, or prefer `smoke_output/` when running in CI environments.
+On POSIX hosts, `scripts/smoke_test.py` writes `results.jsonl` and the companion
+files below to its `--output-dir` (default `smoke_output/`, gitignored). Platforms
+without `openat`/dirfd support (typical Windows CPython) fail closed and exit before
+writing anything; run the script under WSL or another POSIX environment. Training
+runs do not produce this file; what lands under `runs/<run_name>/` is specified in
+`docs/contracts/run_manifest.md`.
 
 ## Schema
 

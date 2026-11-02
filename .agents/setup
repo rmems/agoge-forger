@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Amp orb setup for agoge-forger.
+# Agent environment setup for agoge-forger, shared by the Amp orb and the Cursor
+# cloud agent (`install` in .cursor/environment.json).
 #
 # Amp runs this from the repository root when it builds a project orb snapshot
-# (Debian 12, CPU only: orbs have no GPU). It must finish within 20 minutes and
-# be safe to run more than once. See https://ampcode.com/docs/orbs/customizing
+# (Debian 12, CPU only: orbs have no GPU); Cursor runs it during every Build on its
+# Ubuntu base image (also CPU only). It must finish within 20 minutes and be safe to
+# run more than once. See https://ampcode.com/docs/orbs/customizing and
+# https://cursor.com/docs/cloud-agent/setup
 #
 # Installs only what this repo's CI and manifests need:
 #   - apt: curl, ca-certificates
@@ -70,8 +73,8 @@ uv python install 3.14
 CUDA_VISIBLE_DEVICES=-1 uv sync --python 3.14 --locked --extra dev
 
 # --- Expose the tools to later shells ---
-# The PATH exports above last only for this script; Amp starts the agent's shell
-# separately. Login shells get these directories from /etc/profile.d, and every other
+# The PATH exports above last only for this script; the agent host starts the agent's
+# shell separately. Login shells get these directories from /etc/profile.d, and every other
 # shell finds the entry points through symlinks in /usr/local/bin (on the default PATH).
 # In login shells the venv's bin comes first, so python3 is the venv's Python.
 # The links skip python and pip so the system python3 stays the default elsewhere.
@@ -94,4 +97,4 @@ for dir in "${tool_dirs[@]}"; do
   done
 done
 
-echo "Amp orb setup for agoge-forger finished."
+echo "Agent environment setup for agoge-forger finished."

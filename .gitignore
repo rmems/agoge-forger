@@ -3,32 +3,19 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
 build/
-develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
-MANIFEST
-*.manifest
-*.spec
 pip-log.txt
 pip-delete-this-directory.txt
 
 # Virtual environments
 .venv
 venv/
-ENV/
 env/
 .env
 
@@ -39,15 +26,10 @@ env/
 *.swo
 *~
 
-# Jupyter
-.ipynb_checkpoints
-
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
-.tox/
-.nox/
 
 # Linting / Type checking
 .ruff_cache/
@@ -65,6 +47,9 @@ adapters/
 merged/
 gguf/
 runs/
+# `agoge held-out-eval --output-dir eval/<run_name>` (README); anchored so the
+# src/agoge_forger/eval package stays visible to git.
+/eval/
 smoke_output/
 reports/
 
@@ -77,11 +62,6 @@ datasets/samples/*.jsonl
 *.bin
 *.pt
 *.gguf
-
-# Local profiler chrome / kineto dumps if written outside runs/
-*.chrome.json
-profiler_traces/
-
 
 # Ignore cursor AI rules
 .cursor/rules/codacy.mdc
