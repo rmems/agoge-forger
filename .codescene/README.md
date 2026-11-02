@@ -1,11 +1,16 @@
 # CodeScene rule scoping
 
-`code-health-rules.json` narrows two Code Health rules for `src/agoge_forger/_cli_*.py`
-only. Everything else in the repository keeps CodeScene's defaults.
+`code-health-rules.json` narrows Code Health rules for two scopes only. Everything else in
+the repository keeps CodeScene's defaults.
 
-## Why
+| Path | Rules at weight 0 |
+| --- | --- |
+| `src/agoge_forger/_cli_*.py` | `Excess Number of Function Arguments`, `Missing Arguments Abstractions` |
+| `src/agoge_forger/eval/rescore.py` | `Overall Code Complexity` |
 
-Those modules hold the Typer command functions, and in Typer a command's **parameters are
+## Why: Typer command modules
+
+The `_cli_*.py` modules hold the Typer command functions, and in Typer a command's **parameters are
 its CLI flags** — one parameter per `--flag`, each carrying its own help text:
 
 | Command | Parameters | What they are |
@@ -25,11 +30,25 @@ The rules stay fully enabled everywhere else, including the library code these c
 call into, where the smell they measure is real. `plan_cleanup` was reduced from six
 parameters to two for exactly that reason.
 
-## What is deliberately *not* scoped
+### What is deliberately *not* scoped
 
 `Complex Method`, `Overall Code Complexity`, `Large Method`, `Brain Method` and every other
-rule remain at their defaults for these files. A CLI command body that grows complicated is
+rule remain at their defaults for the CLI modules. A CLI command body that grows complicated is
 a genuine problem, and the split exists to keep those bodies thin — resolve, call, print.
+
+## Why: `eval/rescore.py`
+
+`Overall Code Complexity` scores a module's *mean* cyclomatic complexity against a threshold
+of 4, so it also fires when a simple function is removed and the average of what remains
+rises. That is what happened in #212: deleting the unused one-statement `read_generations`
+wrapper left this module at a mean of 4.43 across seven functions, while every remaining
+function stayed exactly as complex as it was. Restoring dead code or splitting working
+functions to hold an average down would make the module worse.
+
+Only the module-level mean is scoped. `Complex Method`, `Large Method`, `Brain Method` and
+every other rule stay at their defaults for this file, so a function that actually grows
+complicated still fails review. Remove this entry if a refactor brings the mean back under
+the threshold.
 
 ## Maintenance
 

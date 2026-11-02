@@ -13,6 +13,16 @@
         }
       ],
       "thresholds": []
+    },
+    {
+      "matching_content_path": "src/agoge_forger/eval/rescore.py",
+      "rules": [
+        {
+          "name": "Overall Code Complexity",
+          "weight": 0.0
+        }
+      ],
+      "thresholds": []
     }
   ]
 }
