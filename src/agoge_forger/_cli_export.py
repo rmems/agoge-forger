@@ -91,7 +91,8 @@ def merge_adapter(
             allow_unsafe=allow_unsafe_serialization,
             producer_provenance=producer_provenance_from_adapter(safe_adapter_path),
         )
-    except CLI_PATH_ERRORS as e:
+    except (*CLI_PATH_ERRORS, TypeError) as e:
+        # TypeError: a non-object artifact_index.json (_load_artifact_index_payload).
         exit_on_error(e)
 
 
