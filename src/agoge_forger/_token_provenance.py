@@ -529,18 +529,19 @@ def _require_no_external_dependencies(
     extra_pure_builtins: frozenset[str] = frozenset(),
 ) -> None:
     instructions = _recursive_instructions(function.__code__)
-    imports = sorted(_operand_names(instructions, _IMPORT_OPCODES))
-    if imports:
-        raise ValueError(f"{label} must not import modules: {imports!r}")
-    global_writes = sorted(_operand_names(instructions, _GLOBAL_WRITE_OPCODES))
-    if global_writes:
-        raise ValueError(f"{label} must not assign module globals: {global_writes!r}")
-    dependencies = _global_dependencies(function, instructions)
-    if dependencies:
-        raise ValueError(f"{label} must not depend on module globals: {dependencies!r}")
-    unsafe_builtins = _unsafe_builtin_dependencies(instructions, extra_pure_builtins)
-    if unsafe_builtins:
-        raise ValueError(f"{label} uses unsafe builtins: {unsafe_builtins!r}")
+    # Checked in order; the first non-empty finding is reported.
+    findings = (
+        ("must not import modules", sorted(_operand_names(instructions, _IMPORT_OPCODES))),
+        (
+            "must not assign module globals",
+            sorted(_operand_names(instructions, _GLOBAL_WRITE_OPCODES)),
+        ),
+        ("must not depend on module globals", _global_dependencies(function, instructions)),
+        ("uses unsafe builtins", _unsafe_builtin_dependencies(instructions, extra_pure_builtins)),
+    )
+    for message, names in findings:
+        if names:
+            raise ValueError(f"{label} {message}: {names!r}")
 
 
 def _global_dependencies(

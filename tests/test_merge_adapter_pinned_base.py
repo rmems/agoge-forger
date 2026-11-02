@@ -333,18 +333,17 @@ def _save_tiny_base(snapshot: Path) -> None:
     )
     LlamaForCausalLM(config).save_pretrained(snapshot)
     vocab = {f"t{i}": i for i in range(32)}
-    vocab["<unk>"] = 0
-    tokenizer = Tokenizer(models.WordLevel(vocab=vocab, unk_token="<unk>"))
+    special_tokens = {"unk_token": "<unk>", "eos_token": "t1"}
+    vocab[special_tokens["unk_token"]] = 0
+    tokenizer = Tokenizer(models.WordLevel(vocab=vocab, unk_token=special_tokens["unk_token"]))
     tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()  # type: ignore[assignment]
-    PreTrainedTokenizerFast(
-        tokenizer_object=tokenizer, eos_token="t1", unk_token="<unk>"
-    ).save_pretrained(snapshot)
+    PreTrainedTokenizerFast(tokenizer_object=tokenizer, **special_tokens).save_pretrained(snapshot)
 
 
 def _save_tiny_adapter(base: Path, out: Path) -> None:
     torch.manual_seed(1)
     model = get_peft_model(
-        LlamaForCausalLM.from_pretrained(base),
+        LlamaForCausalLM.from_pretrained(base),  # nosec B615 - local tmp snapshot, no Hub
         LoraConfig(r=2, target_modules=["q_proj", "v_proj"], init_lora_weights=False),
     )
     model.save_pretrained(out)

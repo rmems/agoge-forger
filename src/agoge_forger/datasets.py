@@ -1,7 +1,7 @@
 import hashlib
 import io
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -86,18 +86,24 @@ class _HashingReader(io.RawIOBase):
         return size
 
 
+def _iter_jsonl_objects(lines: Iterable[str]) -> Iterator[tuple[int, Any]]:
+    """Yield ``(line_number, decoded_row)`` for every non-blank JSONL line."""
+    for i, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Line {i}: Invalid JSON - {e}") from e
+        yield i, row
+
+
 def _generate_jsonl_rows(request: _JsonlDatasetRequest) -> Iterator[dict[str, Any]]:
     with Path(request.path).open("rb") as handle:
         reader = _HashingReader(handle)
         # Same decoding / universal-newline semantics as ``open(path, "r")``.
         rows_file = io.TextIOWrapper(io.BufferedReader(reader))
-        for i, line in enumerate(rows_file, 1):
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Line {i}: Invalid JSON - {e}") from e
+        for i, row in _iter_jsonl_objects(rows_file):
             yield normalize_row(row, request.tokenizer, index=i)
         # Fail closed (nothing is committed to the cache) if the bytes read
         # differ from the digest the cache identity was keyed on.
@@ -105,6 +111,15 @@ def _generate_jsonl_rows(request: _JsonlDatasetRequest) -> Iterator[dict[str, An
             raise ValueError(
                 f"Dataset file changed after cache identity was established: {request.path}"
             )
+
+
+def _unwrap_value_error(exc: BaseException) -> None:
+    """Re-raise the first ``ValueError`` HF wrapped in ``DatasetGenerationError``."""
+    cause = exc.__cause__
+    while cause is not None:
+        if isinstance(cause, ValueError):
+            raise cause from None
+        cause = cause.__cause__
 
 
 def load_jsonl_dataset(path: str, tokenizer=None):
@@ -141,11 +156,7 @@ def load_jsonl_dataset(path: str, tokenizer=None):
     try:
         return Dataset.from_generator(_generate_jsonl_rows, gen_kwargs={"request": request})
     except DatasetGenerationError as exc:
-        cause: BaseException | None = exc.__cause__
-        while cause is not None:
-            if isinstance(cause, ValueError):
-                raise cause from None
-            cause = cause.__cause__
+        _unwrap_value_error(exc)
         raise
 
 
@@ -160,14 +171,7 @@ def iter_normalized_rows(path: str):
     dataset_path = resolve_existing_path(path, must_be_file=True)
 
     with dataset_path.open("r") as f:
-        for i, line in enumerate(f, 1):
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Line {i}: Invalid JSON - {e}")
-
+        for i, row in _iter_jsonl_objects(f):
             yield i, normalize_row(row, None, index=i)
 
 
