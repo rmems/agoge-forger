@@ -163,10 +163,21 @@ def load_jsonl_dataset(path: str, tokenizer=None):
         tokenizer=tokenizer,
     )
     try:
-        return Dataset.from_generator(_generate_jsonl_rows, gen_kwargs={"request": request})
+        dataset = Dataset.from_generator(_generate_jsonl_rows, gen_kwargs={"request": request})
     except DatasetGenerationError as exc:
         _unwrap_value_error(exc)
         raise
+    # A cache hit skips the generator and its digest check, so confirm the file still
+    # holds the bytes the cache was keyed on before returning those rows.
+    _require_unchanged(dataset_path, request.sha256)
+    return dataset
+
+
+def _require_unchanged(dataset_path: Path, expected_sha256: str) -> None:
+    if sha256_file(dataset_path) != expected_sha256:
+        raise ValueError(
+            f"Dataset file changed after cache identity was established: {dataset_path}"
+        )
 
 
 def iter_normalized_rows(path: str):

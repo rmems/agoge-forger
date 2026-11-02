@@ -60,6 +60,10 @@ _INTROSPECTION_ATTRIBUTES = frozenset(
         "tb_next",
     }
 )
+# Format fields walk attributes and items inside a string constant the bytecode scan
+# cannot see (``"{a.__globals__[X]}".format_map(...)``). ``format`` is already screened
+# as a builtin name; these are the other entry points to the same mini-language.
+_FORMAT_TRAVERSAL_ATTRIBUTES = frozenset({"format_map", "vformat"})
 _TOKENIZER_IMPLEMENTATION_LABEL = "tokenizer implementation"
 _TOKENIZER_REVISION_LABEL = "tokenizer revision"
 
@@ -579,7 +583,9 @@ def _unsafe_builtin_dependencies(
     unsafe_attributes = {
         name
         for name in _operand_names(instructions, _ATTRIBUTE_OPCODES)
-        if _is_dunder(name) or name in _INTROSPECTION_ATTRIBUTES
+        if _is_dunder(name)
+        or name in _INTROSPECTION_ATTRIBUTES
+        or name in _FORMAT_TRAVERSAL_ATTRIBUTES
     }
     return sorted(unsafe_lookups | unsafe_attributes)
 

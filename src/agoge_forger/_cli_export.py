@@ -83,16 +83,21 @@ def merge_adapter(
     # missing provenance are refused before any weight loads; report them as
     # operator errors, as export-final-model does.
     try:
+        provenance = producer_provenance_from_adapter(safe_adapter_path)
+    except (*CLI_PATH_ERRORS, TypeError) as e:
+        # TypeError: a non-object artifact_index.json (_load_artifact_index_payload).
+        # Caught only here, so a TypeError from model loading stays visible.
+        exit_on_error(e)
+    try:
         _merge_adapter(
             base_model,
             safe_adapter_path,
             safe_out_dir,
             trust_remote_code=trust_remote_code,
             allow_unsafe=allow_unsafe_serialization,
-            producer_provenance=producer_provenance_from_adapter(safe_adapter_path),
+            producer_provenance=provenance,
         )
-    except (*CLI_PATH_ERRORS, TypeError) as e:
-        # TypeError: a non-object artifact_index.json (_load_artifact_index_payload).
+    except CLI_PATH_ERRORS as e:
         exit_on_error(e)
 
 

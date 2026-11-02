@@ -144,3 +144,27 @@ def test_load_jsonl_fails_closed_when_file_changes_after_hashing(
     # Nothing stale was committed under the old digest: a fresh load sees the current bytes.
     monkeypatch.setattr(datasets_module, "sha256_file", real_sha256_file)
     assert load_jsonl_dataset(str(path))["text"] == ["swapped"]
+
+
+def test_load_jsonl_cache_hit_fails_closed_when_file_changes_after_hashing(
+    tmp_path, isolated_hf_cache, monkeypatch
+):
+    """A cached digest skips the generator, so the loader must re-check the file itself."""
+    import agoge_forger.datasets as datasets_module
+
+    path = tmp_path / "train.jsonl"
+    path.write_text('{"text": "original"}\n')
+    assert load_jsonl_dataset(str(path))["text"] == ["original"]  # populate the cache
+    real_sha256_file = datasets_module.sha256_file
+    calls: list[object] = []
+
+    def hash_then_rewrite_once(target):
+        digest = real_sha256_file(target)
+        if not calls:
+            target.write_text('{"text": "swapped"}\n')
+        calls.append(target)
+        return digest
+
+    monkeypatch.setattr(datasets_module, "sha256_file", hash_then_rewrite_once)
+    with pytest.raises(ValueError, match="changed after cache identity was established"):
+        load_jsonl_dataset(str(path))

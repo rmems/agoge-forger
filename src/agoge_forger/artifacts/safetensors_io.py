@@ -93,7 +93,23 @@ def _unsafe_weight_hits(path: str, *, recursive: bool) -> list[str]:
     found: list[str] = []
     for pattern in UNSAFE_WEIGHT_PATTERNS:
         found.extend(_glob_weight_pattern(path, pattern, recursive))
-    return found
+    # glob matches case-sensitively on most filesystems; also catch names such as
+    # ``ADAPTER_MODEL.BIN`` with the same case-insensitive rule the inventory uses.
+    found.extend(_case_insensitive_weight_hits(path, recursive))
+    return list(dict.fromkeys(found))
+
+
+def _case_insensitive_weight_hits(path: str, recursive: bool) -> list[str]:
+    if not recursive:
+        return [
+            os.path.join(path, name) for name in os.listdir(path) if is_unsafe_weight_name(name)
+        ]
+    return [
+        os.path.join(root, name)
+        for root, dirs, files in os.walk(path)
+        for name in (*dirs, *files)
+        if is_unsafe_weight_name(name)
+    ]
 
 
 def _glob_weight_pattern(path: str, pattern: str, recursive: bool) -> list[str]:
