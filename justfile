@@ -32,9 +32,18 @@ check: check-torch
 check-torch:
     uv run agoge check-torch
 
-# Run pytest on tests/ (on a GPU host use `CUDA_VISIBLE_DEVICES= just test`)
+# Run pytest on tests/, or only on the paths / node IDs you pass
+# (on a GPU host use `CUDA_VISIBLE_DEVICES= just test`)
 test *args:
-    uv run pytest tests/ "$@"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Default to tests/ only when no existing path or node ID (path::name) is
+    # given, so `just test tests/test_x.py::test_y` runs just that test while
+    # `just test -k split -q` still runs the whole suite filtered by -k.
+    for arg in "$@"; do
+        if [ -e "${arg%%::*}" ]; then exec uv run pytest "$@"; fi
+    done
+    exec uv run pytest tests/ "$@"
 
 # Ruff check and mypy, as the Makefile `lint` target did
 lint:
