@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import glob
 import hashlib
 import json
@@ -17,11 +18,24 @@ except ImportError:
     safe_open = None  # type: ignore[misc, assignment]
 
 # Pickle-based model weight files only — not Trainer optimizer/RNG state (*.pt under checkpoint-*).
+# The ``*`` after the stem covers transformers' sharded (``pytorch_model-00001-of-00002.bin``)
+# and variant (``pytorch_model.fp16.bin``) pickle names. Each pattern ends in ``.bin`` so the
+# JSON shard index ``pytorch_model.bin.index.json`` and ``training_args.bin`` stay allowed.
 UNSAFE_WEIGHT_PATTERNS = [
-    "pytorch_model.bin",
-    "adapter_model.bin",
+    "pytorch_model*.bin",
+    "adapter_model*.bin",
     "*.ckpt",
 ]
+
+
+def is_unsafe_weight_name(name: str) -> bool:
+    """Return whether a file basename is a pickle weight under ``UNSAFE_WEIGHT_PATTERNS``.
+
+    Matching ignores case, so ``PYTORCH_MODEL.bin`` or ``model.CKPT`` in a manifest is
+    still treated as unsafe.
+    """
+    lowered = name.lower()
+    return any(fnmatch.fnmatchcase(lowered, pattern) for pattern in UNSAFE_WEIGHT_PATTERNS)
 
 
 def inspect_safetensors_file(path: str) -> dict[str, Any]:
@@ -84,7 +98,8 @@ def _unsafe_weight_hits(path: str, *, recursive: bool) -> list[str]:
 
 def _glob_weight_pattern(path: str, pattern: str, recursive: bool) -> list[str]:
     search_root = os.path.join(path, "**", pattern) if recursive else os.path.join(path, pattern)
-    return glob.glob(search_root, recursive=recursive)
+    # Hidden subdirectories are scanned too; a pickle shard there is still a pickle.
+    return glob.glob(search_root, recursive=recursive, include_hidden=True)
 
 
 def sha256_file(path: str) -> str:
