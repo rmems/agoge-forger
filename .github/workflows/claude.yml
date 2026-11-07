@@ -40,6 +40,10 @@ jobs:
       - uses: anthropics/claude-code-action@61a9c274fa7110a66dfafc1bbbced03833eb25fe # v1.0.269
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Optional: a fine-grained PAT (Contents + Workflows: read/write) lets Claude edit
+          # .github/workflows/. Empty when the secret is unset, so the action falls back to
+          # the Claude GitHub App token.
+          github_token: ${{ secrets.CLAUDE_WORKFLOW_TOKEN }}
           claude_args: |
             --model claude-fable-5-1
             --allowedTools "Bash,Edit,MultiEdit,Write,NotebookEdit,Read,Glob,Grep,WebSearch,WebFetch,Task,TodoWrite"
