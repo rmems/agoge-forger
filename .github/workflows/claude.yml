@@ -12,7 +12,8 @@ on:
     types: [submitted]
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
   issues: write
   pull-requests: write
   id-token: write
@@ -36,5 +37,4 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: |
             --model claude-fable-5-1
-            --disallowedTools "Edit,MultiEdit,Write,NotebookEdit"
-            --allowedTools "Read,Glob,Grep,Bash(git log:*),Bash(git diff:*),Bash(git show:*),mcp__github__issue_read,mcp__github__add_issue_comment"
+            --allowedTools "Bash,Edit,MultiEdit,Write,NotebookEdit,Read,Glob,Grep,WebSearch,WebFetch"
