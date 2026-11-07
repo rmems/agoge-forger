@@ -13,7 +13,10 @@ on:
 
 permissions:
   contents: write
-  actions: read
+  actions: write
+  checks: write
+  statuses: write
+  discussions: write
   issues: write
   pull-requests: write
   id-token: write
@@ -39,4 +42,4 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: |
             --model claude-fable-5-1
-            --allowedTools "Bash,Edit,MultiEdit,Write,NotebookEdit,Read,Glob,Grep,WebSearch,WebFetch"
+            --allowedTools "Bash,Edit,MultiEdit,Write,NotebookEdit,Read,Glob,Grep,WebSearch,WebFetch,Task,TodoWrite"
