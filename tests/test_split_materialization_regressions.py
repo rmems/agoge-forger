@@ -579,7 +579,8 @@ def test_materialization_rejects_non_canonical_source_lines_before_publishing(
     with pytest.raises(
         ValueError,
         match=rf"^{SOURCE_PATH}:{expected_line}: source line is not canonical JSON.*"
-        "canonicalize the source before freezing",
+        "canonicalize the source, commit it, and freeze again with that new "
+        "immutable --source-revision",
     ):
         materialize_split(source, output, _spec())
 

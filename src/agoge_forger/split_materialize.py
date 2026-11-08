@@ -501,7 +501,8 @@ def _stage_source_records(
             raise ValueError(
                 f"{record.member.source_coordinate}: source line is not canonical JSON "
                 "(sorted keys, compact separators, unescaped UTF-8, LF line ending); "
-                "canonicalize the source before freezing"
+                "canonicalize the source, commit it, and freeze again with that new "
+                "immutable --source-revision so the pinned revision holds these bytes"
             )
         offset = payloads.tell()
         payloads.write(line)
