@@ -49,7 +49,13 @@ def smoke_eval(
 
 @app.command()
 def merge_adapter(
-    base_model: str = typer.Option(..., help="Base model ID"),
+    base_model: str = typer.Option(
+        ...,
+        help=(
+            "Base model: the adapter's sealed base (repo id or the local directory it "
+            "was trained from), or its Hugging Face cache snapshot at the sealed revision"
+        ),
+    ),
     adapter_path: str = typer.Option(..., help="Path to PEFT adapter"),
     out_dir: str = typer.Option(..., help="Output directory"),
     trust_remote_code: bool = typer.Option(False, help=_TRUST_REMOTE_CODE_HELP),
@@ -73,14 +79,26 @@ def merge_adapter(
             logger.error(str(e))
             raise typer.Exit(code=1)
     safe_out_dir = str(resolve_output_directory(out_dir))
-    _merge_adapter(
-        base_model,
-        safe_adapter_path,
-        safe_out_dir,
-        trust_remote_code=trust_remote_code,
-        allow_unsafe=allow_unsafe_serialization,
-        producer_provenance=producer_provenance_from_adapter(safe_adapter_path),
-    )
+    # A base that is not the adapter's sealed identity, a non-empty --out-dir, or
+    # missing provenance are refused before any weight loads; report them as
+    # operator errors, as export-final-model does.
+    try:
+        provenance = producer_provenance_from_adapter(safe_adapter_path)
+    except (*CLI_PATH_ERRORS, TypeError) as e:
+        # TypeError: a non-object artifact_index.json (_load_artifact_index_payload).
+        # Caught only here, so a TypeError from model loading stays visible.
+        exit_on_error(e)
+    try:
+        _merge_adapter(
+            base_model,
+            safe_adapter_path,
+            safe_out_dir,
+            trust_remote_code=trust_remote_code,
+            allow_unsafe=allow_unsafe_serialization,
+            producer_provenance=provenance,
+        )
+    except CLI_PATH_ERRORS as e:
+        exit_on_error(e)
 
 
 def _run_export(**kwargs) -> None:
@@ -105,7 +123,13 @@ def export_final_model(
     adapter_path: str | None = typer.Option(
         None, help="Specific adapter or checkpoint directory to export"
     ),
-    base_model: str | None = typer.Option(None, help="Base model ID override"),
+    base_model: str | None = typer.Option(
+        None,
+        help=(
+            "Base model override: must be the adapter's sealed base (repo id or local "
+            "directory), or its Hugging Face cache snapshot at the sealed revision"
+        ),
+    ),
     save_safetensors: bool = typer.Option(
         True,
         help=(

@@ -47,6 +47,8 @@ class TrainingConfig(BaseModel):
     loss_type: str = "nll"
     activation_offloading: bool = False
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("loss_type")
     @classmethod
     def _allowed_loss_type(cls, value: str) -> str:
@@ -107,6 +109,8 @@ class ExperimentConfig(BaseModel):
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("revision", mode="before")
     @classmethod
     def _normalize_revision(cls, value: object) -> str | None:

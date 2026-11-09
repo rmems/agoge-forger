@@ -22,6 +22,8 @@ class ChatCompletionsConfig(BaseModel):
     temperature: float = 0.7
     api_key: str = ""
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("base_url")
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:
@@ -97,7 +99,8 @@ class ChatCompletionsClient:
             json.dump(data, f, indent=2, default=str)
         return path
 
-    def _parse_usage(self, usage: dict[str, Any] | None) -> dict[str, int]:
+    @staticmethod
+    def _parse_usage(usage: dict[str, Any] | None) -> dict[str, int]:
         if not usage or not isinstance(usage, dict):
             return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         return {
@@ -106,7 +109,8 @@ class ChatCompletionsClient:
             "total_tokens": usage.get("total_tokens") or 0,
         }
 
-    def _parse_choice(self, choice: dict[str, Any]) -> dict[str, str]:
+    @staticmethod
+    def _parse_choice(choice: dict[str, Any]) -> dict[str, str]:
         message = choice.get("message") or {}
         content = message.get("content") or ""
         reasoning = message.get("reasoning_content") or message.get("reasoning") or ""

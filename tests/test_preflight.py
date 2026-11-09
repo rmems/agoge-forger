@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from dataclasses import dataclass
 
 import pytest
@@ -50,6 +51,49 @@ def test_lora_target_validation_fails_on_missing_targets():
     cfg = DummyConfig([], "auto_common")
     valid = validate_lora_targets_exist(model, cfg)
     assert set(valid) == {"q_proj", "v_proj"}
+
+
+class NestedDummyModule:
+    """Llama-shaped module tree: names are dotted paths, as torch ``named_modules`` yields."""
+
+    def named_modules(self):
+        names = [
+            "",
+            "model",
+            "model.layers",
+            "model.layers.0",
+            "model.layers.0.self_attn",
+            "model.layers.0.self_attn.q_proj",
+            "model.layers.0.self_attn.k_proj",
+            "model.layers.0.self_attn.v_proj",
+            "model.layers.0.mlp",
+            "model.layers.0.mlp.down_proj",
+        ]
+        return [(name, self) for name in names]
+
+
+@pytest.mark.parametrize("mode", ["explicit", "discover_required"])
+@pytest.mark.parametrize(
+    "bogus", ["v_pro", "v_proj|k_proj", "proj", "down", "q_proj$", "elf_attn", ""]
+)
+def test_lora_target_validation_uses_peft_exact_or_dotted_suffix_matching(mode, bogus):
+    # PEFT matches list targets only by exact name or ``.``-suffix; substrings and regexes
+    # would pass preflight and then be silently dropped by get_peft_model. PEFT also skips
+    # the root module (named ""), so an empty target must not match it.
+    model = NestedDummyModule()
+    cfg = DummyConfig(["q_proj", bogus], mode)
+    if mode == "explicit":
+        with pytest.raises(ValueError, match=f"Explicit target module '{re.escape(bogus)}'"):
+            validate_lora_targets_exist(model, cfg)
+    else:
+        assert validate_lora_targets_exist(model, cfg) == ["q_proj"]
+
+
+def test_lora_target_validation_accepts_leaf_and_dotted_suffix_targets():
+    model = NestedDummyModule()
+    targets = ["q_proj", "self_attn.v_proj", "mlp.down_proj", "model.layers.0.self_attn.k_proj"]
+    for mode in ("explicit", "discover_required"):
+        assert validate_lora_targets_exist(model, DummyConfig(targets, mode)) == targets
 
 
 def test_dataset_text_field_validation_rejects_a_column_the_dataset_lacks():
@@ -151,6 +195,40 @@ def test_source_scan_skips_blank_lines_and_rejects_an_empty_dataset(tmp_path):
         validate_dataset_text_field_in_source(str(empty), "text")
 
 
+@pytest.mark.parametrize("output_exists", [False, True], ids=["fresh", "existing"])
+def test_collect_disk_pressure_report_defaults_to_hf_cache_and_run_output(
+    tmp_path, monkeypatch, output_exists
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    cache = tmp_path / ".cache" / "huggingface"
+    cache.mkdir(parents=True)
+    (cache / "blob.bin").write_bytes(b"x" * 32)
+    output_root = tmp_path / "run-output"
+    output = output_root / "run"
+    # A sibling run under the same output root must not count toward this run.
+    sibling = output_root / "other-run"
+    sibling.mkdir(parents=True)
+    (sibling / "adapter.bin").write_bytes(b"z" * 1000)
+    if output_exists:
+        output.mkdir()
+        (output / "adapter.bin").write_bytes(b"y" * 17)
+    config = ExperimentConfig(
+        model_id="test-model", dataset_path="dataset.jsonl", output_dir="run-output"
+    )
+
+    report = collect_disk_pressure_report(config)
+
+    assert report["paths"] == [
+        {"path": str(cache), "exists": True, "size_gb": 32 / BYTES_PER_GB},
+        {
+            "path": str(output),
+            "exists": output_exists,
+            "size_gb": (17 if output_exists else 0) / BYTES_PER_GB,
+        },
+    ]
+
+
 def test_collect_disk_pressure_report_uses_monitored_paths(tmp_path):
     hot_path = tmp_path / "huggingface"
     hot_path.mkdir()
@@ -163,6 +241,7 @@ def test_collect_disk_pressure_report_uses_monitored_paths(tmp_path):
     report = collect_disk_pressure_report(config, monitored_paths=[str(hot_path)])
 
     assert report["output_dir"] == str(tmp_path)
+    assert len(report["paths"]) == 1
     assert report["paths"][0]["path"] == str(hot_path)
     assert report["paths"][0]["exists"] is True
     assert report["paths"][0]["size_gb"] > 0
@@ -179,6 +258,7 @@ def test_collect_disk_pressure_report_handles_fresh_output_dir(tmp_path):
     report = collect_disk_pressure_report(config, monitored_paths=[])
 
     assert report["output_dir"] == str(fresh_output)
+    assert report["paths"] == []
     assert report["free_gb"] > 0
 
 

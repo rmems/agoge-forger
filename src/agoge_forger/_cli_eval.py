@@ -17,7 +17,12 @@ from .eval.contract import (
     logical_task_set_sha256,
 )
 from .eval.harness import G0BaseEvalSpec, HeldOutEvalRuntime, run_g0_base_eval, run_held_out_eval
-from .eval.score import OBJECTIVE_SCORING_VERSION
+from .eval.rescore import rescore_paired_bundle
+from .eval.score import (
+    OBJECTIVE_SCORING_VERSION,
+    SUPPORTED_SCORING_VERSIONS,
+    require_supported_scoring_version,
+)
 from .eval.serializers import code_repair_prompt
 from .logging import logger
 from .path_safety import resolve_absent_output_directory, resolve_existing_path
@@ -56,6 +61,7 @@ class _ModelEvalOptions:
     truncation_policy: TruncationPolicy
     device_map: str
     trust_remote_code: bool
+    scoring_version: str = OBJECTIVE_SCORING_VERSION
 
 
 @dataclass(frozen=True)
@@ -87,6 +93,7 @@ class _HeldOutArmInputs:
     seed: int
     truncation_policy: TruncationPolicy
     trust_remote_code: bool
+    scoring_version: str
 
 
 def _infer_artifact_kind(root: Path) -> Literal["peft_adapter", "merged_model"]:
@@ -130,7 +137,7 @@ def _arm_common(inputs: _HeldOutArmInputs, tokenizer: Any, task_digest: str) -> 
             temperature=0,
             top_p=1,
         ),
-        "scoring_version": OBJECTIVE_SCORING_VERSION,
+        "scoring_version": inputs.scoring_version,
     }
 
 
@@ -149,6 +156,7 @@ def _arm_inputs(
         seed=options.seed,
         truncation_policy=options.truncation_policy,
         trust_remote_code=options.trust_remote_code,
+        scoring_version=options.scoring_version,
     )
 
 
@@ -204,6 +212,7 @@ def _g0_base_arm(inputs: _HeldOutArmInputs) -> tuple[EvaluationArm, Any]:
 
 def _run_held_out_eval_command(request: _HeldOutEvalRequest) -> None:
     try:
+        require_supported_scoring_version(request.options.scoring_version)  # before any model work
         manifest_path = resolve_existing_path(request.split_manifest, must_be_file=True)
         artifact_root = resolve_existing_path(request.sft_artifact, must_be_dir=True)
         destination = resolve_absent_output_directory(request.output_dir)
@@ -223,6 +232,7 @@ def _run_held_out_eval_command(request: _HeldOutEvalRequest) -> None:
 
 def _run_g0_held_out_eval_command(request: _G0HeldOutEvalRequest) -> None:
     try:
+        require_supported_scoring_version(request.options.scoring_version)  # before any model work
         manifest_path = resolve_existing_path(request.split_manifest, must_be_file=True)
         destination = resolve_absent_output_directory(request.output_dir)
         base, tokenizer = _g0_base_arm(
@@ -254,6 +264,15 @@ _TruncationPolicyOption = Annotated[
 ]
 _DeviceMapOption = Annotated[str, typer.Option(help="Transformers device_map")]
 _TrustRemoteCodeOption = Annotated[bool, typer.Option(help=_TRUST_REMOTE_CODE_HELP)]
+_ScoringVersionOption = Annotated[
+    str,
+    typer.Option(
+        help=(
+            "Objective scorer: " + ", ".join(SUPPORTED_SCORING_VERSIONS) + ". "
+            "exact-match-v1 is deprecated for new experiments (it is confounded by markdown fences)."
+        )
+    ),
+]
 
 
 @app.command("g0-held-out-eval")
@@ -271,6 +290,7 @@ def g0_held_out_eval(
     truncation_policy: _TruncationPolicyOption = "mark_unsupported",
     device_map: _DeviceMapOption = "auto",
     trust_remote_code: _TrustRemoteCodeOption = False,
+    scoring_version: _ScoringVersionOption = OBJECTIVE_SCORING_VERSION,
 ):
     """Run base-only generation on frozen held-out membership before SFT exists."""
     options = _ModelEvalOptions(
@@ -284,6 +304,7 @@ def g0_held_out_eval(
         truncation_policy,
         device_map,
         trust_remote_code,
+        scoring_version,
     )
     _run_g0_held_out_eval_command(
         _G0HeldOutEvalRequest(split_manifest, output_dir, experiment_id, options)
@@ -307,6 +328,7 @@ def held_out_eval(
     truncation_policy: _TruncationPolicyOption = "mark_unsupported",
     device_map: _DeviceMapOption = "auto",
     trust_remote_code: _TrustRemoteCodeOption = False,
+    scoring_version: _ScoringVersionOption = OBJECTIVE_SCORING_VERSION,
 ):
     """Run base then SFT generation on frozen held-out membership and write the eval bundle."""
     _run_held_out_eval_command(
@@ -325,6 +347,36 @@ def held_out_eval(
                 truncation_policy=truncation_policy,
                 device_map=device_map,
                 trust_remote_code=trust_remote_code,
+                scoring_version=scoring_version,
             ),
         )
     )
+
+
+@app.command("rescore-held-out")
+def rescore_held_out(
+    bundle_dir: Annotated[
+        str, typer.Argument(help="Existing paired eval bundle (holds base/ and sft/ generations)")
+    ],
+    scoring_version: Annotated[
+        str, typer.Option(help="Scorer to apply: " + ", ".join(SUPPORTED_SCORING_VERSIONS))
+    ],
+    output: Annotated[
+        str | None,
+        typer.Option(
+            help="New JSON file to write (default: <bundle_dir>/comparison.<version>.json)"
+        ),
+    ] = None,
+):
+    """Re-score committed generations post hoc; never regenerates or edits the bundle."""
+    try:
+        require_supported_scoring_version(scoring_version)
+        bundle = resolve_existing_path(bundle_dir, must_be_dir=True)
+        published = rescore_paired_bundle(
+            bundle,
+            scoring_version=scoring_version,
+            output=None if output is None else Path(output).expanduser(),
+        )
+    except CLI_PATH_ERRORS as exc:
+        exit_on_error(exc)
+    logger.info("wrote post-hoc %s comparison %s", scoring_version, published)

@@ -330,6 +330,41 @@ def test_adapter_index_allows_tokenizer_files(tmp_path):
     assert report.verdict == "pass"
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "pytorch_model.bin",
+        "pytorch_model-00001-of-00002.bin",
+        "adapter_model-00001-of-00002.bin",
+        "pytorch_model.fp16.bin",
+        "PYTORCH_MODEL.bin",
+        "adapter_model.BIN",
+        "model.CKPT",
+    ],
+)
+def test_pickle_weight_in_bundle_fails_unsafe_path(tmp_path, name):
+    bundle = write_valid_bundle(tmp_path)
+    (bundle / "adapter" / name).write_bytes(b"\x80\x04pickle-payload")
+    _rewrite_adapter_index(bundle)
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert report.verdict == "fail"
+    assert any(
+        failure.code == "unsafe_path" and failure.path == f"adapter/{name}"
+        for failure in report.failures
+    )
+
+
+@pytest.mark.parametrize("name", ["pytorch_model.bin.index.json", "training_args.bin"])
+def test_non_pickle_weight_names_are_not_unsafe_path(tmp_path, name):
+    bundle = write_valid_bundle(tmp_path)
+    (bundle / "adapter" / name).write_bytes(b"{}\n")
+    _rewrite_adapter_index(bundle)
+    reseal_bundle(bundle)
+    report = verify_reproducibility_bundle(bundle)
+    assert "unsafe_path" not in _codes(report)
+
+
 def test_adapter_config_identity_mismatch_fails(tmp_path):
     bundle = write_valid_bundle(tmp_path)
     config_path = bundle / "adapter" / "adapter_config.json"

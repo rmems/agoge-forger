@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import fnmatch
 import os
 from pathlib import Path, PurePosixPath
 
 from pydantic import ValidationError
 
 from .._strict_json import decode_json_object
-from ..artifacts.safetensors_io import UNSAFE_WEIGHT_PATTERNS
+from ..artifacts.safetensors_io import is_unsafe_weight_name
 from ..eval import EntryIdentity, hash_relative_file, open_bundle
 from .report import BundleFailure
 from .schema import BUNDLE_INVENTORY_NAME, BUNDLE_SCHEMA_VERSION, ReproducibilityBundle
@@ -90,7 +89,7 @@ def unsafe_weight_failures(document: ReproducibilityBundle) -> list[BundleFailur
             message="bundle contains an unsafe serialized weight file",
         )
         for entry in document.files
-        if _is_unsafe_weight_name(PurePosixPath(entry.path).name)
+        if is_unsafe_weight_name(PurePosixPath(entry.path).name)
     ]
 
 
@@ -138,7 +137,3 @@ def _hash_entry(
             )
         )
     return failures
-
-
-def _is_unsafe_weight_name(name: str) -> bool:
-    return any(fnmatch.fnmatch(name, pattern) for pattern in UNSAFE_WEIGHT_PATTERNS)

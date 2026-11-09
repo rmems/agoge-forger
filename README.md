@@ -1,6 +1,6 @@
 # Agoge Forger
 
-Agoge Forger is a Python/PyTorch-first post-training research platform for reproducible SFT, evaluation, checkpoints, experiment manifests, and Hugging Face model releases. It is designed for local RTX 5080 development with Transformers, TRL, PEFT, bitsandbytes, and vLLM-compatible model export.
+Agoge Forger is a Python/PyTorch-first post-training research platform for reproducible SFT, evaluation, checkpoints, experiment manifests, and Hugging Face model releases. It is designed for local RTX 5080 development with Transformers, TRL, PEFT, and bitsandbytes.
 
 ## Repository boundaries
 
@@ -25,7 +25,15 @@ uv run agoge check-torch
 uv run agoge train-qlora --config configs/minicpm5_canary.yaml
 ```
 
-The canary is `openbmb/MiniCPM5-1B-Base`; the future measured flagship is `ibm-granite/granite-4.1-3b-base`. Pin an immutable Hub revision and complete the compatibility, split, and evaluation contracts before inspecting measured results.
+The canary is `openbmb/MiniCPM5-1B-Base`; the measured flagship is `ibm-granite/granite-4.1-3b-base`. The recorded RM-760 run compares G0 (untouched base) with G1 (base plus one frozen code-repair SFT) on 16 held-out tasks. The three scorers disagree, so read them side by side:
+
+| Scorer | G0 | G1 | Delta | Improved / regressed / tied |
+| --- | ---: | ---: | ---: | ---: |
+| `exact-match-v1` (pre-registered) | 0/16 | 10/16 | +0.625 | 10 / 0 / 6 |
+| `exact-match-v2` (fence-normalized, post hoc) | 10/16 | 10/16 | 0.000 | 2 / 2 / 12 |
+| `doctest-v1` (post hoc) | 11/16 | 10/16 | −0.0625 | 2 / 3 / 11 |
+
+The pre-registered `exact-match-v1` conclusion is **improved**, but the whole v1 delta is markdown-fence formatting (G0 fenced 16/16 replies, G1 0/16), not repair ability; under the format-invariant scorers the arms are indistinguishable at n=16. The pre-registered result is in [`reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/report.md`](reports/granite-4.1-first-sft/rm760-code-repair-v1-rm760-20260914/report.md); the post hoc re-score is #192 (#183). New measured runs still pin an immutable Hub revision and complete the compatibility, split, and evaluation contracts before inspecting results.
 
 To inspect an architecture before choosing LoRA targets:
 
@@ -36,6 +44,27 @@ uv run agoge inspect-lora-targets --model-id openbmb/MiniCPM5-1B-Base
 
 `trust_remote_code` defaults to `false`; enable it only after an explicit architecture review.
 
+## Using just
+
+The root [`justfile`](justfile) wraps the common commands as short recipes. `just` is a
+separate dev tool, not a project dependency. Install it with `cargo install just`,
+`brew install just`, `dnf install just`, or `uv tool install rust-just`.
+
+```bash
+just                       # list every recipe with a one-line description
+just setup                 # uv sync --python 3.14 --frozen --extra dev
+just ci                    # the full PR quality gate, in CI order
+just test -k split -q      # extra arguments pass through to pytest
+just help train-qlora      # uv run agoge train-qlora --help
+just train configs/granite_4_1_flagship.yaml --run-id run_001
+just agoge run-status --help   # any other agoge command
+```
+
+Recipes marked `[CUDA]` in `just --list` (`train`, `train-lora`, `train-smoke`, `eval`,
+`eval-g0`, `eval-smoke`) need a GPU and model weights. On a GPU host, run the suite as
+`CUDA_VISIBLE_DEVICES= just test` (see `tests/test_consumer_contract.py`). The
+`Makefile` targets still work; each one now calls the `just` recipe of the same name.
+
 ## Artifact model
 
 `checkpoint-*` directories are trainer recovery snapshots. The adapter saved at `adapters/<run_name>` is the LoRA output for continued PEFT work. The merged model under `merged/<run_name>` is the single final artifact to ship or evaluate as a standalone model.
@@ -43,15 +72,6 @@ uv run agoge inspect-lora-targets --model-id openbmb/MiniCPM5-1B-Base
 Every training run records a reproducibility manifest, GPU telemetry, and artifact digests. Safetensors is the default artifact format; path validation rejects traversal before model, dataset, adapter, checkpoint, and output paths are used.
 
 Optional **bounded CUDA profile windows** are off unless you pass `--profile-window` or `AGOGE_PROFILE_WINDOW`. See [Bounded CUDA profiling windows](docs/cuda_profiling_windows.md) and [F0 correlation markers](docs/contracts/f0_correlation_markers.md). The profiler is not a requirement for ordinary Agoge runs.
-
-## vLLM compatibility smoke
-
-```bash
-uv run agoge serve-vllm --model merged/<run_name>
-uv run agoge smoke-vllm --model merged/<run_name> --run-name smoke_<run_name>
-```
-
-See [vLLM model compatibility](docs/vllm_model_compatibility.md) for supported artifact forms.
 
 ## Inspect run readiness
 

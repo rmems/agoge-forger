@@ -34,6 +34,8 @@ class SourceFile(FrozenModel):
     sha256: str = Field(pattern=_SHA256_PATTERN)
     record_count: int = Field(ge=1)
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
@@ -82,6 +84,8 @@ class SplitMaterializationSpec(FrozenModel):
     split_policy: SplitPolicy
     canonical_identity: CanonicalIdentityPolicy = Field(default_factory=_new_identity_policy)
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("source_path")
     @classmethod
     def validate_source_path(cls, value: str) -> str:
@@ -104,6 +108,8 @@ class SplitArtifact(FrozenModel):
     record_count: int = Field(ge=1)
     members: tuple[SplitMember, ...]
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:

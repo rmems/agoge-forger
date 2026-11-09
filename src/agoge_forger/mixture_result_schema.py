@@ -69,6 +69,8 @@ class MixtureArtifact(FrozenModel):
     record_count: int = Field(ge=1)
     accepted_tokens: int = Field(ge=0)
 
+    # Qodana PyNestedDecorators: pydantic requires @field_validator above @classmethod.
+    # noinspection PyNestedDecorators
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:

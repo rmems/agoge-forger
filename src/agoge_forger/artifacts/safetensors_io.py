@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import fnmatch
 import glob
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from .._atomic_file import publish_bytes_replace
 from ..logging import logger
@@ -17,11 +18,24 @@ except ImportError:
     safe_open = None  # type: ignore[misc, assignment]
 
 # Pickle-based model weight files only — not Trainer optimizer/RNG state (*.pt under checkpoint-*).
+# The ``*`` after the stem covers transformers' sharded (``pytorch_model-00001-of-00002.bin``)
+# and variant (``pytorch_model.fp16.bin``) pickle names. Each pattern ends in ``.bin`` so the
+# JSON shard index ``pytorch_model.bin.index.json`` and ``training_args.bin`` stay allowed.
 UNSAFE_WEIGHT_PATTERNS = [
-    "pytorch_model.bin",
-    "adapter_model.bin",
+    "pytorch_model*.bin",
+    "adapter_model*.bin",
     "*.ckpt",
 ]
+
+
+def is_unsafe_weight_name(name: str) -> bool:
+    """Return whether a file basename is a pickle weight under ``UNSAFE_WEIGHT_PATTERNS``.
+
+    Matching ignores case, so ``PYTORCH_MODEL.bin`` or ``model.CKPT`` in a manifest is
+    still treated as unsafe.
+    """
+    lowered = name.lower()
+    return any(fnmatch.fnmatchcase(lowered, pattern) for pattern in UNSAFE_WEIGHT_PATTERNS)
 
 
 def inspect_safetensors_file(path: str) -> dict[str, Any]:
@@ -43,7 +57,10 @@ def _inspect_open_safetensors(path: str) -> dict[str, Any]:
     opener = safe_open
     if opener is None:
         return {}
-    with opener(path, framework="pt") as handle:
+    # ``safe_open`` is optional at import time, so the name stays ``None | opener``.
+    # The guard above has already returned; cast so the call is a real opener.
+    open_file = cast(Callable[..., Any], opener)
+    with open_file(path, framework="pt") as handle:
         return _tensors_from_handle(handle)
 
 
@@ -62,14 +79,6 @@ def _tensors_from_handle(handle: Any) -> dict[str, Any]:
     return info
 
 
-def find_safetensors_files(path: str) -> list[str]:
-    if os.path.isfile(path) and path.endswith(".safetensors"):
-        return [path]
-    if os.path.isdir(path):
-        return glob.glob(os.path.join(path, "**", "*.safetensors"), recursive=True)
-    return []
-
-
 def assert_no_unsafe_weight_bins(path: str, *, recursive: bool = True) -> None:
     found_unsafe = _unsafe_weight_hits(path, recursive=recursive)
     if found_unsafe:
@@ -84,12 +93,29 @@ def _unsafe_weight_hits(path: str, *, recursive: bool) -> list[str]:
     found: list[str] = []
     for pattern in UNSAFE_WEIGHT_PATTERNS:
         found.extend(_glob_weight_pattern(path, pattern, recursive))
-    return found
+    # glob matches case-sensitively on most filesystems; also catch names such as
+    # ``ADAPTER_MODEL.BIN`` with the same case-insensitive rule the inventory uses.
+    found.extend(_case_insensitive_weight_hits(path, recursive))
+    return list(dict.fromkeys(found))
+
+
+def _case_insensitive_weight_hits(path: str, recursive: bool) -> list[str]:
+    if not recursive:
+        return [
+            os.path.join(path, name) for name in os.listdir(path) if is_unsafe_weight_name(name)
+        ]
+    return [
+        os.path.join(root, name)
+        for root, dirs, files in os.walk(path)
+        for name in (*dirs, *files)
+        if is_unsafe_weight_name(name)
+    ]
 
 
 def _glob_weight_pattern(path: str, pattern: str, recursive: bool) -> list[str]:
     search_root = os.path.join(path, "**", pattern) if recursive else os.path.join(path, pattern)
-    return glob.glob(search_root, recursive=recursive)
+    # Hidden subdirectories are scanned too; a pickle shard there is still a pickle.
+    return glob.glob(search_root, recursive=recursive, include_hidden=True)
 
 
 def sha256_file(path: str) -> str:

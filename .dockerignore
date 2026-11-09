@@ -30,6 +30,7 @@ downloads/
 # Project outputs (large / host-local)
 adapters/
 runs/
+eval/
 merged/
 gguf/
 smoke_output/

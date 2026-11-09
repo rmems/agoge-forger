@@ -9,9 +9,7 @@ import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypedDict
-
-from typing_extensions import Unpack
+from typing import Any, TypedDict, Unpack
 
 from ._atomic_directory import rename_noreplace, require_rename_noreplace_support
 from ._source_snapshot import copy_source_snapshot, nearest_existing_output_ancestor
@@ -499,6 +497,13 @@ def _stage_source_records(
         require_declared_lineage=True,
     ):
         line = canonical_json_bytes(record.row) + b"\n"
+        if record.raw_line != line:
+            raise ValueError(
+                f"{record.member.source_coordinate}: source line is not canonical JSON "
+                "(sorted keys, compact separators, unescaped UTF-8, LF line ending); "
+                "canonicalize the source, commit it, and freeze again with that new "
+                "immutable --source-revision so the pinned revision holds these bytes"
+            )
         offset = payloads.tell()
         payloads.write(line)
         spans.append((offset, len(line)))

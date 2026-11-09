@@ -2,3 +2,4 @@
 exclude_paths:
   - "tests/**"
   - "**/__pycache__/**"
+  - "CLAUDE.md"

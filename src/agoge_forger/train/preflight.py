@@ -1,5 +1,4 @@
 import os
-import re
 import shutil
 from typing import TypedDict
 
@@ -104,13 +103,14 @@ def directory_size_bytes(path: str, *, follow_symlinks: bool = True) -> int:
 def collect_disk_pressure_report(
     config: ExperimentConfig, monitored_paths: list[str] | None = None
 ) -> DiskPressureReport:
-    """Report disk usage; override ``monitored_paths`` to replace default Unsloth/HF cache roots."""
+    """Report disk usage; override ``monitored_paths`` to replace the HF cache/run output defaults."""
+    output_root = os.path.abspath(config.output_dir)
+    run_output = os.path.join(output_root, config.run_name)
     if monitored_paths is None:
         monitored_paths = [
-            os.path.expanduser("~/.unsloth/studio/outputs"),
             os.path.expanduser("~/.cache/huggingface"),
+            run_output,
         ]
-    output_root = os.path.abspath(config.output_dir)
     disk_path = output_root
     if not os.path.exists(disk_path):
         parent = os.path.dirname(disk_path) or "."
@@ -232,20 +232,13 @@ def _collect_model_leaf_modules(model):
 
 
 def _module_matches_target(model, target):
-    try:
-        pattern = re.compile(target)
-    except re.error:
-        logger.warning(
-            f"Invalid regex in LoRA target '{target}'; using literal substring match only."
-        )
-        pattern = None
-
-    for name, _ in model.named_modules():
-        if target in name:
-            return True
-        if pattern and pattern.search(name):
-            return True
-    return False
+    # PEFT list semantics: a target matches a module only by exact name or dotted suffix.
+    # PEFT's inject_adapter skips the root module (named ""), so it can never match here,
+    # otherwise an empty target would pass preflight and be silently dropped by PEFT.
+    suffix = f".{target}"
+    return any(
+        name and (name == target or name.endswith(suffix)) for name, _ in model.named_modules()
+    )
 
 
 def _resolve_auto_common_targets(requested_targets, model_modules):

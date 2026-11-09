@@ -33,15 +33,20 @@ class TrainingCorrelationCallback(TrainerCallback):
         self._last_step = 0
         self._finalized = False
 
+    # TrainerCallback calls these hooks positionally. Unused names stay so the
+    # override matches the library signature.
+    # noinspection PyUnusedParameter
     def on_train_begin(self, args, state, control, **kwargs):
         self._session.emit("train_start", phase=TRAIN_PHASE, global_step=int(state.global_step))
 
+    # noinspection PyUnusedParameter
     def on_step_begin(self, args, state, control, **kwargs):
         upcoming = int(state.global_step) + 1
         self._step_t0 = time.perf_counter()
         self._maybe_start_window(upcoming)
         self._emit_step_begin(upcoming)
 
+    # noinspection PyUnusedParameter
     def on_step_end(self, args, state, control, **kwargs):
         step = int(state.global_step)
         self._last_step = step
@@ -51,14 +56,17 @@ class TrainingCorrelationCallback(TrainerCallback):
             self._synchronize_timed_step()
             self._record_step_duration(profiled=was_profiled)
 
+    # noinspection PyUnusedParameter
     def on_log(self, args, state, control, **kwargs):
         self._emit_log(args, state, kwargs.get("logs"))
 
+    # noinspection PyUnusedParameter
     def on_save(self, args, state, control, **kwargs):
         self._session.emit(
             "checkpoint_complete", phase="checkpoint", global_step=int(state.global_step)
         )
 
+    # noinspection PyUnusedParameter
     def on_train_end(self, args, state, control, **kwargs):
         actual_step = int(state.global_step)
         self._last_step = actual_step

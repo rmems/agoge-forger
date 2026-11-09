@@ -78,3 +78,6 @@ Python reads, validates, normalizes, and trains on JSONL datasets.
 - UTF-8 encoding
 - No trailing comma in JSON
 - Empty lines are skipped
+- Sources frozen with `agoge freeze-split` must be canonical JSON per line
+  (sorted keys, compact separators, unescaped UTF-8, LF endings including the
+  last line); see `docs/frozen_split_and_eval_contracts.md`

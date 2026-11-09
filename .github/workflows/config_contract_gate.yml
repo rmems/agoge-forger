@@ -14,8 +14,8 @@ on:
       # Top-level configs/*.yaml are ExperimentConfigs; both currently point
       # dataset_path at datasets/samples/, and load_config resolves it through
       # resolve_existing_path(must_be_file=True) — so deleting or renaming a
-      # sample makes those training configs unloadable. configs/serving/ and
-      # configs/prompts/ use other schemas and are not loaded by this gate.
+      # sample makes those training configs unloadable. Only top-level
+      # configs/*.yaml files are loaded by this gate.
       # No other pull-request workflow watches this directory.
       - "datasets/samples/**"
       - ".github/workflows/config_contract_gate.yml"
@@ -52,8 +52,7 @@ jobs:
         # Must run from the repo root: `load_config` resolves a relative
         # `dataset_path` against the config file's own directory and requires
         # the dataset to exist on disk, so never chdir into configs/.
-        # Only top-level configs/*.yaml are ExperimentConfig files —
-        # configs/serving/ and configs/prompts/ have different schemas.
+        # Only top-level configs/*.yaml are ExperimentConfig files.
         run: |
           .venv/bin/python - <<'PY'
           import sys

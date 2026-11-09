@@ -138,10 +138,6 @@ def _memory_hits(raw: Any, names: tuple[str, ...]) -> list[float]:
     return [value for value in (_memory_value(item, names) for item in raw) if value is not None]
 
 
-def percentiles(values: list[float]) -> dict[str, Any]:
-    return _weighted_stats([(value, 1) for value in values], "us")
-
-
 def _stats(values: list[float], unit: str) -> dict[str, Any]:
     return _weighted_stats([(value, 1) for value in values], unit)
 

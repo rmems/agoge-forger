@@ -65,7 +65,9 @@ def test_held_out_harness_rejects_scoring_version_drift(tmp_path):
     drifted = {
         "scoring_version": "heuristic-judge-v1",
     }
-    with pytest.raises(ValueError, match="scoring_version must be exact-match-v1"):
+    with pytest.raises(
+        ValueError, match="scoring_version must be one of exact-match-v1, exact-match-v2"
+    ):
         _run(
             (
                 manifest_path,
