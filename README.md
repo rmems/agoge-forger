@@ -44,6 +44,27 @@ uv run agoge inspect-lora-targets --model-id openbmb/MiniCPM5-1B-Base
 
 `trust_remote_code` defaults to `false`; enable it only after an explicit architecture review.
 
+## Using just
+
+The root [`justfile`](justfile) wraps the common commands as short recipes. `just` is a
+separate dev tool, not a project dependency. Install it with `cargo install just`,
+`brew install just`, `dnf install just`, or `uv tool install rust-just`.
+
+```bash
+just                       # list every recipe with a one-line description
+just setup                 # uv sync --python 3.14 --frozen --extra dev
+just ci                    # the full PR quality gate, in CI order
+just test -k split -q      # extra arguments pass through to pytest
+just help train-qlora      # uv run agoge train-qlora --help
+just train configs/granite_4_1_flagship.yaml --run-id run_001
+just agoge run-status --help   # any other agoge command
+```
+
+Recipes marked `[CUDA]` in `just --list` (`train`, `train-lora`, `train-smoke`, `eval`,
+`eval-g0`, `eval-smoke`) need a GPU and model weights. On a GPU host, run the suite as
+`CUDA_VISIBLE_DEVICES= just test` (see `tests/test_consumer_contract.py`). The
+`Makefile` targets still work; each one now calls the `just` recipe of the same name.
+
 ## Artifact model
 
 `checkpoint-*` directories are trainer recovery snapshots. The adapter saved at `adapters/<run_name>` is the LoRA output for continued PEFT work. The merged model under `merged/<run_name>` is the single final artifact to ship or evaluate as a standalone model.
