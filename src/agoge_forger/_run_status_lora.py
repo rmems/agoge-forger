@@ -24,6 +24,9 @@ _PAIR_DIRECTIONS = tuple(
 )
 _PAIR_SEGMENTS = frozenset(segment for pair in _PAIRS for segment in pair[:2])
 _BASE_MODEL_PREFIX = "base_model.model."
+# PEFT's EMBEDDING_LAYER_NAMES: with the default save_embedding_layers="auto",
+# a targeted output embedding is saved with its full base_layer.weight too.
+_OUTPUT_EMBEDDING_LEAF = "lm_head"
 Shape = tuple[int, ...]
 
 
@@ -95,15 +98,10 @@ def _target_spec(targets: Any) -> TargetSpec | None:
 
 
 def _module_matches_targets(module: str, targets: TargetSpec) -> bool:
-    normalized = module.removeprefix(_BASE_MODEL_PREFIX)
+    """Match a base-model module name (no PEFT prefix) the way PEFT does."""
     if isinstance(targets, SafeTargetPattern):
-        return targets.fullmatch(normalized)
-    candidates = {module, normalized}
-    return any(
-        candidate == target or candidate.endswith(f".{target}")
-        for candidate in candidates
-        for target in targets
-    )
+        return targets.fullmatch(module)
+    return any(module == target or module.endswith(f".{target}") for target in targets)
 
 
 def _targets_cover_modules(targets: TargetSpec, modules: set[str]) -> bool:
@@ -117,11 +115,19 @@ def _targets_cover_modules(targets: TargetSpec, modules: set[str]) -> bool:
     )
 
 
+def _peft_serialized_module(module: str) -> bool:
+    # PEFT loads with load_state_dict(strict=False) into parameters that are always
+    # named base_model.model.*, so any other key is silently dropped on load.
+    return module.startswith(_BASE_MODEL_PREFIX) and len(module) > len(_BASE_MODEL_PREFIX)
+
+
 def _recognized_pairs(
     shapes: dict[str, tuple[int, ...]],
 ) -> dict[str, tuple[str, str, str]] | None:
     pairs = {key: _pair_for_key(key) for key in shapes}
     recognized = {key: pair for key, pair in pairs.items() if pair is not None}
+    if not all(_peft_serialized_module(module) for module, _, _ in recognized.values()):
+        return None
     serialized_pair_keys = {key for key in shapes if not _PAIR_SEGMENTS.isdisjoint(key.split("."))}
     return recognized if recognized.keys() == serialized_pair_keys else None
 
@@ -182,9 +188,15 @@ def _optional_embedding_base_shapes(
 ) -> dict[str, Shape]:
     optional: dict[str, Shape] = {}
     for module in modules:
-        base = base_modules.get(module.removeprefix(_BASE_MODEL_PREFIX))
-        if base is not None and base.embedding:
+        base_module = module.removeprefix(_BASE_MODEL_PREFIX)
+        base = base_modules.get(base_module)
+        if base is None:
+            continue
+        if base.embedding:
             optional[f"{module}.base_layer.weight"] = (base.input_size, base.output_size)
+        elif base_module.rpartition(".")[2] == _OUTPUT_EMBEDDING_LEAF:
+            # The output embedding is a Linear, whose weight is (out_features, in_features).
+            optional[f"{module}.base_layer.weight"] = (base.output_size, base.input_size)
     return optional
 
 
@@ -231,7 +243,7 @@ def lora_shapes_usable(
     # shape, DoRA, and inventory check below still applies.
     coverage_knowable = config.target_modules != _ALL_LINEAR_TARGETS
     checks = (
-        not coverage_knowable or _targets_cover_modules(targets, modules),
+        not coverage_knowable or _targets_cover_modules(targets, normalized_modules),
         not coverage_knowable or normalized_modules == expected_modules,
         _left_pair_shapes_usable(shapes, pairs, config, base_modules),
         _dora_shapes_usable(shapes, modules, config, base_modules),

@@ -135,6 +135,37 @@ def test_assert_no_unsafe_weight_bins_detects_bin_in_checkpoint_subdir(tmp_path)
         assert_no_unsafe_weight_bins(str(tmp_path))
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "pytorch_model-00001-of-00002.bin",
+        "adapter_model-00001-of-00002.bin",
+        "pytorch_model.fp16.bin",
+        "checkpoint-100/pytorch_model-00002-of-00002.bin",
+        ".hidden/pytorch_model.bin",
+        "ADAPTER_MODEL.BIN",
+        "checkpoint-100/PyTorch_Model-00001-of-00002.bin",
+    ],
+)
+def test_assert_no_unsafe_weight_bins_detects_sharded_and_variant_pickles(tmp_path, relative):
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"\x80\x04pickle")
+    with pytest.raises(RuntimeError, match="Unsafe weight binaries found"):
+        assert_no_unsafe_weight_bins(str(tmp_path))
+
+
+def test_assert_no_unsafe_weight_bins_allows_shard_index_and_trainer_files(tmp_path):
+    (tmp_path / "pytorch_model.bin.index.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "adapter_model.safetensors").write_bytes(b"safe")
+    checkpoint = tmp_path / "checkpoint-100"
+    checkpoint.mkdir()
+    for name in ("training_args.bin", "optimizer.pt", "scheduler.pt", "rng_state.pth"):
+        (checkpoint / name).write_bytes(b"trainer-state")
+    assert_no_unsafe_weight_bins(str(tmp_path))
+
+
 def _frozen_train_config(tmp_path) -> ExperimentConfig:
     manifest_path, manifest = frozen_manifest(tmp_path)
     train_path = manifest_path.parent / manifest.splits["train"].path
@@ -342,3 +373,15 @@ def test_artifact_validation_accepts_saved_embedding_layers(tmp_path, cached_tes
     peft_model.save_pretrained(adapter, save_embedding_layers=True)
     index_path = Path(write_artifact_index(str(adapter), producer_provenance=provenance))
     require_artifact_index(index_path, sha256_file(index_path), _peft_context(provenance))
+
+
+def test_adapter_with_uppercase_pickle_weight_is_not_a_safe_artifact(tmp_path):
+    from agoge_forger.train.checkpoints import is_adapter_artifact
+
+    (tmp_path / "adapter_config.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "adapter_model.safetensors").write_bytes(b"safe")
+    assert is_adapter_artifact(tmp_path)
+
+    (tmp_path / "ADAPTER_MODEL.BIN").write_bytes(b"\x80\x04pickle")
+    assert not is_adapter_artifact(tmp_path)
+    assert is_adapter_artifact(tmp_path, allow_unsafe=True)

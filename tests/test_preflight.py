@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from dataclasses import dataclass
 
 import pytest
@@ -50,6 +51,49 @@ def test_lora_target_validation_fails_on_missing_targets():
     cfg = DummyConfig([], "auto_common")
     valid = validate_lora_targets_exist(model, cfg)
     assert set(valid) == {"q_proj", "v_proj"}
+
+
+class NestedDummyModule:
+    """Llama-shaped module tree: names are dotted paths, as torch ``named_modules`` yields."""
+
+    def named_modules(self):
+        names = [
+            "",
+            "model",
+            "model.layers",
+            "model.layers.0",
+            "model.layers.0.self_attn",
+            "model.layers.0.self_attn.q_proj",
+            "model.layers.0.self_attn.k_proj",
+            "model.layers.0.self_attn.v_proj",
+            "model.layers.0.mlp",
+            "model.layers.0.mlp.down_proj",
+        ]
+        return [(name, self) for name in names]
+
+
+@pytest.mark.parametrize("mode", ["explicit", "discover_required"])
+@pytest.mark.parametrize(
+    "bogus", ["v_pro", "v_proj|k_proj", "proj", "down", "q_proj$", "elf_attn", ""]
+)
+def test_lora_target_validation_uses_peft_exact_or_dotted_suffix_matching(mode, bogus):
+    # PEFT matches list targets only by exact name or ``.``-suffix; substrings and regexes
+    # would pass preflight and then be silently dropped by get_peft_model. PEFT also skips
+    # the root module (named ""), so an empty target must not match it.
+    model = NestedDummyModule()
+    cfg = DummyConfig(["q_proj", bogus], mode)
+    if mode == "explicit":
+        with pytest.raises(ValueError, match=f"Explicit target module '{re.escape(bogus)}'"):
+            validate_lora_targets_exist(model, cfg)
+    else:
+        assert validate_lora_targets_exist(model, cfg) == ["q_proj"]
+
+
+def test_lora_target_validation_accepts_leaf_and_dotted_suffix_targets():
+    model = NestedDummyModule()
+    targets = ["q_proj", "self_attn.v_proj", "mlp.down_proj", "model.layers.0.self_attn.k_proj"]
+    for mode in ("explicit", "discover_required"):
+        assert validate_lora_targets_exist(model, DummyConfig(targets, mode)) == targets
 
 
 def test_dataset_text_field_validation_rejects_a_column_the_dataset_lacks():

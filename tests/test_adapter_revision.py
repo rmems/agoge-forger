@@ -14,6 +14,12 @@ PINNED_REVISION = "d3040b7c81a0a810fa13c6f392f3e304a0e121d5"
 BASE_MODEL = "HuggingFaceM4/tiny-random-LlamaForCausalLM"
 
 
+def _pinned_provenance():
+    # Merges load the sealed base at the sealed revision, so the fixture's
+    # provenance must name the same base and revision as its adapter_config.
+    return ArtifactProducerProvenance.model_validate(model_provenance(BASE_MODEL, PINNED_REVISION))
+
+
 def _write_adapter(path, *, revision=PINNED_REVISION, base_model=BASE_MODEL):
     path.mkdir(parents=True)
     payload = {"base_model_name_or_path": base_model}
@@ -114,7 +120,7 @@ def test_merge_adapter_forwards_adapter_revision_to_load_base_model(monkeypatch,
             BASE_MODEL,
             str(adapter),
             str(tmp_path / "merged"),
-            producer_provenance=ArtifactProducerProvenance.model_validate(model_provenance()),
+            producer_provenance=_pinned_provenance(),
         )
 
     assert captured["revision"] == PINNED_REVISION
@@ -134,13 +140,14 @@ def test_export_final_model_forwards_adapter_revision_to_load_base_model(monkeyp
         export_final_model(
             out_dir=str(tmp_path / "merged"),
             adapter_path=str(adapter),
-            producer_provenance=ArtifactProducerProvenance.model_validate(model_provenance()),
+            producer_provenance=_pinned_provenance(),
         )
 
     assert captured["revision"] == PINNED_REVISION
 
 
-def test_export_final_model_skips_adapter_revision_when_base_is_overridden(monkeypatch, tmp_path):
+def test_export_final_model_keeps_adapter_revision_when_base_is_overridden(monkeypatch, tmp_path):
+    """An override naming the sealed base still loads the pinned revision, not HEAD."""
     adapter = _write_adapter(tmp_path / "adapter")
     captured: dict[str, object] = {}
 
@@ -155,9 +162,26 @@ def test_export_final_model_skips_adapter_revision_when_base_is_overridden(monke
         export_final_model(
             out_dir=str(tmp_path / "merged"),
             adapter_path=str(adapter),
-            base_model_id="replacement/model",
-            producer_provenance=ArtifactProducerProvenance.model_validate(model_provenance()),
+            base_model_id=BASE_MODEL,
+            producer_provenance=_pinned_provenance(),
         )
 
-    assert captured["model_id"] == "replacement/model"
-    assert captured["revision"] is None
+    assert captured["model_id"] == BASE_MODEL
+    assert captured["revision"] == PINNED_REVISION
+
+
+def test_export_final_model_refuses_an_override_other_than_the_sealed_base(monkeypatch, tmp_path):
+    adapter = _write_adapter(tmp_path / "adapter")
+
+    def fail_load(*args, **kwargs):
+        raise AssertionError("a replacement base reached the base-model loader")
+
+    monkeypatch.setattr("agoge_forger.export.merge_adapter.load_base_model", fail_load)
+
+    with pytest.raises(ValueError, match="does not match the adapter's sealed"):
+        export_final_model(
+            out_dir=str(tmp_path / "merged"),
+            adapter_path=str(adapter),
+            base_model_id="replacement/model",
+            producer_provenance=_pinned_provenance(),
+        )

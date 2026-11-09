@@ -27,6 +27,20 @@ serializers can render them differently. Binding the exact rendered text before
 split assignment keeps canonical content identity and split membership
 independent of the eventual model, tokenizer, and serializer.
 
+Every non-blank source line must already be canonical JSON: the exact bytes of
+the repository's canonical encoding (sorted keys, `,`/`:` separators with no
+spaces, unescaped UTF-8) followed by a single LF, including on the last record.
+Materialization rejects any other line, such as default `json.dumps` spacing,
+unsorted keys, CRLF endings, or a missing final newline, with the offending
+`<source_path>:<line>` coordinate before anything is published. This keeps each
+member's recorded `raw_line_sha256` verifiable against the frozen artifact when
+the source is not supplied. Canonicalize the source, commit it, and freeze again
+with the new immutable `--source-revision`: the manifest records the revision as
+supplied and does not check it against the local bytes, so retrying under the old
+revision would pin a commit that holds the non-canonical lines. Blank and
+whitespace-only lines are skipped; recorded coordinates keep the physical
+one-based line number.
+
 ## Materialize one frozen snapshot
 
 From an installed checkout:

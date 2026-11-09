@@ -27,7 +27,12 @@ from .artifacts.safetensors_io import sha256_file, write_artifact_index
 from .logging import logger
 from .path_safety import resolve_existing_path
 from .run_status import _escape_controls, build_run_status
-from .train.checkpoints import CHECKPOINT_RE, checkpoint_step, contains_mount
+from .train.checkpoints import (
+    CHECKPOINT_RE,
+    checkpoint_step,
+    contains_mount,
+    incomplete_checkpoint_reason,
+)
 from .train.preflight import BYTES_PER_GB, directory_size_bytes
 
 CLEANUP_SCHEMA_VERSION = 1
@@ -35,8 +40,9 @@ CLEANUP_SCHEMA_VERSION = 1
 _ARTIFACT_INDEX_NAME = "artifact_index.json"
 
 # A checkpoint directory that fails validation is still reclaimable garbage, so
-# candidates are matched on the directory name alone. `list_valid_checkpoints`
-# is used only to choose which checkpoints are safe to *keep*.
+# candidates are matched on the directory name alone. Resume's own predicate,
+# `incomplete_checkpoint_reason`, is used only to choose which checkpoints are
+# safe to *keep*.
 _CANDIDATE_RE: re.Pattern[str] = CHECKPOINT_RE
 
 
@@ -81,25 +87,37 @@ def _skip_reason(candidate: Path) -> str | None:
     return None
 
 
-def _keep_set(candidates: list[Path], steps: list[int], keep_latest: int) -> set[Path]:
+def _keep_set(candidates: list[Path], keep_latest: int, *, allow_unsafe: bool) -> set[Path]:
     """The N highest-step checkpoints worth keeping as a resume point.
 
-    Selected from the directories actually on disk, matched to the valid steps
-    `build_run_status` already scanned for, so the keep set costs no extra
-    directory walk. The paths must come from the real entries rather than being
-    rebuilt from a step number: `checkpoint-001` parses as step 1, and a
-    reconstructed `checkpoint-1` would match nothing, so `--keep-latest 1` would
-    delete the very snapshot it was asked to keep.
+    Selected from the directories actually on disk. The paths must come from the
+    real entries rather than being rebuilt from a step number: `checkpoint-001`
+    parses as step 1, and a reconstructed `checkpoint-1` would match nothing, so
+    `--keep-latest 1` would delete the very snapshot it was asked to keep.
 
-    Only valid, non-skippable checkpoints qualify. A symlink or mount can still
-    parse as a valid step (the link target looks like a resume point) but is
-    later skipped; if it consumed a keep slot, `--keep-latest 1` would delete
-    every real checkpoint. Callers must pass already-filtered candidates.
+    Only checkpoints resume would accept qualify, judged per directory with the
+    same predicate resume uses (`incomplete_checkpoint_reason`). A filename-valid
+    snapshot with a torn `trainer_state.json` or truncated weights is quarantined
+    by resume, so keeping it would delete the real resume point instead; and
+    matching by step number would let an invalid `checkpoint-0150` take the slot
+    of a valid `checkpoint-150`. Ties between same-step directories break by
+    name so the outcome does not depend on directory listing order.
+
+    A symlink or mount can still look like a resume point (the link target is
+    valid) but is later skipped; if it consumed a keep slot, `--keep-latest 1`
+    would delete every real checkpoint. Callers must pass already-filtered
+    candidates.
     """
     if keep_latest <= 0:
         return set()
-    valid = {step for step in steps}
-    keepable = [path for path in candidates if checkpoint_step(path) in valid]
+    keepable = [
+        path
+        for path in candidates
+        if path.is_dir()
+        and not path.is_symlink()
+        and incomplete_checkpoint_reason(path, allow_unsafe=allow_unsafe) is None
+    ]
+    keepable.sort(key=lambda path: (checkpoint_step(path), path.name))
     return {path.resolve() for path in keepable[-keep_latest:]}
 
 
@@ -238,7 +256,7 @@ def plan_cleanup(run_dir: str, options: CleanupOptions | None = None) -> dict[st
     candidates = _candidate_dirs(resolved_run_dir)
     # Symlinks and mounts are skipped later; they must not consume keep slots.
     keepable = [path for path in candidates if _skip_reason(path) is None]
-    keep = _keep_set(keepable, report["checkpoints"]["steps"], options.keep_latest)
+    keep = _keep_set(keepable, options.keep_latest, allow_unsafe=options.allow_unsafe)
     removable, kept, skipped = _partition_candidates(candidates, keep)
 
     return {

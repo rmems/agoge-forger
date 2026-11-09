@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import dis
 import inspect
 import re
 import textwrap
@@ -30,6 +31,39 @@ _TOKENIZER_RUNTIME_FIELDS = (
     "truncation_side",
 )
 _PURE_BUILTINS = frozenset({"bool", "float", "int", "len", "list", "str"})
+_IMPORT_OPCODES = frozenset({"IMPORT_FROM", "IMPORT_NAME"})
+# Name operands of these opcodes are attribute names resolved on an object. They are
+# still screened like lookups (an attribute named like a builtin such as ``format``
+# can reach the builtins module through format-string field traversal), and dunder
+# or frame-introspection attribute names are additionally rejected.
+# LOAD_SUPER_ATTR is left out on purpose: ``super().__init__`` resolves on the parent
+# class, so its dunder operand is allowed (it is still screened as a lookup).
+_ATTRIBUTE_OPCODES = frozenset({"DELETE_ATTR", "LOAD_ATTR", "LOAD_METHOD", "STORE_ATTR"})
+_GLOBAL_READ_OPCODES = frozenset({"LOAD_FROM_DICT_OR_GLOBALS", "LOAD_GLOBAL", "LOAD_NAME"})
+_GLOBAL_WRITE_OPCODES = frozenset({"DELETE_GLOBAL", "STORE_GLOBAL"})
+# Non-dunder attributes of frames, generators, coroutines and tracebacks. They expose
+# frames, and through them module globals and builtins, without any dunder name.
+_INTROSPECTION_ATTRIBUTES = frozenset(
+    {
+        "ag_code",
+        "ag_frame",
+        "cr_code",
+        "cr_frame",
+        "f_back",
+        "f_builtins",
+        "f_code",
+        "f_globals",
+        "f_locals",
+        "gi_code",
+        "gi_frame",
+        "tb_frame",
+        "tb_next",
+    }
+)
+# Format fields walk attributes and items inside a string constant the bytecode scan
+# cannot see (``"{a.__globals__[X]}".format_map(...)``). ``format`` is already screened
+# as a builtin name; these are the other entry points to the same mini-language.
+_FORMAT_TRAVERSAL_ATTRIBUTES = frozenset({"format_map", "vformat"})
 _TOKENIZER_IMPLEMENTATION_LABEL = "tokenizer implementation"
 _TOKENIZER_REVISION_LABEL = "tokenizer revision"
 
@@ -498,40 +532,88 @@ def _require_no_external_dependencies(
     *,
     extra_pure_builtins: frozenset[str] = frozenset(),
 ) -> None:
-    dependencies = _global_dependencies(function)
-    if dependencies:
-        raise ValueError(f"{label} must not depend on module globals: {dependencies!r}")
-    unsafe_builtins = _unsafe_builtin_dependencies(function, extra_pure_builtins)
-    if unsafe_builtins:
-        raise ValueError(f"{label} uses unsafe builtins: {unsafe_builtins!r}")
-
-
-def _global_dependencies(function: Callable[..., Any]) -> list[str]:
-    return sorted(
-        name
-        for name in _recursive_code_names(function.__code__)
-        if name in function.__globals__ and name != "__builtins__"
+    instructions = _recursive_instructions(function.__code__)
+    # Checked in order; the first non-empty finding is reported.
+    findings = (
+        ("must not import modules", sorted(_operand_names(instructions, _IMPORT_OPCODES))),
+        (
+            "must not assign module globals",
+            sorted(_operand_names(instructions, _GLOBAL_WRITE_OPCODES)),
+        ),
+        ("must not depend on module globals", _global_dependencies(function, instructions)),
+        ("uses unsafe builtins", _unsafe_builtin_dependencies(instructions, extra_pure_builtins)),
     )
+    for message, names in findings:
+        if names:
+            raise ValueError(f"{label} {message}: {names!r}")
+
+
+def _global_dependencies(
+    function: Callable[..., Any], instructions: Sequence[dis.Instruction]
+) -> list[str]:
+    builtin_names = vars(builtins)
+    resolved = {
+        name
+        for name in _lookup_names(instructions)
+        if name in function.__globals__ and name != "__builtins__"
+    }
+    # A global read that resolves to neither a module global nor a builtin is late-bound
+    # state the fingerprint cannot see, so it is rejected as a global dependency too.
+    unresolved = {
+        name
+        for name in _operand_names(instructions, _GLOBAL_READ_OPCODES)
+        if name not in function.__globals__ and name not in builtin_names and name != "__builtins__"
+    }
+    return sorted(resolved | unresolved)
 
 
 def _unsafe_builtin_dependencies(
-    function: Callable[..., Any], extra_pure_builtins: frozenset[str]
+    instructions: Sequence[dis.Instruction], extra_pure_builtins: frozenset[str]
 ) -> list[str]:
     builtin_names = vars(builtins)
     allowed = _PURE_BUILTINS | extra_pure_builtins
-    return sorted(
+    unsafe_lookups = {
         name
-        for name in _recursive_code_names(function.__code__)
+        for name in _lookup_names(instructions)
         if (name == "__builtins__" or name in builtin_names) and name not in allowed
-    )
+    }
+    # Beyond the lookup screen above, dunder and frame-introspection attributes
+    # (``len.__self__``, ``fn.__globals__``, ``gen.gi_frame.f_globals``) reach the
+    # builtins module or module globals, so they fail closed with the builtins error.
+    unsafe_attributes = {
+        name
+        for name in _operand_names(instructions, _ATTRIBUTE_OPCODES)
+        if _is_dunder(name)
+        or name in _INTROSPECTION_ATTRIBUTES
+        or name in _FORMAT_TRAVERSAL_ATTRIBUTES
+    }
+    return sorted(unsafe_lookups | unsafe_attributes)
 
 
-def _recursive_code_names(code: CodeType) -> set[str]:
-    names = set(code.co_names)
+def _is_dunder(name: str) -> bool:
+    return len(name) > 4 and name.startswith("__") and name.endswith("__")
+
+
+def _operand_names(instructions: Sequence[dis.Instruction], opnames: frozenset[str]) -> set[str]:
+    return {
+        str(instruction.argval) for instruction in instructions if instruction.opname in opnames
+    }
+
+
+def _lookup_names(instructions: Sequence[dis.Instruction]) -> set[str]:
+    return {
+        str(instruction.argval)
+        for instruction in instructions
+        if instruction.opcode in dis.hasname and instruction.opname not in _IMPORT_OPCODES
+    }
+
+
+def _recursive_instructions(code: CodeType) -> list[dis.Instruction]:
+    instructions = list(dis.get_instructions(code))
     for value in code.co_consts:
         if isinstance(value, CodeType):
-            names.update(_recursive_code_names(value))
-    return names
+            instructions.extend(_recursive_instructions(value))
+    return instructions
 
 
 def _serializer_source(serializer: Serializer) -> str:
