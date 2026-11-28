@@ -44,3 +44,14 @@ fault harness in [`checkpoint_fault_injection.md`](checkpoint_fault_injection.md
 That document also has an optional trusted-GPU recipe; CI never requires a GPU
 or a model download for this contract.
 
+
+## R2EGym budget observation
+
+[RM-2156](https://linear.app/rpd-34/issue/RM-2156/data-r2egym-8192-budget-drops-71percent-of-train-rows-and-56percent-of)
+records the prior cap512 last-assistant run at 8192 tokens with TRL `chunked_nll`
+and activation offload: peak **7.30 GiB / 15.5 GiB**, but only **121/411** train
+and **24/55** held-out rows fit. At 4096 only **1/411** train and **1/55** held-out
+fit; do not repeat that configuration as a useful measured baseline. These are
+historical issue-reported measurements, not a new GPU qualification. Use
+[offline admission](completion-admission.md) before naming and freezing the next
+dataset; a larger context still requires its own measured fit check.

@@ -1,0 +1,23 @@
+"""Offline preparation of explicit completion-only rows."""
+
+import typer
+
+from ._cli_app import CLI_PATH_ERRORS, app, exit_on_error
+from .completion_admission import admit_completions
+from .logging import logger
+
+
+@app.command("admit-completions")
+def admit_completions_command(
+    source: str = typer.Option(..., help="JSONL with exact text and completion_start_char"),
+    tokenizer_dir: str = typer.Option(..., help="Local saved fast tokenizer directory"),
+    output_dir: str = typer.Option(..., help="New local admission directory"),
+    max_seq_length: int = typer.Option(..., min=1, help="Inclusive end-to-end token budget"),
+):
+    """Filter completion rows before freezing, without truncation or model loading."""
+    try:
+        report = admit_completions(source, tokenizer_dir, output_dir, max_seq_length)
+    except CLI_PATH_ERRORS as exc:
+        exit_on_error(exc)
+    else:
+        logger.info("Admitted %s/%s rows", report["admitted_rows"], report["source_rows"])
