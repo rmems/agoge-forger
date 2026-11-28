@@ -11,6 +11,7 @@ from transformers import (
 
 from ..config import QuantizationConfig
 from ..logging import logger
+from .tokenizer_setup import prepare_training_tokenizer
 
 
 def get_bnb_config(quant_config: QuantizationConfig) -> BitsAndBytesConfig | None:
@@ -61,14 +62,7 @@ def load_base_model(
     if hasattr(tokenizer, "chat_template") and tokenizer.chat_template is not None:
         logger.info("Tokenizer has chat_template.")
 
-    if tokenizer.pad_token is None:
-        if tokenizer.eos_token is not None:
-            logger.info("Setting pad_token to eos_token.")
-            tokenizer.pad_token = tokenizer.eos_token
-        else:
-            raise ValueError("Tokenizer has no pad_token and no eos_token. Cannot safely pad.")
-
-    tokenizer.padding_side = "right"
+    prepare_training_tokenizer(tokenizer)
 
     kwargs = {
         "trust_remote_code": trust_remote_code,

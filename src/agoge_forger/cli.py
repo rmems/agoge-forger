@@ -22,6 +22,7 @@ from . import _cli_eval  # noqa: F401
 from . import _cli_release  # noqa: F401
 from . import _cli_runs  # noqa: F401
 from . import _cli_data  # noqa: F401
+from . import _cli_completion_data  # noqa: F401
 from . import _cli_consumer  # noqa: F401
 
 # pylint: enable=unused-import

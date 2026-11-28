@@ -160,8 +160,7 @@ def _validate_budget(token_count, max_length):
         raise ValueError(f"row has {token_count} tokens, exceeding max_seq_length={max_length}")
 
 
-def completion_tokens(row, tokenizer, max_length):
-    """Tokenize exact text without truncation; refuse ambiguous supervision."""
+def _completion_encoding(row, tokenizer):
     text, start = completion_boundary(row)
     tokens = _tokenize_with_offsets(text, tokenizer)
     tokens = _remove_redundant_eos(tokens, text, tokenizer)
@@ -170,9 +169,20 @@ def completion_tokens(row, tokenizer, max_length):
     if not terminal_eos:
         ids.append(tokenizer.eos_token_id)
         mask.append(1)
-    _validate_budget(len(ids), max_length)
     labels = [token if active else -100 for token, active in zip(ids, mask, strict=True)]
     return {"input_ids": ids, "completion_mask": mask, "labels": labels}
+
+
+def completion_token_length(row, tokenizer):
+    """Count the exact training representation, including terminal EOS, without truncation."""
+    return len(_completion_encoding(row, tokenizer)["input_ids"])
+
+
+def completion_tokens(row, tokenizer, max_length):
+    """Tokenize exact text without truncation; refuse ambiguous supervision."""
+    encoded = _completion_encoding(row, tokenizer)
+    _validate_budget(len(encoded["input_ids"]), max_length)
+    return encoded
 
 
 def _preprocessing_evidence(prepared, max_length):

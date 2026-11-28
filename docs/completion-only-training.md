@@ -64,3 +64,6 @@ it is not evidence that a training run completed.
 `tests/test_trainer_trl_api.py` uses a local tiny model and tokenizer to inspect
 the actual trainer dataloader and execute one bounded CPU step, without Hub
 downloads or production training.
+
+For offline budget filtering before a new freeze, see
+[completion admission](completion-admission.md).
