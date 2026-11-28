@@ -27,7 +27,7 @@ def admission_tokenizer(tmp_path):
     return directory, tokenizer
 
 
-def run_admission(source, tokenizer_dir, output, budget=3):
+def run_admission(source, tokenizer_dir, output, budget=3, completion_format="frozen-text-v1"):
     return subprocess.run(  # nosec B603 - fixed installed entry point, no shell.
         [
             str(Path(sys.executable).with_name("agoge")),
@@ -40,6 +40,8 @@ def run_admission(source, tokenizer_dir, output, budget=3):
             str(output),
             "--max-seq-length",
             str(budget),
+            "--completion-format",
+            completion_format,
         ],
         env={
             **os.environ,

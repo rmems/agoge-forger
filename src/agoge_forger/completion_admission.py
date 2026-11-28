@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ._atomic_directory import rename_noreplace
 from ._strict_json import decode_json_object
+from .compact_completion import CompletionFormat, compact_json_line, render_compact_row
 from .models.tokenizer_setup import prepare_training_tokenizer
 from .path_safety import resolve_absent_output_directory, resolve_existing_path
 from .split_schema import sha256_file
@@ -36,7 +37,25 @@ def _json_line(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n"
 
 
-def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int):
+def _prepare_row(raw, line_number, tokenizer, completion_format):
+    row = decode_json_object(raw, f"line {line_number}")
+    try:
+        if _RESERVED.intersection(row):
+            raise ValueError("source contains reserved loss controls or prepared tokens")
+        if completion_format == CompletionFormat.SEARCH_REPLACE:
+            row = render_compact_row(row)
+        return row, completion_token_length(row, tokenizer)
+    except ValueError as exc:
+        raise ValueError(f"line {line_number}: {exc}") from exc
+
+
+def _admitted_line(raw, row, completion_format):
+    if completion_format == CompletionFormat.SEARCH_REPLACE:
+        return compact_json_line(raw, row)
+    return raw if raw.endswith(b"\n") else raw + b"\n"
+
+
+def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int, completion_format):
     histogram: Counter[int] = Counter()
     accepted = 0
     digest = hashlib.sha256()
@@ -49,18 +68,12 @@ def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int):
             digest.update(raw)
             if not raw.strip():
                 continue
-            row = decode_json_object(raw, f"line {line_number}")
-            try:
-                if _RESERVED.intersection(row):
-                    raise ValueError("source contains reserved loss controls or prepared tokens")
-                length = completion_token_length(row, tokenizer)
-            except ValueError as exc:
-                raise ValueError(f"line {line_number}: {exc}") from exc
+            row, length = _prepare_row(raw, line_number, tokenizer, completion_format)
             histogram[length] += 1
             fits = length <= max_length
             accepted += int(fits)
             if fits:
-                output.write(raw if raw.endswith(b"\n") else raw + b"\n")
+                output.write(_admitted_line(raw, row, completion_format))
             decisions.write(
                 _json_line(
                     {
@@ -81,10 +94,18 @@ def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int):
     }
 
 
-def admit_completions(source: str, tokenizer_dir: str, output_dir: str, max_length: int):
+def admit_completions(
+    source: str,
+    tokenizer_dir: str,
+    output_dir: str,
+    max_length: int,
+    *,
+    completion_format: CompletionFormat = CompletionFormat.FROZEN_TEXT,
+):
     """Publish a new local admission directory; invalid rows abort the entire operation."""
     if type(max_length) is not int or max_length < 1:  # pylint: disable=unidiomatic-typecheck
         raise ValueError("max_length must be a positive integer")
+    completion_format = CompletionFormat(completion_format)
     source_path = resolve_existing_path(source, must_be_file=True)
     tokenizer_path = resolve_existing_path(tokenizer_dir, must_be_dir=True)
     destination = resolve_absent_output_directory(output_dir)
@@ -96,7 +117,7 @@ def admit_completions(source: str, tokenizer_dir: str, output_dir: str, max_leng
     with tempfile.TemporaryDirectory(prefix=".admission-", dir=destination.parent) as temporary:
         stage = Path(temporary) / "result"
         stage.mkdir()
-        report = _admit_rows(source_path, stage, tokenizer, max_length)
+        report = _admit_rows(source_path, stage, tokenizer, max_length, completion_format)
         _require_unchanged_source(source_path, source_hash, report["source_sha256"])
         if hashes != _tokenizer_hashes(tokenizer_path):
             raise ValueError("tokenizer files changed during admission")
@@ -104,6 +125,7 @@ def admit_completions(source: str, tokenizer_dir: str, output_dir: str, max_leng
             schema_version="completion-admission-v1",
             max_seq_length=max_length,
             truncation=False,
+            completion_format=completion_format.value,
             tokenizer_files_sha256=hashes,
             admitted_sha256=sha256_file(stage / "admitted.jsonl"),
             decisions_sha256=sha256_file(stage / "decisions.jsonl"),
