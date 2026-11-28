@@ -182,28 +182,9 @@ def test_admission_uses_training_pad_fallback(tmp_path, admission_tokenizer):
     assert not output.exists()
 
 
-def test_changed_source_aborts_publication(tmp_path, admission_tokenizer, monkeypatch):
-    from agoge_forger import completion_admission
-
-    directory, _ = admission_tokenizer
-    source = tmp_path / "source.jsonl"
-    write_rows(source, [{"text": "Prompt café", "completion_start_char": 7}])
-    output = tmp_path / "admitted"
-    original = completion_admission._admit_rows
-
-    def change_after_read(*args):
-        report = original(*args)
-        source.write_text("changed during admission\n")
-        return report
-
-    monkeypatch.setattr(completion_admission, "_admit_rows", change_after_read)
-    with pytest.raises(ValueError, match="source changed"):
-        completion_admission.admit_completions(str(source), str(directory), str(output), 3)
-    assert not output.exists()
-
-
-def test_source_change_during_artifact_hashing_aborts_publication(
-    tmp_path, admission_tokenizer, monkeypatch
+@pytest.mark.parametrize("mutation_hook", ["_admit_rows", "sha256_file"])
+def test_changed_source_aborts_publication(
+    tmp_path, admission_tokenizer, monkeypatch, mutation_hook
 ):
     from agoge_forger import completion_admission
 
@@ -211,15 +192,15 @@ def test_source_change_during_artifact_hashing_aborts_publication(
     source = tmp_path / "source.jsonl"
     write_rows(source, [{"text": "Prompt café", "completion_start_char": 7}])
     output = tmp_path / "admitted"
-    original = completion_admission.sha256_file
+    original = getattr(completion_admission, mutation_hook)
 
-    def change_during_artifact_hash(path):
-        digest = original(path)
-        if path.name == "admitted.jsonl":
-            source.write_text("changed while hashing output\n")
-        return digest
+    def change_after_work(*args):
+        result = original(*args)
+        if mutation_hook == "_admit_rows" or args[0].name == "admitted.jsonl":
+            source.write_text("changed during admission\n")
+        return result
 
-    monkeypatch.setattr(completion_admission, "sha256_file", change_during_artifact_hash)
+    monkeypatch.setattr(completion_admission, mutation_hook, change_after_work)
     with pytest.raises(ValueError, match="source changed"):
         completion_admission.admit_completions(str(source), str(directory), str(output), 3)
     assert not output.exists()
