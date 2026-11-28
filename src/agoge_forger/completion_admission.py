@@ -4,7 +4,9 @@ import hashlib
 import json
 import tempfile
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from ._atomic_directory import rename_noreplace
 from ._strict_json import decode_json_object
@@ -17,14 +19,14 @@ _RESERVED = {"labels", "assistant_masks", "seq_lengths", "input_ids", "completio
 
 
 def _load_tokenizer(directory: Path):
-    from transformers import AutoTokenizer
+    from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
     if not (directory / "tokenizer.json").is_file():
         raise ValueError("tokenizer directory must contain a saved fast tokenizer.json")
-    # The saved tokenizer class and configuration match training, without remote code.
-    tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 - validated local directory, offline only.
-        directory, local_files_only=True, trust_remote_code=False, use_fast=True
-    )
+    # Match the model loader's explicit return type for the dynamic tokenizer factory.
+    tokenizer = cast(
+        Callable[..., PreTrainedTokenizerBase], cast(object, AutoTokenizer.from_pretrained)
+    )(directory, local_files_only=True, trust_remote_code=False, use_fast=True)
     return prepare_training_tokenizer(tokenizer)
 
 
@@ -34,6 +36,16 @@ def _tokenizer_hashes(directory: Path):
 
 def _json_line(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n"
+
+
+def _prepare_row(raw, line_number, tokenizer):
+    row = decode_json_object(raw, f"line {line_number}")
+    try:
+        if _RESERVED.intersection(row):
+            raise ValueError("source contains reserved loss controls or prepared tokens")
+        return row, completion_token_length(row, tokenizer)
+    except ValueError as exc:
+        raise ValueError(f"line {line_number}: {exc}") from exc
 
 
 def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int):
@@ -49,13 +61,7 @@ def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int):
             digest.update(raw)
             if not raw.strip():
                 continue
-            row = decode_json_object(raw, f"line {line_number}")
-            try:
-                if _RESERVED.intersection(row):
-                    raise ValueError("source contains reserved loss controls or prepared tokens")
-                length = completion_token_length(row, tokenizer)
-            except ValueError as exc:
-                raise ValueError(f"line {line_number}: {exc}") from exc
+            _, length = _prepare_row(raw, line_number, tokenizer)
             histogram[length] += 1
             fits = length <= max_length
             accepted += int(fits)
