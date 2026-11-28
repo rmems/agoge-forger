@@ -161,6 +161,25 @@ def test_compact_metadata_precision_is_not_silently_lost():
     assert row["timestamp"] == "1700000000.123456789"
 
 
+def test_over_budget_metadata_precision_still_aborts_batch(tmp_path, admission_tokenizer):
+    directory, tokenizer = admission_tokenizer
+    short = {"instruction": "Update fruit", "before": "apple", "after": "pear"}
+    long = {**short, "before": "apple " * 100, "timestamp": "1700000000.123456789"}
+    short_length = len(completion_tokens(render_compact_row(short), tokenizer, 10000)["input_ids"])
+    long_length = len(completion_tokens(render_compact_row(long), tokenizer, 10000)["input_ids"])
+    assert long_length > short_length
+    source = tmp_path / "pairs.jsonl"
+    write_rows(source, [short, long])
+    source.write_bytes(
+        source.read_bytes().replace(b'"1700000000.123456789"', b"1700000000.123456789")
+    )
+    output = tmp_path / "admitted"
+    result = run_compact_admission(source, directory, output, short_length)
+    assert result.returncode == 1
+    assert "precision-sensitive" in result.stdout + result.stderr
+    assert not output.exists()
+
+
 def test_duplicate_context_expansion_is_bounded(monkeypatch):
     import agoge_forger.compact_completion as compact
 

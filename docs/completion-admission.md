@@ -73,6 +73,8 @@ The serializer emits one JSON object with exactly two string fields, `search` an
 It selects the span from the first changed line through the last changed line,
 including one unchanged line on either side when available, and expands context geometrically
 until the search occurs exactly once (including overlapping occurrences).
+Geometric growth may include more context than the minimum unique span; admission
+counts the actual resulting representation.
 Distant edits remain one span; repeated context can require the entire source.
 Compactness and admission are measured outcomes, not guarantees for every pair.
 

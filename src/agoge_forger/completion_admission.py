@@ -87,11 +87,12 @@ def _admit_rows(source: Path, stage: Path, tokenizer, policy: CompletionAdmissio
             if not raw.strip():
                 continue
             row, length = _prepare_row(raw, line_number, tokenizer, policy.completion_format)
+            prepared_line = _admitted_line(raw, row, policy.completion_format)
             histogram[length] += 1
             fits = length <= policy.max_seq_length
             accepted += int(fits)
             if fits:
-                output.write(_admitted_line(raw, row, policy.completion_format))
+                output.write(prepared_line)
             decisions.write(
                 _json_line(
                     {
