@@ -29,8 +29,11 @@ and terminal EOS. Output contains `admitted.jsonl`, a source-line-indexed
 `decisions.jsonl`, and `admission_report.json` with the complete token-length
 histogram, admission/rejection totals, source and output hashes, and local
 tokenizer JSON file hashes. An all-over-budget input produces an empty admitted
-file and a report; an empty input fails. Source and tokenizer hash checks must
-still match before publication. Existing outputs are never overwritten.
+file and a report; an empty input fails. After writing the report, tokenizer hashes
+are rechecked, then the source hash is checked immediately before atomic directory
+publication. These checks detect observed changes; they do not lock the inputs or
+prevent a concurrent write after a check. Keep source and tokenizer files stable
+throughout the command. Existing outputs are never overwritten.
 
 This is a pre-freeze preparation artifact, not a frozen split or experiment
 contract. For option A in RM-2156, run on the complete candidate source, then pass

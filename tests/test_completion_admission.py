@@ -188,3 +188,26 @@ def test_changed_source_aborts_publication(tmp_path, admission_tokenizer, monkey
     with pytest.raises(ValueError, match="source changed"):
         completion_admission.admit_completions(str(source), str(directory), str(output), 3)
     assert not output.exists()
+
+
+def test_source_change_during_artifact_hashing_aborts_publication(
+    tmp_path, admission_tokenizer, monkeypatch
+):
+    from agoge_forger import completion_admission
+
+    directory, _ = admission_tokenizer
+    source = tmp_path / "source.jsonl"
+    write_rows(source, [{"text": "Prompt café", "completion_start_char": 7}])
+    output = tmp_path / "admitted"
+    original = completion_admission.sha256_file
+
+    def change_during_artifact_hash(path):
+        digest = original(path)
+        if path.name == "admitted.jsonl":
+            source.write_text("changed while hashing output\n")
+        return digest
+
+    monkeypatch.setattr(completion_admission, "sha256_file", change_during_artifact_hash)
+    with pytest.raises(ValueError, match="source changed"):
+        completion_admission.admit_completions(str(source), str(directory), str(output), 3)
+    assert not output.exists()

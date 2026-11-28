@@ -120,9 +120,6 @@ def admit_completions(
         stage = Path(temporary) / "result"
         stage.mkdir()
         report = _admit_rows(source_path, stage, tokenizer, max_length, completion_format)
-        _require_unchanged_source(source_path, source_hash, report["source_sha256"])
-        if hashes != _tokenizer_hashes(tokenizer_path):
-            raise ValueError("tokenizer files changed during admission")
         report.update(
             schema_version="completion-admission-v1",
             max_seq_length=max_length,
@@ -133,6 +130,9 @@ def admit_completions(
             decisions_sha256=sha256_file(stage / "decisions.jsonl"),
         )
         (stage / "admission_report.json").write_text(_json_line(report), encoding="utf-8")
+        if hashes != _tokenizer_hashes(tokenizer_path):
+            raise ValueError("tokenizer files changed during admission")
+        _require_unchanged_source(source_path, source_hash, report["source_sha256"])
         rename_noreplace(stage, destination)
     return report
 
