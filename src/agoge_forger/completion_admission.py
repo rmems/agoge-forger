@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ._atomic_directory import rename_noreplace
 from ._strict_json import decode_json_object
+from .models.tokenizer_setup import prepare_training_tokenizer
 from .path_safety import resolve_absent_output_directory, resolve_existing_path
 from .split_schema import sha256_file
 from .train.completion import completion_token_length
@@ -21,9 +22,10 @@ def _load_tokenizer(directory: Path):
     if not (directory / "tokenizer.json").is_file():
         raise ValueError("tokenizer directory must contain a saved fast tokenizer.json")
     # The saved tokenizer class and configuration match training, without remote code.
-    return AutoTokenizer.from_pretrained(  # nosec B615 - validated local directory, offline only.
+    tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 - validated local directory, offline only.
         directory, local_files_only=True, trust_remote_code=False, use_fast=True
     )
+    return prepare_training_tokenizer(tokenizer)
 
 
 def _tokenizer_hashes(directory: Path):
@@ -40,7 +42,7 @@ def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int):
     digest = hashlib.sha256()
     with (
         source.open("rb") as inputs,
-        (stage / "admitted.jsonl").open("w", encoding="utf-8") as output,
+        (stage / "admitted.jsonl").open("wb") as output,
         (stage / "decisions.jsonl").open("w", encoding="utf-8") as decisions,
     ):
         for line_number, raw in enumerate(inputs, 1):
@@ -58,7 +60,7 @@ def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int):
             fits = length <= max_length
             accepted += int(fits)
             if fits:
-                output.write(_json_line(row))
+                output.write(raw if raw.endswith(b"\n") else raw + b"\n")
             decisions.write(
                 _json_line(
                     {
@@ -88,12 +90,15 @@ def admit_completions(source: str, tokenizer_dir: str, output_dir: str, max_leng
     destination = resolve_absent_output_directory(output_dir)
     if destination.exists():
         raise FileExistsError(f"output already exists: {destination}")
+    source_hash = sha256_file(source_path)
     hashes = _tokenizer_hashes(tokenizer_path)
     tokenizer = _load_tokenizer(tokenizer_path)
     with tempfile.TemporaryDirectory(prefix=".admission-", dir=destination.parent) as temporary:
         stage = Path(temporary) / "result"
         stage.mkdir()
         report = _admit_rows(source_path, stage, tokenizer, max_length)
+        if report["source_sha256"] != source_hash or sha256_file(source_path) != source_hash:
+            raise ValueError("source changed during admission")
         if hashes != _tokenizer_hashes(tokenizer_path):
             raise ValueError("tokenizer files changed during admission")
         report.update(

@@ -13,8 +13,11 @@ uv run agoge admit-completions \
 The tokenizer must already be saved locally with `tokenizer.json` and its special
 token configuration. The command loads the saved fast tokenizer class without model weights,
 executes no remote code, and makes no Hub requests. Use the same saved tokenizer
-and special-token configuration as training. Source rows must contain exact
+and special-token configuration as training. Admission shares training’s
+missing-PAD-to-EOS fallback and right-padding setup. Source rows must contain exact
 `text` and a Unicode-code-point `completion_start_char`; all metadata is retained.
+Admitted source lines are preserved byte-for-byte, with a final LF added only
+when missing, so decimal metadata is not rounded by JSON reserialization.
 Rows with invalid boundaries, ambiguous offsets, no effective content targets,
 or precomputed loss controls fail the entire command. No truncation is allowed.
 
@@ -23,7 +26,8 @@ and terminal EOS. Output contains `admitted.jsonl`, a source-line-indexed
 `decisions.jsonl`, and `admission_report.json` with the complete token-length
 histogram, admission/rejection totals, source and output hashes, and local
 tokenizer JSON file hashes. An all-over-budget input produces an empty admitted
-file and a report; an empty input fails. Existing outputs are never overwritten.
+file and a report; an empty input fails. Source and tokenizer hash checks must
+still match before publication. Existing outputs are never overwritten.
 
 This is a pre-freeze preparation artifact, not a frozen split or experiment
 contract. For option A in RM-2156, run on the complete candidate source, then pass

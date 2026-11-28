@@ -138,3 +138,51 @@ def test_empty_source_and_missing_tokenizer_fail(tmp_path, admission_tokenizer):
     assert run_admission(source, directory, output).returncode == 1
     assert not output.exists()
     assert run_admission(source, tmp_path / "missing", output).returncode == 1
+
+
+def test_source_metadata_bytes_survive_admission(tmp_path, admission_tokenizer):
+    directory, _ = admission_tokenizer
+    raw = b'{"text":"Prompt caf\\u00e9","completion_start_char":7,"timestamp":1700000000.123456789}'
+    source = tmp_path / "source.jsonl"
+    source.write_bytes(raw)
+    output = tmp_path / "admitted"
+    assert run_admission(source, directory, output).returncode == 0
+    assert (output / "admitted.jsonl").read_bytes() == raw + b"\n"
+
+
+def test_admission_uses_training_pad_fallback(tmp_path, admission_tokenizer):
+    from agoge_forger.models.tokenizer_setup import prepare_training_tokenizer
+
+    directory, tokenizer = admission_tokenizer
+    tokenizer.eos_token = tokenizer.unk_token
+    tokenizer.save_pretrained(directory)
+    row = {"text": "Prompt unseen", "completion_start_char": 7}
+    with pytest.raises(ValueError, match="padding special token"):
+        completion_tokens(row, prepare_training_tokenizer(tokenizer), 10)
+    source = tmp_path / "source.jsonl"
+    write_rows(source, [row])
+    output = tmp_path / "admitted"
+    result = run_admission(source, directory, output, 10)
+    assert result.returncode == 1
+    assert "special token" in result.stdout + result.stderr
+    assert not output.exists()
+
+
+def test_changed_source_aborts_publication(tmp_path, admission_tokenizer, monkeypatch):
+    from agoge_forger import completion_admission
+
+    directory, _ = admission_tokenizer
+    source = tmp_path / "source.jsonl"
+    write_rows(source, [{"text": "Prompt café", "completion_start_char": 7}])
+    output = tmp_path / "admitted"
+    original = completion_admission._admit_rows
+
+    def change_after_read(*args):
+        report = original(*args)
+        source.write_text("changed during admission\n")
+        return report
+
+    monkeypatch.setattr(completion_admission, "_admit_rows", change_after_read)
+    with pytest.raises(ValueError, match="source changed"):
+        completion_admission.admit_completions(str(source), str(directory), str(output), 3)
+    assert not output.exists()

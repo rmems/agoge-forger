@@ -50,8 +50,13 @@ or a model download for this contract.
 [RM-2156](https://linear.app/rpd-34/issue/RM-2156/data-r2egym-8192-budget-drops-71percent-of-train-rows-and-56percent-of)
 records the prior cap512 last-assistant run at 8192 tokens with TRL `chunked_nll`
 and activation offload: peak **7.30 GiB / 15.5 GiB**, but only **121/411** train
-and **24/55** held-out rows fit. At 4096 only **1/411** train and **1/55** held-out
-fit; do not repeat that configuration as a useful measured baseline. These are
+rows fit end-to-end; **24/55** held-out prompts fit the evaluation context. At
+4096 only **1/411** train rows and **1/55** held-out prompts fit; do not repeat
+that configuration as a useful measured baseline. These are
 historical issue-reported measurements, not a new GPU qualification. Use
 [offline admission](completion-admission.md) before naming and freezing the next
 dataset; a larger context still requires its own measured fit check.
+
+Held-out prompt counts exclude reference completions and cannot be compared
+directly to the full-row admission counts (prompt + completion + EOS). See the
+[recorded reproduction](../reports/granite-4.1-r2egym-sft/r2egym-cap512-last-assistant-v2-chunked8192/reproduction.md).
