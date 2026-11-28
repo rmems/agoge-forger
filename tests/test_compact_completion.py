@@ -18,6 +18,13 @@ from tests.test_completion_admission import run_compact_admission, write_rows
 admission_tokenizer = admission_cases.admission_tokenizer
 
 
+def test_boolean_budget_is_rejected():
+    from agoge_forger.completion_admission import CompletionAdmissionPolicy
+
+    with pytest.raises(ValueError, match="positive integer"):
+        CompletionAdmissionPolicy(True)
+
+
 @pytest.mark.parametrize(
     "before,after",
     [

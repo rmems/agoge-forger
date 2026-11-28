@@ -27,7 +27,10 @@ class CompletionAdmissionPolicy:
     completion_format: CompletionFormat = CompletionFormat.FROZEN_TEXT
 
     def __post_init__(self):
-        if type(self.max_seq_length) is not int or self.max_seq_length < 1:
+        integer_budget = isinstance(self.max_seq_length, int) and not isinstance(
+            self.max_seq_length, bool
+        )
+        if not integer_budget or self.max_seq_length < 1:
             raise ValueError("max_seq_length must be a positive integer")
         object.__setattr__(self, "completion_format", CompletionFormat(self.completion_format))
 
