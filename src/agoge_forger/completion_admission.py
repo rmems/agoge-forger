@@ -62,7 +62,8 @@ def _prepare_row(raw, line_number, tokenizer, completion_format):
             raise ValueError("source contains reserved loss controls or prepared tokens")
         if completion_format == CompletionFormat.SEARCH_REPLACE:
             row = render_compact_row(row, tokenizer.all_special_tokens)
-        return row, completion_token_length(row, tokenizer)
+        length = completion_token_length(row, tokenizer)
+        return _admitted_line(raw, row, completion_format), length
     except ValueError as exc:
         raise ValueError(f"line {line_number}: {exc}") from exc
 
@@ -86,8 +87,9 @@ def _admit_rows(source: Path, stage: Path, tokenizer, policy: CompletionAdmissio
             digest.update(raw)
             if not raw.strip():
                 continue
-            row, length = _prepare_row(raw, line_number, tokenizer, policy.completion_format)
-            prepared_line = _admitted_line(raw, row, policy.completion_format)
+            prepared_line, length = _prepare_row(
+                raw, line_number, tokenizer, policy.completion_format
+            )
             histogram[length] += 1
             fits = length <= policy.max_seq_length
             accepted += int(fits)

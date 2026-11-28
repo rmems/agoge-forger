@@ -176,7 +176,7 @@ def test_over_budget_metadata_precision_still_aborts_batch(tmp_path, admission_t
     output = tmp_path / "admitted"
     result = run_compact_admission(source, directory, output, short_length)
     assert result.returncode == 1
-    assert "precision-sensitive" in result.stdout + result.stderr
+    assert "line 2: encode precision-sensitive" in result.stdout + result.stderr
     assert not output.exists()
 
 
