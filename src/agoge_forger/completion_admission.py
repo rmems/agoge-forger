@@ -5,18 +5,31 @@ import json
 import tempfile
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from ._atomic_directory import rename_noreplace
 from ._strict_json import decode_json_object
-from .compact_completion import CompletionFormat, compact_json_line, render_compact_row
+from .compact_completion import CompletionFormat, render_compact_row
+from .compact_json import compact_json_line
 from .models.tokenizer_setup import prepare_training_tokenizer
 from .path_safety import resolve_absent_output_directory, resolve_existing_path
 from .split_schema import sha256_file
 from .train.completion import completion_token_length
 
 _RESERVED = {"labels", "assistant_masks", "seq_lengths", "input_ids", "completion_mask"}
+
+
+@dataclass(frozen=True)
+class CompletionAdmissionPolicy:
+    max_seq_length: int
+    completion_format: CompletionFormat = CompletionFormat.FROZEN_TEXT
+
+    def __post_init__(self):
+        if type(self.max_seq_length) is not int or self.max_seq_length < 1:
+            raise ValueError("max_seq_length must be a positive integer")
+        object.__setattr__(self, "completion_format", CompletionFormat(self.completion_format))
 
 
 def _load_tokenizer(directory: Path):
@@ -45,7 +58,7 @@ def _prepare_row(raw, line_number, tokenizer, completion_format):
         if _RESERVED.intersection(row):
             raise ValueError("source contains reserved loss controls or prepared tokens")
         if completion_format == CompletionFormat.SEARCH_REPLACE:
-            row = render_compact_row(row)
+            row = render_compact_row(row, tokenizer.all_special_tokens)
         return row, completion_token_length(row, tokenizer)
     except ValueError as exc:
         raise ValueError(f"line {line_number}: {exc}") from exc
@@ -57,7 +70,7 @@ def _admitted_line(raw, row, completion_format):
     return raw if raw.endswith(b"\n") else raw + b"\n"
 
 
-def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int, completion_format):
+def _admit_rows(source: Path, stage: Path, tokenizer, policy: CompletionAdmissionPolicy):
     histogram: Counter[int] = Counter()
     accepted = 0
     digest = hashlib.sha256()
@@ -70,12 +83,12 @@ def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int, completio
             digest.update(raw)
             if not raw.strip():
                 continue
-            row, length = _prepare_row(raw, line_number, tokenizer, completion_format)
+            row, length = _prepare_row(raw, line_number, tokenizer, policy.completion_format)
             histogram[length] += 1
-            fits = length <= max_length
+            fits = length <= policy.max_seq_length
             accepted += int(fits)
             if fits:
-                output.write(_admitted_line(raw, row, completion_format))
+                output.write(_admitted_line(raw, row, policy.completion_format))
             decisions.write(
                 _json_line(
                     {
@@ -97,17 +110,11 @@ def _admit_rows(source: Path, stage: Path, tokenizer, max_length: int, completio
 
 
 def admit_completions(
-    source: str,
-    tokenizer_dir: str,
-    output_dir: str,
-    max_length: int,
-    *,
-    completion_format: CompletionFormat = CompletionFormat.FROZEN_TEXT,
+    source: str, tokenizer_dir: str, output_dir: str, policy: CompletionAdmissionPolicy | int
 ):
     """Publish a new local admission directory; invalid rows abort the entire operation."""
-    if type(max_length) is not int or max_length < 1:  # pylint: disable=unidiomatic-typecheck
-        raise ValueError("max_length must be a positive integer")
-    completion_format = CompletionFormat(completion_format)
+    if not isinstance(policy, CompletionAdmissionPolicy):
+        policy = CompletionAdmissionPolicy(policy)
     source_path = resolve_existing_path(source, must_be_file=True)
     tokenizer_path = resolve_existing_path(tokenizer_dir, must_be_dir=True)
     destination = resolve_absent_output_directory(output_dir)
@@ -119,12 +126,12 @@ def admit_completions(
     with tempfile.TemporaryDirectory(prefix=".admission-", dir=destination.parent) as temporary:
         stage = Path(temporary) / "result"
         stage.mkdir()
-        report = _admit_rows(source_path, stage, tokenizer, max_length, completion_format)
+        report = _admit_rows(source_path, stage, tokenizer, policy)
         report.update(
             schema_version="completion-admission-v1",
-            max_seq_length=max_length,
+            max_seq_length=policy.max_seq_length,
             truncation=False,
-            completion_format=completion_format.value,
+            completion_format=policy.completion_format.value,
             tokenizer_files_sha256=hashes,
             admitted_sha256=sha256_file(stage / "admitted.jsonl"),
             decisions_sha256=sha256_file(stage / "decisions.jsonl"),

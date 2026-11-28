@@ -20,7 +20,10 @@ In the default frozen-text mode, admitted source lines are preserved byte-for-by
 when missing, so decimal metadata is not rounded by JSON reserialization.
 This guarantee applies to admission output only: the existing `freeze-split`
 writer reserializes JSON numbers. Encode precision-sensitive metadata as strings
-before the pipeline if exact decimal precision must survive freezing.
+before the pipeline if exact decimal precision must survive freezing. The default
+frozen-text mode preserves the input bytes; `freeze-split` requires those bytes to
+already be canonical JSON. Canonicalize and commit noncanonical sources under a
+new source revision before freezing them.
 Rows with invalid boundaries, ambiguous offsets, no effective content targets,
 or precomputed loss controls fail the entire command. No truncation is allowed.
 
@@ -68,7 +71,7 @@ uv run agoge admit-completions \
 The serializer emits one JSON object with exactly two string fields, `search` and
 `replace`. This is a versioned SEARCH/REPLACE dialect, not an Aider delimiter block.
 It selects the span from the first changed line through the last changed line,
-including one unchanged line on either side when available, and expands context
+including one unchanged line on either side when available, and expands context geometrically
 until the search occurs exactly once (including overlapping occurrences).
 Distant edits remain one span; repeated context can require the entire source.
 Compactness and admission are measured outcomes, not guarantees for every pair.
@@ -80,8 +83,9 @@ Only the serialized edit and terminal EOS are supervised. The `after` text never
 appears in the prompt. Original `instruction`, `before`, and `after` fields are
 replaced by rendered `text`, `completion_start_char`, `source_text` (the exact
 original), and `completion_format`; identity and other metadata are retained.
-Metadata JSON value spans retain their original decimal precision even though
-rendered fields are newly serialized. Rendered-field collisions, alternate
+Compact rows use the canonical JSON required by `freeze-split`. Numeric metadata
+that would lose precision during canonicalization is rejected; store such values
+as strings before admission. Rendered-field collisions, alternate
 message representations, and precomputed loss controls are rejected.
 
 `apply_search_replace(source_text, completion)` performs only a string splice.
@@ -102,3 +106,9 @@ This slice does not wire an apply step into the evaluation harness, change score
 semantics, register an experiment, produce ≥50 held-out tasks, or run G0/G1.
 Those remain RM-2154 acceptance work; the pure text apply helper is available for
 that later integration. Do not score these JSON edits as full-module completions.
+
+Compact admission escapes literal special-token spellings from the selected local
+tokenizer with JSON Unicode escapes. Decoding the edit retains the exact source
+and replacement, while its supervised JSON contains no literal EOS, PAD, or BOS
+markers. Unusual tokenizers whose special tokens collide with JSON syntax are
+rejected. Tokenizer hashes bind this rendering choice in the admission report.

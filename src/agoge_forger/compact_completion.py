@@ -4,11 +4,28 @@ import json
 from enum import Enum
 
 from ._strict_json import decode_json_object
+from .compact_json import encode_edit
 
 
 class CompletionFormat(str, Enum):
     FROZEN_TEXT = "frozen-text-v1"
     SEARCH_REPLACE = "search-replace-json-v1"
+
+
+def _require_text(value, name: str) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be text")  # noqa: TRY004 - schema errors use ValueError.
+
+
+def _require_nonempty_text(value, name: str) -> None:
+    _require_text(value, name)
+    if not value:
+        raise ValueError(f"{name} must be nonempty text")
+
+
+def _require_change(before: str, after: str) -> None:
+    if before == after:
+        raise ValueError("edit must change the source")
 
 
 def _unique_position(source: str, search: str) -> int:
@@ -20,60 +37,72 @@ def _unique_position(source: str, search: str) -> int:
     return position
 
 
-def apply_search_replace(source: str, completion: str) -> str:
-    """Apply exactly one JSON edit to a string, requiring a unique exact context."""
+def _parse_edit(completion: str) -> tuple[str, str]:
     edit = decode_json_object(completion.encode("utf-8"), "completion")
     if set(edit) != {"search", "replace"}:
         raise ValueError("completion must have exactly search and replace keys")
     search, replacement = edit["search"], edit["replace"]
-    if not isinstance(search, str) or not search or not isinstance(replacement, str):
-        raise ValueError("search must be nonempty text and replace must be text")
-    if search == replacement:
-        raise ValueError("completion must change the source")
+    _require_nonempty_text(search, "search")
+    _require_text(replacement, "replace")
+    _require_change(search, replacement)
+    return search, replacement
+
+
+def apply_search_replace(source: str, completion: str) -> str:
+    """Apply exactly one JSON edit to a string, requiring a unique exact context."""
+    search, replacement = _parse_edit(completion)
     position = _unique_position(source, search)
     return source[:position] + replacement + source[position + len(search) :]
 
 
+def _common_prefix(before: list[str], after: list[str]) -> int:
+    for index, (old, new) in enumerate(zip(before, after)):
+        if old != new:
+            return index
+    return min(len(before), len(after))
+
+
 def _common_edges(before: list[str], after: list[str]) -> tuple[int, int]:
-    prefix = 0
-    while prefix < min(len(before), len(after)) and before[prefix] == after[prefix]:
-        prefix += 1
-    suffix = 0
-    while (
-        suffix < min(len(before), len(after)) - prefix and before[-1 - suffix] == after[-1 - suffix]
-    ):
-        suffix += 1
+    prefix = _common_prefix(before, after)
+    suffix = _common_prefix(before[prefix:][::-1], after[prefix:][::-1])
     return prefix, suffix
 
 
-def search_replace_completion(before: str, after: str) -> str:
-    """Render one changed line span with enough unchanged context to identify it."""
-    if not isinstance(before, str) or not before or not isinstance(after, str):
-        raise ValueError("before must be nonempty text and after must be text")
-    if before == after:
-        raise ValueError("before and after must differ")
+def _unique_context(source: str, lines: list[str], prefix: int, suffix: int):
+    context = 1
+    while True:
+        left = max(0, prefix - context)
+        right_context = min(suffix, context)
+        search = "".join(lines[left : len(lines) - suffix + right_context])
+        try:
+            _unique_position(source, search)
+        except ValueError:
+            # Geometric growth bounds rescans; at full-source context the match is unique.
+            context *= 2
+            continue
+        return search, left, right_context
+
+
+def _edit_span(before: str, after: str) -> dict[str, str]:
     old, new = before.splitlines(keepends=True), after.splitlines(keepends=True)
     prefix, suffix = _common_edges(old, new)
-    # Include one unchanged line on either side, then expand to disambiguate.
-    left, context_after = max(0, prefix - 1), min(1, suffix)
-    while True:
-        search = "".join(old[left : len(old) - suffix + context_after])
-        replacement = "".join(new[left : len(new) - suffix + context_after])
-        try:
-            _unique_position(before, search)
-        except ValueError:
-            left = max(0, left - 1)
-            context_after = min(suffix, context_after + 1)
-            continue
-        break
-    completion = json.dumps({"search": search, "replace": replacement}, ensure_ascii=False)
+    search, left, right_context = _unique_context(before, old, prefix, suffix)
+    replacement = "".join(new[left : len(new) - suffix + right_context])
+    return {"search": search, "replace": replacement}
+
+
+def search_replace_completion(before: str, after: str, special_tokens=()) -> str:
+    """Render one changed line span with enough unchanged context to identify it."""
+    _require_nonempty_text(before, "before")
+    _require_text(after, "after")
+    _require_change(before, after)
+    completion = encode_edit(_edit_span(before, after), special_tokens)
     if apply_search_replace(before, completion) != after:
         raise ValueError("serialized edit does not reconstruct after exactly")
     return completion
 
 
-def render_compact_row(row):
-    """Convert explicit instruction/before/after fields while retaining identity metadata."""
+def _validate_pair_fields(row) -> None:
     collisions = {
         "text",
         "messages",
@@ -83,17 +112,26 @@ def render_compact_row(row):
     } & row.keys()
     if collisions:
         raise ValueError(f"raw repair pair contains rendered fields: {sorted(collisions)}")
-    instruction = row.get("instruction")
-    if not isinstance(instruction, str) or not instruction.strip():
+    _require_nonempty_text(row.get("instruction"), "instruction")
+    if not row["instruction"].strip():
         raise ValueError("instruction must be nonempty text")
-    before, after = row.get("before"), row.get("after")
-    completion = search_replace_completion(before, after)
-    prompt = (
+
+
+def _repair_prompt(instruction: str, before: str) -> str:
+    return (
         f"{instruction}\n\nOriginal text (JSON string):\n"
         f"{json.dumps(before, ensure_ascii=False)}\n\n"
         'Return one JSON object with exactly "search" and "replace" string keys. '
         'The nonempty "search" must match exactly once in the original text.\nEdit:\n'
     )
+
+
+def render_compact_row(row, special_tokens=()):
+    """Convert explicit pairs, escaping the selected tokenizer's control markers."""
+    _validate_pair_fields(row)
+    before, after = row.get("before"), row.get("after")
+    completion = search_replace_completion(before, after, special_tokens)
+    prompt = _repair_prompt(row["instruction"], before)
     metadata = {
         key: value for key, value in row.items() if key not in {"instruction", "before", "after"}
     }
@@ -104,39 +142,3 @@ def render_compact_row(row):
         "completion_start_char": len(prompt),
         "completion_format": CompletionFormat.SEARCH_REPLACE.value,
     }
-
-
-def compact_json_line(raw: bytes, rendered) -> bytes:
-    """Serialize rendered fields while retaining original metadata number precision.
-
-    ``raw`` must already have passed strict JSON-object validation. Decode each
-    top-level value only to locate its end; copy metadata from the source span.
-    """
-    text = raw.decode("utf-8").strip()
-    decoder = json.JSONDecoder()
-    fields = []
-    index = 1
-    while text[index] != "}":
-        index = _skip_whitespace(text, index)
-        start = index
-        key, index = decoder.raw_decode(text, index)
-        index = _skip_whitespace(text, index) + 1  # validated colon
-        _, index = decoder.raw_decode(text, _skip_whitespace(text, index))
-        if key not in {"instruction", "before", "after"}:
-            fields.append(text[start:index])
-        index = _skip_whitespace(text, index)
-        if text[index] != ",":
-            break
-        index += 1
-    generated = {
-        key: rendered[key]
-        for key in ("text", "completion_start_char", "completion_format", "source_text")
-    }
-    fields.append(json.dumps(generated, ensure_ascii=False)[1:-1])
-    return ("{" + ",".join(fields) + "}\n").encode("utf-8")
-
-
-def _skip_whitespace(text: str, index: int) -> int:
-    while text[index].isspace():
-        index += 1
-    return index

@@ -27,22 +27,24 @@ def admission_tokenizer(tmp_path):
     return directory, tokenizer
 
 
-def run_admission(source, tokenizer_dir, output, budget=3, completion_format="frozen-text-v1"):
+def admission_args(source, tokenizer_dir, output, budget):
+    return [
+        str(Path(sys.executable).with_name("agoge")),
+        "admit-completions",
+        "--source",
+        str(source),
+        "--tokenizer-dir",
+        str(tokenizer_dir),
+        "--output-dir",
+        str(output),
+        "--max-seq-length",
+        str(budget),
+    ]
+
+
+def run_command(args):
     return subprocess.run(  # nosec B603 - fixed installed entry point, no shell.
-        [
-            str(Path(sys.executable).with_name("agoge")),
-            "admit-completions",
-            "--source",
-            str(source),
-            "--tokenizer-dir",
-            str(tokenizer_dir),
-            "--output-dir",
-            str(output),
-            "--max-seq-length",
-            str(budget),
-            "--completion-format",
-            completion_format,
-        ],
+        args,
         env={
             **os.environ,
             "HF_HUB_OFFLINE": "1",
@@ -53,6 +55,15 @@ def run_admission(source, tokenizer_dir, output, budget=3, completion_format="fr
         text=True,
         check=False,
     )
+
+
+def run_admission(source, tokenizer_dir, output, budget=3):
+    return run_command(admission_args(source, tokenizer_dir, output, budget))
+
+
+def run_compact_admission(source, tokenizer_dir, output, budget):
+    args = admission_args(source, tokenizer_dir, output, budget)
+    return run_command(args + ["--completion-format", "search-replace-json-v1"])
 
 
 def write_rows(path, rows):
@@ -90,6 +101,7 @@ def test_entry_point_exact_budget_histogram_and_reproducibility(tmp_path, admiss
     admitted = [json.loads(line) for line in (output / "admitted.jsonl").read_text().splitlines()]
     assert admitted == [rows[0], rows[2]]
     report = json.loads((output / "admission_report.json").read_text())
+    assert report["completion_format"] == "frozen-text-v1"
     assert report["token_length_histogram"] == {"3": 2, "4": 1}
     assert (report["source_rows"], report["admitted_rows"], report["over_budget_rows"]) == (3, 2, 1)
     assert all(len(completion_tokens(row, tokenizer, 3)["input_ids"]) == 3 for row in admitted)

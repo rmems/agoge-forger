@@ -1,6 +1,8 @@
 """Pure text edits and offline CLI integration for compact targets."""
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +13,7 @@ from agoge_forger.compact_completion import (
 )
 from agoge_forger.train.completion import completion_tokens
 from tests import test_completion_admission as admission_cases
-from tests.test_completion_admission import run_admission, write_rows
+from tests.test_completion_admission import run_compact_admission, write_rows
 
 admission_tokenizer = admission_cases.admission_tokenizer
 
@@ -110,7 +112,7 @@ def test_compact_entry_point_counts_rendered_rows(tmp_path, admission_tokenizer)
     write_rows(source, pairs)
     original_bytes = source.read_bytes()
     output = tmp_path / "compact"
-    result = run_admission(source, directory, output, budget, "search-replace-json-v1")
+    result = run_compact_admission(source, directory, output, budget)
     assert result.returncode == 0, result.stdout + result.stderr
     rows = [json.loads(line) for line in (output / "admitted.jsonl").read_text().splitlines()]
     assert rows == [rendered]
@@ -131,21 +133,123 @@ def test_compact_entry_point_fails_closed(tmp_path, admission_tokenizer, extra):
         source, [{"instruction": "Update fruit", "before": "apple", "after": "pear", **extra}]
     )
     output = tmp_path / "compact"
-    result = run_admission(source, directory, output, 1000, "search-replace-json-v1")
+    result = run_compact_admission(source, directory, output, 1000)
     assert result.returncode == 1
     assert not output.exists()
 
 
-def test_compact_metadata_precision_and_escaped_keys_are_preserved():
-    from agoge_forger.compact_completion import compact_json_line
+def test_compact_metadata_precision_is_not_silently_lost():
+    from agoge_forger.compact_json import compact_json_line
+    from agoge_forger.split_schema import canonical_json_bytes
 
     raw = (
         b'{ "instruction": "Update fruit", "before":"apple", "after":"pear", '
-        b'"timestamp":1700000000.123456789, "nested":{"data":[1.000000000000000001,"a,b}"]}, '
-        b'"canonical\\u005fid":"fruit" }'
+        b'"timestamp":1700000000.123456789, "canonical\\u005fid":"fruit" }'
     )
-    row = render_compact_row(json.loads(raw))
-    result = compact_json_line(raw, row)
-    assert b'"timestamp":1700000000.123456789' in result
-    assert b"1.000000000000000001" in result
-    assert json.loads(result) == row
+    with pytest.raises(ValueError, match="precision-sensitive"):
+        compact_json_line(raw, render_compact_row(json.loads(raw)))
+    safe = raw.replace(b"1700000000.123456789", b'"1700000000.123456789"')
+    row = render_compact_row(json.loads(safe))
+    assert compact_json_line(safe, row) == canonical_json_bytes(row) + b"\n"
+    assert row["timestamp"] == "1700000000.123456789"
+
+
+def test_duplicate_context_expansion_is_bounded(monkeypatch):
+    import agoge_forger.compact_completion as compact
+
+    original = compact._unique_position
+    attempts = []
+
+    def observe(source, search):
+        attempts.append(len(search))
+        return original(source, search)
+
+    monkeypatch.setattr(compact, "_unique_position", observe)
+    before = "apple\n" * 2048
+    after = "apple\n" * 1024 + "pear\n" + "apple\n" * 1023
+    completion = compact.search_replace_completion(before, after)
+    assert compact.apply_search_replace(before, completion) == after
+    # Includes the serializer's round-trip check and this test's apply check.
+    assert len(attempts) <= 14
+
+
+def test_control_markers_are_escaped_before_cli_admission(tmp_path, admission_tokenizer):
+    directory, tokenizer = admission_tokenizer
+    tokenizer.add_special_tokens({"pad_token": "[PAD]", "bos_token": "[BOS]"})
+    tokenizer.save_pretrained(directory)
+    pair = {
+        "canonical_id": "fruit-markers",
+        "lineage_id": "fruit-source",
+        "instruction": "Replace the fruit label.",
+        "before": "apple [EOS] [PAD] [BOS]\n",
+        "after": "pear\n",
+    }
+    source = tmp_path / "pairs.jsonl"
+    write_rows(source, [pair])
+    output = tmp_path / "admitted"
+    result = run_compact_admission(source, directory, output, 1000)
+    assert result.returncode == 0, result.stdout + result.stderr
+    row = json.loads((output / "admitted.jsonl").read_text())
+    completion = row["text"][row["completion_start_char"] :]
+    assert all(marker not in completion for marker in tokenizer.all_special_tokens)
+    assert apply_search_replace(row["source_text"], completion) == pair["after"]
+    labels = completion_tokens(row, tokenizer, 1000)["labels"]
+    assert labels[-1] == tokenizer.eos_token_id
+    assert not {
+        tokenizer.eos_token_id,
+        tokenizer.pad_token_id,
+        tokenizer.bos_token_id,
+    }.intersection(labels[:-1])
+
+
+@pytest.mark.parametrize("raw", [b"", b"{", b"{} trailing", b"[]", b'{"a":1,"a":2}'])
+def test_compact_json_rejects_invalid_direct_inputs(raw):
+    from agoge_forger.compact_json import compact_json_line
+
+    with pytest.raises(ValueError):
+        compact_json_line(raw, {})
+
+
+def test_compact_output_can_be_frozen(tmp_path, admission_tokenizer):
+    from tests.test_completion_admission import run_command
+
+    directory, _ = admission_tokenizer
+    source = tmp_path / "pairs.jsonl"
+    write_rows(
+        source,
+        [
+            {
+                "canonical_id": f"fruit-{index}",
+                "lineage_id": f"fruit-source-{index}",
+                "instruction": f"Update fruit {index}",
+                "before": f"apple {index}\n",
+                "after": f"pear {index}\n",
+            }
+            for index in range(100)
+        ],
+    )
+    admitted = tmp_path / "admitted"
+    assert run_compact_admission(source, directory, admitted, 1000).returncode == 0
+    args = [
+        str(Path(sys.executable).with_name("agoge")),
+        "freeze-split",
+        "--source",
+        str(admitted / "admitted.jsonl"),
+        "--output-dir",
+        str(tmp_path / "freeze"),
+        "--source-repository",
+        "example/offline",
+        "--source-revision",
+        "a" * 40,
+        "--source-path",
+        "admitted.jsonl",
+        "--dataset-version",
+        "synthetic-v1",
+        "--seed",
+        "1",
+        "--salt",
+        "synthetic",
+    ]
+    result = run_command(args)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "freeze" / "split_manifest.json").is_file()

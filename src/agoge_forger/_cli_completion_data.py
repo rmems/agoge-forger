@@ -6,7 +6,7 @@ import typer
 
 from ._cli_app import CLI_PATH_ERRORS, app, exit_on_error
 from .compact_completion import CompletionFormat
-from .completion_admission import admit_completions
+from .completion_admission import CompletionAdmissionPolicy, admit_completions
 from .logging import logger
 
 
@@ -23,7 +23,10 @@ def admit_completions_command(
     """Filter completion rows before freezing, without truncation or model loading."""
     try:
         report = admit_completions(
-            source, tokenizer_dir, output_dir, max_seq_length, completion_format=completion_format
+            source,
+            tokenizer_dir,
+            output_dir,
+            CompletionAdmissionPolicy(max_seq_length, completion_format),
         )
     except CLI_PATH_ERRORS as exc:
         exit_on_error(exc)
