@@ -4,7 +4,9 @@ import hashlib
 import json
 import tempfile
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from ._atomic_directory import rename_noreplace
 from ._strict_json import decode_json_object
@@ -18,14 +20,14 @@ _RESERVED = {"labels", "assistant_masks", "seq_lengths", "input_ids", "completio
 
 
 def _load_tokenizer(directory: Path):
-    from transformers import AutoTokenizer
+    from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
     if not (directory / "tokenizer.json").is_file():
         raise ValueError("tokenizer directory must contain a saved fast tokenizer.json")
-    # The saved tokenizer class and configuration match training, without remote code.
-    tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 - validated local directory, offline only.
-        directory, local_files_only=True, trust_remote_code=False, use_fast=True
-    )
+    # Match the model loader's explicit return type for the dynamic tokenizer factory.
+    tokenizer = cast(
+        Callable[..., PreTrainedTokenizerBase], cast(object, AutoTokenizer.from_pretrained)
+    )(directory, local_files_only=True, trust_remote_code=False, use_fast=True)
     return prepare_training_tokenizer(tokenizer)
 
 
