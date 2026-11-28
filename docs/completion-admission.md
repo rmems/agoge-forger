@@ -18,6 +18,9 @@ missing-PAD-to-EOS fallback and right-padding setup. Source rows must contain ex
 `text` and a Unicode-code-point `completion_start_char`; all metadata is retained.
 Admitted source lines are preserved byte-for-byte, with a final LF added only
 when missing, so decimal metadata is not rounded by JSON reserialization.
+This guarantee applies to admission output only: the existing `freeze-split`
+writer reserializes JSON numbers. Encode precision-sensitive metadata as strings
+before the pipeline if exact decimal precision must survive freezing.
 Rows with invalid boundaries, ambiguous offsets, no effective content targets,
 or precomputed loss controls fail the entire command. No truncation is allowed.
 
